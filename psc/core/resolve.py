@@ -86,19 +86,32 @@ def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> Find
         for a, mk in sorted(matched, key=lambda t: (t[1].value, t[0].location.name, t[0].name))
     ]
 
-    matched_names_by_loc: dict[str, set[str]] = {}
-    for a, _ in matched:
-        matched_names_by_loc.setdefault(a.location.name, set()).add(a.name)
+    # Identity (not just name) of every matched object, plus a per-location name
+    # index so a group member can be resolved to the object it actually denotes.
+    matched_keys = {(a.location.name, a.name) for a, _ in matched}
+    names_by_loc: dict[str, set[str]] = {}
+    for a in snapshot.addresses:
+        names_by_loc.setdefault(a.location.name, set()).add(a.name)
+
+    def _resolve_member(group_loc: str, member: str) -> tuple[str, str] | None:
+        # PAN-OS name resolution: a device-group-local object shadows a
+        # same-named shared one. Without this, a group in DG `prod` listing
+        # `H-web` would falsely match a *shared* `H-web` of a different value.
+        if member in names_by_loc.get(group_loc, set()):
+            return (group_loc, member)
+        if member in names_by_loc.get("shared", set()):
+            return ("shared", member)
+        return None  # nested group or dangling — not a direct address here
 
     groups: list[GroupMatch] = []
     for ag in snapshot.address_groups:
         if not _in_scope(ag.location, scope) or not ag.static_members:
             continue
-        # A group at location L sees its own + shared members.
-        visible = matched_names_by_loc.get(ag.location.name, set()) | matched_names_by_loc.get(
-            "shared", set()
-        )
-        via = [m for m in ag.static_members if m in visible]
+        via = [
+            m
+            for m in ag.static_members
+            if (_resolve_member(ag.location.name, m) or ("", "")) in matched_keys
+        ]
         if via:
             groups.append(GroupMatch(name=ag.name, location=ag.location.name, via=via))
 

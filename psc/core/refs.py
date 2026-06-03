@@ -18,6 +18,7 @@ here, in one place, rather than being re-derived per feature.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -352,11 +353,15 @@ class ReferenceGraph:
         for r in self.references:
             if r.namespace == "tag" and r.resolved is not None:
                 used.add((r.resolved.location.name, r.resolved.name))
-        # Dynamic address-group filters reference tags by bare name.
+        # Dynamic address-group filters reference tags as quoted tokens, e.g.
+        # "'prod' and 'web'". Extract the quoted names and match exactly — a
+        # bare substring test would count tag `web` as used by a `webserver`
+        # filter.
         for ag in self.snapshot.address_groups:
             if ag.dynamic_filter:
+                filter_tags = set(re.findall(r"'([^']+)'", ag.dynamic_filter))
                 for t in self.snapshot.tags:
-                    if t.name in ag.dynamic_filter:
+                    if t.name in filter_tags:
                         used.add((t.location.name, t.name))
         return [
             Target("tag", t.name, t.location)
