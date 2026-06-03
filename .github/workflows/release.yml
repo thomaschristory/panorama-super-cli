@@ -1,0 +1,112 @@
+name: release
+
+# Tag-only trigger. NEVER on pull_request or branch push — the trusted
+# publisher is bound to this workflow filename + the v* tag pattern.
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+# Trusted publishing requires id-token: write so the OIDC token issued to
+# pypa/gh-action-pypi-publish is signed.
+permissions:
+  contents: write   # gh release create
+  id-token: write   # PyPI trusted publishing OIDC
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # No `environment:` block — adding one changes the OIDC subject claim and
+    # would break a trusted-publisher binding registered against the
+    # no-environment form.
+    steps:
+      - name: Checkout (full history for changelog notes)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tag $GITHUB_REF_NAME points at $GITHUB_SHA which is not reachable from main." >&2
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME ($GITHUB_SHA) is on main."
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync runtime deps (so the next step can import psc._version)
+        run: uv sync --frozen
+
+      - name: Verify tag matches package version
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version="$(uv run python -c 'from psc._version import __version__; print(__version__)')"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "Tag $GITHUB_REF_NAME -> $tag_version does not match psc/_version.py $pkg_version" >&2
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches package version $pkg_version"
+
+      - name: Build sdist + wheel
+        run: |
+          rm -rf dist
+          uv build --out-dir dist
+          ls -la dist/
+
+      - name: Verify wheel + sdist filenames match tag
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          if ! ls "dist/panorama_super_cli-${tag_version}-py3-none-any.whl" >/dev/null 2>&1; then
+            echo "Wheel for ${tag_version} not found in dist/" >&2; ls dist/ >&2; exit 1
+          fi
+          if ! ls "dist/panorama_super_cli-${tag_version}.tar.gz" >/dev/null 2>&1; then
+            echo "Sdist for ${tag_version} not found in dist/" >&2; ls dist/ >&2; exit 1
+          fi
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          verbose: true
+          skip-existing: true
+
+      - name: Extract changelog section for release notes
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$tag_version" '
+            $0 ~ "^## v" ver " " { capture=1; print; next }
+            capture && /^## / { exit }
+            capture { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "Release notes for v${tag_version} not found in CHANGELOG.md" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file /tmp/release-notes.md \
+            "dist/panorama_super_cli-${tag_version}-py3-none-any.whl" \
+            "dist/panorama_super_cli-${tag_version}.tar.gz"

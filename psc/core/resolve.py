@@ -1,0 +1,173 @@
+"""Resolve an IP / CIDR / range / FQDN to the objects that represent it.
+
+Answers the headline question — *"is this IP already an object, and which
+ones?"* — for a single target or a whole list. Returns exact matches,
+broader objects that contain it, narrower objects inside it, and the
+address-groups that would therefore carry it.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+from psc.core.models import Address, Location, Snapshot
+from psc.core.normalize import MatchKind, Query, match, normalize_address, parse_query
+
+
+class AddressMatch(BaseModel):
+    name: str
+    location: str
+    type: str
+    value: str
+    match: MatchKind
+
+
+class GroupMatch(BaseModel):
+    name: str
+    location: str
+    via: list[str] = Field(default_factory=list)
+
+
+class FindResult(BaseModel):
+    query: str
+    kind: str  # "ip" | "cidr" | "range" | "fqdn"
+    exists: bool  # at least one EXACT match
+    matches: list[AddressMatch] = Field(default_factory=list)
+    groups: list[GroupMatch] = Field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.matches)
+
+
+def _query_kind(q: Query) -> str:
+    if q.fqdn is not None:
+        return "fqdn"
+    if q.range is not None:
+        return "range"
+    if q.network is not None and q.network.prefixlen in (32, 128):
+        return "ip"
+    return "cidr"
+
+
+def _in_scope(loc: Location, scope: Location | None) -> bool:
+    """`scope=None` => every location; a shared scope still includes shared
+    (inherited everywhere); a DG scope includes that DG plus shared.
+    """
+    if scope is None:
+        return True
+    if loc.is_shared:
+        return True
+    return loc == scope
+
+
+def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> FindResult:
+    """Find every address object/group matching `raw` within `scope`."""
+    query = parse_query(raw)
+    matched: list[tuple[Address, MatchKind]] = []
+    for addr in snapshot.addresses:
+        if not _in_scope(addr.location, scope):
+            continue
+        nv = normalize_address(addr)
+        if nv is None:
+            continue
+        mk = match(query, nv)
+        if mk is not None:
+            matched.append((addr, mk))
+
+    matches = [
+        AddressMatch(
+            name=a.name,
+            location=a.location.name,
+            type=a.type.value,
+            value=a.value,
+            match=mk,
+        )
+        for a, mk in sorted(matched, key=lambda t: (t[1].value, t[0].location.name, t[0].name))
+    ]
+
+    matched_names_by_loc: dict[str, set[str]] = {}
+    for a, _ in matched:
+        matched_names_by_loc.setdefault(a.location.name, set()).add(a.name)
+
+    groups: list[GroupMatch] = []
+    for ag in snapshot.address_groups:
+        if not _in_scope(ag.location, scope) or not ag.static_members:
+            continue
+        # A group at location L sees its own + shared members.
+        visible = matched_names_by_loc.get(ag.location.name, set()) | matched_names_by_loc.get(
+            "shared", set()
+        )
+        via = [m for m in ag.static_members if m in visible]
+        if via:
+            groups.append(GroupMatch(name=ag.name, location=ag.location.name, via=via))
+
+    return FindResult(
+        query=raw,
+        kind=_query_kind(query),
+        exists=any(mk is MatchKind.EXACT for _, mk in matched),
+        matches=matches,
+        groups=sorted(groups, key=lambda g: (g.location, g.name)),
+    )
+
+
+def find_ips(
+    snapshot: Snapshot, raws: list[str], scope: Location | None = None
+) -> list[FindResult]:
+    return [find_ip(snapshot, r, scope) for r in raws]
+
+
+class ObjectHit(BaseModel):
+    kind: str
+    name: str
+    location: str
+    detail: str
+
+
+def find_object(snapshot: Snapshot, name: str) -> list[ObjectHit]:
+    """Find objects named `name` across all kinds and locations (exact name)."""
+    hits: list[ObjectHit] = []
+    for a in snapshot.addresses:
+        if a.name == name:
+            hits.append(
+                ObjectHit(
+                    kind="address",
+                    name=a.name,
+                    location=a.location.name,
+                    detail=f"{a.type.value} {a.value}",
+                )
+            )
+    for ag in snapshot.address_groups:
+        if ag.name == name:
+            detail = ag.dynamic_filter or f"static[{len(ag.static_members or [])}]"
+            hits.append(
+                ObjectHit(
+                    kind="address-group", name=ag.name, location=ag.location.name, detail=detail
+                )
+            )
+    for s in snapshot.services:
+        if s.name == name:
+            hits.append(
+                ObjectHit(
+                    kind="service",
+                    name=s.name,
+                    location=s.location.name,
+                    detail=f"{s.protocol}/{s.destination_port}",
+                )
+            )
+    for sg in snapshot.service_groups:
+        if sg.name == name:
+            hits.append(
+                ObjectHit(
+                    kind="service-group",
+                    name=sg.name,
+                    location=sg.location.name,
+                    detail=f"members[{len(sg.members)}]",
+                )
+            )
+    for t in snapshot.tags:
+        if t.name == name:
+            hits.append(
+                ObjectHit(kind="tag", name=t.name, location=t.location.name, detail=t.color or "")
+            )
+    return hits

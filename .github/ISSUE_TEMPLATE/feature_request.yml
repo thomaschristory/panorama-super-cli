@@ -1,0 +1,28 @@
+name: Feature request
+description: A new subtool, flag, or capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What object-management problem are you trying to solve?
+      placeholder: "I want to find every object referenced only by disabled rules so I can clean them up."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed command / behaviour
+      placeholder: "psc refs unused --only-disabled-rules"
+  - type: dropdown
+    id: module
+    attributes:
+      label: Which area?
+      options:
+        - find / resolve
+        - dedup / merge
+        - refs / audit
+        - naming
+        - output / formats
+        - live / API
+        - other

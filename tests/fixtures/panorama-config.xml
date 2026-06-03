@@ -1,0 +1,121 @@
+<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="h-web1">
+        <ip-netmask>10.0.0.10/32</ip-netmask>
+        <description>Primary web host</description>
+        <tag><member>t-prod</member></tag>
+      </entry>
+      <entry name="web-primary">
+        <ip-netmask>10.0.0.10/32</ip-netmask>
+        <description>Duplicate value of h-web1, different name</description>
+      </entry>
+      <entry name="h-web1-slash">
+        <ip-netmask>10.0.0.10</ip-netmask>
+        <description>Same host, no /32 suffix — normalizes equal</description>
+      </entry>
+      <entry name="net-10">
+        <ip-netmask>10.0.0.0/24</ip-netmask>
+      </entry>
+      <entry name="rng-db">
+        <ip-range>10.0.0.50-10.0.0.60</ip-range>
+      </entry>
+      <entry name="fqdn-example">
+        <fqdn>example.com</fqdn>
+      </entry>
+    </address>
+    <address-group>
+      <entry name="grp-web">
+        <static>
+          <member>h-web1</member>
+          <member>web-primary</member>
+        </static>
+        <tag><member>t-prod</member></tag>
+      </entry>
+      <entry name="grp-dyn">
+        <dynamic><filter>'t-prod'</filter></dynamic>
+      </entry>
+    </address-group>
+    <service>
+      <entry name="tcp-443">
+        <protocol><tcp><port>443</port></tcp></protocol>
+        <description>HTTPS</description>
+      </entry>
+      <entry name="svc-https">
+        <protocol><tcp><port>443</port></tcp></protocol>
+        <description>Duplicate of tcp-443</description>
+      </entry>
+      <entry name="udp-53">
+        <protocol><udp><port>53</port></udp></protocol>
+      </entry>
+    </service>
+    <service-group>
+      <entry name="svc-web">
+        <members><member>tcp-443</member></members>
+      </entry>
+    </service-group>
+    <tag>
+      <entry name="t-prod"><color>color1</color><comments>Production</comments></entry>
+    </tag>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="allow-web">
+            <from><member>untrust</member></from>
+            <to><member>trust</member></to>
+            <source><member>any</member></source>
+            <destination><member>h-web1</member><member>net-10</member></destination>
+            <service><member>tcp-443</member></service>
+            <application><member>web-browsing</member></application>
+            <action>allow</action>
+          </entry>
+        </rules>
+      </security>
+      <nat>
+        <rules>
+          <entry name="nat-web">
+            <source><member>web-primary</member></source>
+            <destination><member>any</member></destination>
+            <service>tcp-443</service>
+            <source-translation>
+              <dynamic-ip-and-port>
+                <translated-address><member>net-10</member></translated-address>
+              </dynamic-ip-and-port>
+            </source-translation>
+          </entry>
+        </rules>
+      </nat>
+    </pre-rulebase>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="DG-EDGE">
+          <address>
+            <entry name="local-only">
+              <ip-netmask>192.168.1.1/32</ip-netmask>
+            </entry>
+            <entry name="edge-dup">
+              <ip-netmask>192.168.1.1/32</ip-netmask>
+              <description>Duplicate of local-only within DG-EDGE</description>
+            </entry>
+          </address>
+          <post-rulebase>
+            <security>
+              <rules>
+                <entry name="edge-rule">
+                  <source><member>local-only</member></source>
+                  <destination><member>grp-web</member><member>edge-dup</member></destination>
+                  <service><member>svc-web</member></service>
+                  <action>allow</action>
+                  <disabled>yes</disabled>
+                </entry>
+              </rules>
+            </security>
+          </post-rulebase>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>

@@ -1,0 +1,72 @@
+site_name: panorama-super-cli
+site_description: Agent-friendly Palo Alto Panorama object management
+site_url: https://thomaschristory.github.io/panorama-super-cli/
+repo_url: https://github.com/thomaschristory/panorama-super-cli
+repo_name: thomaschristory/panorama-super-cli
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Install: getting-started/install.md
+      - First run: getting-started/first-run.md
+      - Concepts: getting-started/concepts.md
+  - Guides:
+      - Finding objects: guides/finding-objects.md
+      - Duplicates and merging: guides/duplicates-and-merging.md
+      - References and audit: guides/references-and-audit.md
+      - Naming templates: guides/naming.md
+      - Output formats: guides/output-formats.md
+      - Writes and safety: guides/safety.md
+      - Live vs offline: guides/live-vs-offline.md
+      - Using with AI agents: guides/using-with-ai-agents.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Exit codes: reference/exit-codes.md
+      - Configuration: reference/config.md
+  - Contributing:
+      - Development: contributing/development.md
+      - Branching: contributing/branching.md
+      - Release process: contributing/release-process.md

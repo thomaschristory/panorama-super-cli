@@ -1,0 +1,42 @@
+name: Bug report
+description: Something `psc` did wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you ran and what `psc` did vs. what you expected.
+      placeholder: |
+        $ psc -c export.xml dedup merge --keep a --remove b
+        ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: psc version
+      description: Output of `psc --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      options:
+        - Offline (--config file.xml)
+        - Live (--profile)
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, install method (uv/pipx/pip).
+  - type: checkboxes
+    id: sanitized
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have removed any real IPs, hostnames, API keys, or other sensitive config from this report.
+          required: true
