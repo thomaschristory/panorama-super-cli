@@ -156,11 +156,19 @@ def plan_merge(
                 f"{ref.referrer_kind} '{ref.referrer_name}' {ref.field} would be emptied"
             )
         if ref.field in ("source-translation", "destination-translation"):
-            cs.warnings.append(
-                f"NAT translation edit on '{ref.referrer_name}' — verify the rendered path"
+            # psc cannot safely rewrite NAT translation fields offline (the XML
+            # path is nested and renderer-flagged), so deleting `drop` would
+            # leave a dangling translation reference. Refuse rather than warn.
+            cs.blockers.append(
+                f"NAT rule '{ref.referrer_name}' references '{drop.name}' in "
+                f"{ref.field}; psc can't safely rewrite NAT translation offline — "
+                "edit that field manually, then re-run the merge"
             )
 
     if cs.blockers:
+        # Invariant: a blocked plan carries zero ops, so no consumer can execute
+        # a partial rewrite by iterating ops without checking `is_blocked`.
+        cs.reference_edits.clear()
         return cs
 
     cs.deletes.append(ObjectDelete(kind=ObjectKind.ADDRESS, name=drop.name, location=drop.location))

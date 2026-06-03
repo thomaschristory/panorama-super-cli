@@ -21,10 +21,27 @@ from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit
 from psc.output.errors import ErrorType, PscError
 
 
+def _find_named(container: ET.Element | None, tag: str, name: str) -> ET.Element | None:
+    """Find a `<tag name="name">` child by iterating — never via an XPath
+    `[@name='...']` predicate, which breaks (crash or silent no-op) when a name
+    contains a quote/bracket. A silent no-op mid-apply would skip a reference
+    rewrite while the delete still runs, so this is a safety fix, not cosmetics.
+    """
+    if container is None:
+        return None
+    for el in container.findall(tag):
+        if el.get("name") == name:
+            return el
+    return None
+
+
 def _scope_element(root: ET.Element, location: str) -> ET.Element | None:
     if location == "shared":
         return root.find("shared")
-    return root.find(f".//device-group/entry[@name='{location}']")
+    for dg in root.findall(".//device-group/entry"):
+        if dg.get("name") == location:
+            return dg
+    return None
 
 
 def _set_members(field_el: ET.Element, members: list[str]) -> None:
@@ -36,21 +53,22 @@ def _set_members(field_el: ET.Element, members: list[str]) -> None:
 
 def _referrer_field_element(scope: ET.Element, edit: ReferenceEdit) -> ET.Element | None:
     name = edit.referrer_name
+    # `edit.rulebase` is a validated enum value ("pre"/"post"), safe to format.
     if edit.referrer_kind == "address-group":
-        entry = scope.find(f"./address-group/entry[@name='{name}']")
+        entry = _find_named(scope.find("address-group"), "entry", name)
         leaf = "static"
     elif edit.referrer_kind == "service-group":
-        entry = scope.find(f"./service-group/entry[@name='{name}']")
+        entry = _find_named(scope.find("service-group"), "entry", name)
         leaf = "members"
     elif edit.referrer_kind == "security-rule" and edit.rulebase:
-        entry = scope.find(f"./{edit.rulebase}-rulebase/security/rules/entry[@name='{name}']")
+        entry = _find_named(scope.find(f"./{edit.rulebase}-rulebase/security/rules"), "entry", name)
         leaf = edit.field
     elif (
         edit.referrer_kind == "nat-rule"
         and edit.rulebase
         and edit.field in ("source", "destination")
     ):
-        entry = scope.find(f"./{edit.rulebase}-rulebase/nat/rules/entry[@name='{name}']")
+        entry = _find_named(scope.find(f"./{edit.rulebase}-rulebase/nat/rules"), "entry", name)
         leaf = edit.field
     else:
         return None
@@ -83,7 +101,7 @@ def _apply_delete(root: ET.Element, kind: str, name: str, location: str) -> None
     container = scope.find(kind)
     if container is None:
         return
-    entry = container.find(f"./entry[@name='{name}']")
+    entry = _find_named(container, "entry", name)
     if entry is not None:
         container.remove(entry)
 
@@ -95,7 +113,7 @@ def _apply_rename(root: ET.Element, kind: str, location: str, old: str, new: str
     container = scope.find(kind)
     if container is None:
         return
-    entry = container.find(f"./entry[@name='{old}']")
+    entry = _find_named(container, "entry", old)
     if entry is not None:
         entry.set("name", new)
 
@@ -107,7 +125,7 @@ def _apply_upsert(root: ET.Element, u: ObjectUpsert) -> None:
     container = scope.find(u.kind.value)
     if container is None:
         container = ET.SubElement(scope, u.kind.value)
-    entry = container.find(f"./entry[@name='{u.name}']")
+    entry = _find_named(container, "entry", u.name)
     if entry is None:
         entry = ET.SubElement(container, "entry")
         entry.set("name", u.name)
