@@ -10,6 +10,8 @@ from psc.core.models import (
     AddressGroup,
     AddressType,
     Location,
+    Service,
+    ServiceGroup,
     Snapshot,
 )
 from psc.core.setcmd import render_changeset
@@ -267,7 +269,71 @@ def test_plan_service_no_ports() -> None:
     assert ei.value.error_type is ErrorType.VALIDATION
 
 
-@pytest.mark.parametrize("bad", ["abc", "70000", "443;22", "-"])
+def test_plan_service_source_port_only_rejected() -> None:
+    # A source-port-only service is invalid in PAN-OS: <port> is mandatory.
+    with pytest.raises(PscError) as ei:
+        crud.plan_service(
+            _snap(),
+            "s",
+            "tcp",
+            destination_port=None,
+            source_port="1024",
+            description=None,
+            tags=[],
+            location=SHARED,
+        )
+    assert ei.value.error_type is ErrorType.VALIDATION
+
+
+def test_plan_service_dest_only_valid() -> None:
+    cs = crud.plan_service(
+        _snap(),
+        "s",
+        "tcp",
+        destination_port="443",
+        source_port=None,
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.upserts[0].fields == {"protocol/tcp/port": "443"}
+
+
+def test_plan_service_dest_and_source_valid() -> None:
+    cs = crud.plan_service(
+        _snap(),
+        "s",
+        "tcp",
+        destination_port="443",
+        source_port="1024-2048",
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.upserts[0].fields == {
+        "protocol/tcp/port": "443",
+        "protocol/tcp/source-port": "1024-2048",
+    }
+
+
+@pytest.mark.parametrize("good", ["443", "80,443", "1024-2048", "1-65535"])
+def test_plan_service_good_port(good: str) -> None:
+    cs = crud.plan_service(
+        _snap(),
+        "s",
+        "tcp",
+        destination_port=good,
+        source_port=None,
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.upserts[0].fields == {"protocol/tcp/port": good}
+
+
+@pytest.mark.parametrize(
+    "bad", ["abc", "70000", "443;22", "-", "0", "8080-80", "1-2-3", "0-100", "5-3"]
+)
 def test_plan_service_bad_port(bad: str) -> None:
     with pytest.raises(PscError) as ei:
         crud.plan_service(
@@ -301,6 +367,120 @@ def test_plan_service_group_empty_members() -> None:
     with pytest.raises(PscError) as ei:
         crud.plan_service_group(_snap(), "sg", members=[], tags=[], location=SHARED)
     assert ei.value.error_type is ErrorType.VALIDATION
+
+
+# --- service <-> service-group cross-kind name collision (F4) -----------------
+
+
+def test_plan_service_collision_with_service_group_is_blocker() -> None:
+    snap = Snapshot(service_groups=[ServiceGroup(name="x", location=SHARED, members=["m"])])
+    cs = crud.plan_service(
+        snap,
+        "x",
+        "tcp",
+        destination_port="443",
+        source_port=None,
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.is_blocked
+
+
+def test_plan_service_group_collision_with_service_is_blocker() -> None:
+    snap = Snapshot(
+        services=[Service(name="x", location=SHARED, protocol="tcp", destination_port="443")]
+    )
+    cs = crud.plan_service_group(snap, "x", members=["m"], tags=[], location=SHARED)
+    assert cs.is_blocked
+
+
+# --- in-place type/mode switch refusal (F5) -----------------------------------
+
+
+def test_plan_address_inplace_type_change_blocked() -> None:
+    snap = Snapshot(
+        addresses=[Address(name="h", location=SHARED, type=AddressType.IP_NETMASK, value="1.1.1.1")]
+    )
+    cs = crud.plan_address(
+        snap,
+        "h",
+        AddressType.FQDN,
+        "example.com",
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.is_blocked
+    assert cs.upserts == []  # no dual-type upsert planned
+
+
+def test_plan_address_same_type_update_ok() -> None:
+    snap = Snapshot(
+        addresses=[Address(name="h", location=SHARED, type=AddressType.IP_NETMASK, value="1.1.1.1")]
+    )
+    cs = crud.plan_address(
+        snap,
+        "h",
+        AddressType.IP_NETMASK,
+        "9.9.9.9",
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert not cs.is_blocked
+    assert cs.upserts[0].exists is True
+    assert cs.upserts[0].fields == {"ip-netmask": "9.9.9.9"}
+
+
+def test_plan_address_group_static_to_dynamic_blocked() -> None:
+    snap = Snapshot(address_groups=[AddressGroup(name="g", location=SHARED, static_members=["h1"])])
+    cs = crud.plan_address_group(
+        snap,
+        "g",
+        static_members=None,
+        dynamic_filter="'t-prod'",
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.is_blocked
+    assert cs.upserts == []
+
+
+def test_plan_address_group_dynamic_to_static_blocked() -> None:
+    snap = Snapshot(
+        address_groups=[AddressGroup(name="g", location=SHARED, dynamic_filter="'t-prod'")]
+    )
+    cs = crud.plan_address_group(
+        snap,
+        "g",
+        static_members=["h1"],
+        dynamic_filter=None,
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.is_blocked
+    assert cs.upserts == []
+
+
+def test_plan_service_protocol_switch_blocked() -> None:
+    snap = Snapshot(
+        services=[Service(name="s", location=SHARED, protocol="tcp", destination_port="443")]
+    )
+    cs = crud.plan_service(
+        snap,
+        "s",
+        "udp",
+        destination_port="53",
+        source_port=None,
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    assert cs.is_blocked
+    assert cs.upserts == []
 
 
 # --- tag ----------------------------------------------------------------------
@@ -358,6 +538,48 @@ def test_render_changeset_address_set_line() -> None:
     assert any(line == "set shared address new-h ip-netmask 2.2.2.2" for line in lines)
 
 
+def test_render_changeset_address_tag_line() -> None:
+    cs = crud.plan_address(
+        _snap(),
+        "new-h",
+        AddressType.IP_NETMASK,
+        "2.2.2.2",
+        description=None,
+        tags=["t-prod"],
+        location=SHARED,
+    )
+    lines = render_changeset(cs)
+    assert any(line == "set shared address new-h tag [ t-prod ]" for line in lines)
+
+
+def test_render_changeset_quotes_multiword_description() -> None:
+    cs = crud.plan_address(
+        _snap(),
+        "new-h",
+        AddressType.IP_NETMASK,
+        "2.2.2.2",
+        description="prod web host",
+        tags=[],
+        location=SHARED,
+    )
+    lines = render_changeset(cs)
+    assert any(line == 'set shared address new-h description "prod web host"' for line in lines)
+
+
+def test_render_changeset_quotes_spaced_dynamic_filter() -> None:
+    cs = crud.plan_address_group(
+        _snap(),
+        "ag",
+        static_members=None,
+        dynamic_filter="'prod' and 'web'",
+        description=None,
+        tags=[],
+        location=SHARED,
+    )
+    lines = render_changeset(cs)
+    assert any("""dynamic filter "'prod' and 'web'\"""" in line for line in lines)
+
+
 def _config_xml() -> str:
     return (
         "<config><shared>"
@@ -396,3 +618,17 @@ def test_apply_xml_update_roundtrip_value_changed() -> None:
     assert cs.upserts[0].exists is True
     out = apply_changeset(_config_xml(), cs)
     assert "9.9.9.9" in out
+
+
+def test_apply_xml_create_roundtrip_tags() -> None:
+    cs = crud.plan_address(
+        _snap(),
+        "new-h",
+        AddressType.IP_NETMASK,
+        "2.2.2.2",
+        description=None,
+        tags=["t-prod"],
+        location=SHARED,
+    )
+    out = apply_changeset(_config_xml(), cs)
+    assert "<tag><member>t-prod</member></tag>" in out

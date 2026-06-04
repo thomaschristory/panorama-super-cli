@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 
 from psc.core.changeset import ChangeSet, ObjectKind, ObjectUpsert
-from psc.core.models import AddressType, Location, Snapshot
+from psc.core.models import Address, AddressGroup, AddressType, Location, Service, Snapshot
 from psc.core.naming import INVALID_NAME_CHARS, NAME_MAX
 from psc.output.errors import ErrorType, PscError
 
@@ -32,9 +32,9 @@ DESC_MAX = 255
 TAG_NAME_MAX = 127
 
 _PROTOCOLS = ("tcp", "udp")
-_PORT_RE = re.compile(r"^[0-9,\-]+$")
 _COLOR_RE = re.compile(r"color([1-9]|[1-3][0-9]|4[0-2])")
 _PORT_MAX = 65535
+_RANGE_PARTS = 2  # a `lo-hi` port range splits into exactly two integers
 
 
 def _validate_name_charset(name: str, *, max_len: int, what: str) -> None:
@@ -89,6 +89,24 @@ def _exists(snapshot: Snapshot, kind: ObjectKind, name: str, location: Location)
     return key in set(buckets[kind])
 
 
+def _existing_address(snapshot: Snapshot, name: str, location: Location) -> Address | None:
+    return snapshot.address_index().get((location.name, name))
+
+
+def _existing_address_group(
+    snapshot: Snapshot, name: str, location: Location
+) -> AddressGroup | None:
+    key = (location.name, name)
+    for g in snapshot.address_groups:
+        if g.key == key:
+            return g
+    return None
+
+
+def _existing_service(snapshot: Snapshot, name: str, location: Location) -> Service | None:
+    return snapshot.service_index().get((location.name, name))
+
+
 def _collision_blocker(
     cs: ChangeSet, snapshot: Snapshot, other: ObjectKind, name: str, location: Location
 ) -> None:
@@ -122,6 +140,15 @@ def plan_address(
     _validate_tags(tags)
     cs = _new_changeset("address", name, location)
     _collision_blocker(cs, snapshot, ObjectKind.ADDRESS_GROUP, name, location)
+    existing = _existing_address(snapshot, name, location)
+    if existing is not None and existing.type is not addr_type:
+        # An in-place type switch would leave the old value element behind on
+        # offline apply, yielding an invalid dual-type object. Refuse it.
+        cs.blockers.append(
+            f"cannot change address '{name}' @{location.name} type from "
+            f"{existing.type.value} to {addr_type.value} in place — delete and recreate"
+        )
+        return cs
     fields = {addr_type.value: value}  # value stored verbatim, never normalized
     if description:
         fields["description"] = description
@@ -132,7 +159,7 @@ def plan_address(
             location=location.name,
             fields=fields,
             tags=tags,
-            exists=_exists(snapshot, ObjectKind.ADDRESS, name, location),
+            exists=existing is not None,
         )
     )
     return cs
@@ -160,6 +187,15 @@ def plan_address_group(
         )
     cs = _new_changeset("address-group", name, location)
     _collision_blocker(cs, snapshot, ObjectKind.ADDRESS, name, location)
+    existing = _existing_address_group(snapshot, name, location)
+    if existing is not None and existing.is_dynamic != has_dynamic:
+        old_mode = "dynamic" if existing.is_dynamic else "static"
+        new_mode = "dynamic" if has_dynamic else "static"
+        cs.blockers.append(
+            f"cannot change address-group '{name}' @{location.name} mode from "
+            f"{old_mode} to {new_mode} in place — delete and recreate"
+        )
+        return cs
     fields: dict[str, str] = {}
     members: list[str] = []
     if has_dynamic:
@@ -178,23 +214,44 @@ def plan_address_group(
             fields=fields,
             members=members,
             tags=tags,
-            exists=_exists(snapshot, ObjectKind.ADDRESS_GROUP, name, location),
+            exists=existing is not None,
         )
     )
     return cs
 
 
 def _validate_port(port: str) -> None:
-    if not _PORT_RE.fullmatch(port):
-        raise PscError(
-            f"port '{port}' is malformed (digits, commas and ranges only)",
-            ErrorType.VALIDATION,
-        )
-    for piece in re.split(r"[,\-]", port):
-        if piece == "":
-            raise PscError(f"port '{port}' is malformed", ErrorType.VALIDATION)
-        if int(piece) > _PORT_MAX:
-            raise PscError(f"port '{piece}' is out of range (0-{_PORT_MAX})", ErrorType.VALIDATION)
+    """Validate a PAN-OS port spec's *structure*, not just its charset.
+
+    Each comma-separated token is either a single integer in 1..65535, or a
+    range `lo-hi` with both endpoints in 1..65535 and lo < hi. A charset regex
+    alone would wave through `0`, `8080-80` (reversed), `1-2-3` (multi-hyphen)
+    and empty pieces, all of which PAN-OS rejects.
+    """
+    bad = PscError(
+        f"port '{port}' is malformed (single ports or lo-hi ranges in 1-{_PORT_MAX})",
+        ErrorType.VALIDATION,
+    )
+    if not port:
+        raise bad
+
+    def _in_range(n: int) -> bool:
+        return 1 <= n <= _PORT_MAX
+
+    for token in port.split(","):
+        parts = token.split("-")
+        if not all(p.isdigit() for p in parts):
+            raise bad
+        nums = [int(p) for p in parts]
+        if len(parts) == 1:
+            if not _in_range(nums[0]):
+                raise bad
+        elif len(parts) == _RANGE_PARTS:
+            lo, hi = nums
+            if not (_in_range(lo) and _in_range(hi) and lo < hi):
+                raise bad
+        else:
+            raise bad
 
 
 def plan_service(
@@ -215,11 +272,19 @@ def plan_service(
         raise PscError(
             f"protocol '{protocol}' is not supported (use tcp or udp)", ErrorType.VALIDATION
         )
-    if not destination_port and not source_port:
-        raise PscError(
-            "service requires at least one of --dest-port / --source-port", ErrorType.VALIDATION
-        )
+    if not destination_port:
+        # PAN-OS makes the destination <port> element mandatory; a source-port-
+        # only service is invalid.
+        raise PscError("service requires a destination port (--dest-port)", ErrorType.VALIDATION)
     cs = _new_changeset("service", name, location)
+    _collision_blocker(cs, snapshot, ObjectKind.SERVICE_GROUP, name, location)
+    existing = _existing_service(snapshot, name, location)
+    if existing is not None and existing.protocol != protocol:
+        cs.blockers.append(
+            f"cannot change service '{name}' @{location.name} protocol from "
+            f"{existing.protocol} to {protocol} in place — delete and recreate"
+        )
+        return cs
     fields: dict[str, str] = {}
     if destination_port:
         _validate_port(destination_port)
@@ -236,7 +301,7 @@ def plan_service(
             location=location.name,
             fields=fields,
             tags=tags,
-            exists=_exists(snapshot, ObjectKind.SERVICE, name, location),
+            exists=existing is not None,
         )
     )
     return cs

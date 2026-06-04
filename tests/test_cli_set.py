@@ -193,7 +193,9 @@ def test_set_address_group_dynamic() -> None:
         "'t-prod'",
     )
     assert cp.returncode == 0, cp.stderr
-    assert "set shared address-group ag1 dynamic filter 't-prod'" in cp.stdout
+    # The free-text filter is rendered as one quoted token so the `set` script
+    # matches what --apply stores as element text (dry-run/apply equivalence).
+    assert """set shared address-group ag1 dynamic filter "'t-prod'\"""" in cp.stdout
 
 
 def test_set_service_tcp_apply(tmp_path: Path) -> None:
