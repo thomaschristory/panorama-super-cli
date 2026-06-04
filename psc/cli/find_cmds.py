@@ -21,11 +21,16 @@ def ip(
     file: Path | None = typer.Option(
         None, "--file", "-f", help="Read targets from a file (one per line; # comments)."
     ),
+    exact: bool = typer.Option(
+        False, "--exact", "-e", help="Only exact matches (drop contains/within)."
+    ),
 ) -> None:
     """Find which address objects/groups match an IP (or a whole list).
 
     Reports exact matches, broader objects that *contain* the target, and
     narrower objects *within* it, plus the address-groups that carry them.
+    With --exact, only objects equal to the target are reported (netmask and
+    bare-host forms still count as equal, e.g. 10.0.0.10 == 10.0.0.10/32).
     """
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
@@ -43,7 +48,7 @@ def ip(
             "provide one or more IP/CIDR/range/FQDN targets, or --file", ErrorType.VALIDATION
         )
 
-    results = find_ips(snap, items, rt.scope())
+    results = find_ips(snap, items, rt.scope(), exact=exact)
     rows: list[dict[str, object]] = []
     for res in results:
         if not res.matches:

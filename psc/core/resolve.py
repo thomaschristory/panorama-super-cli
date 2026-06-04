@@ -58,9 +58,17 @@ def _visible_names(snapshot: Snapshot, scope: Location | None) -> set[str] | Non
     return {loc.name for loc in snapshot.ancestors(scope)}
 
 
-def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> FindResult:
+def find_ip(
+    snapshot: Snapshot, raw: str, scope: Location | None = None, *, exact: bool = False
+) -> FindResult:
     """Find every address object/group matching `raw` within `scope` (which
-    includes the scoped device-group's ancestors and `shared`)."""
+    includes the scoped device-group's ancestors and `shared`).
+
+    With `exact=True`, only objects whose value equals the query exactly are
+    kept — broader (`CONTAINS`) and narrower (`WITHIN`) matches are dropped.
+    Netmask and bare-host forms still canonicalize equal (`10.0.0.10` ==
+    `10.0.0.10/32`), so those remain exact.
+    """
     query = parse_query(raw)
     visible = _visible_names(snapshot, scope)
     matched: list[tuple[Address, MatchKind]] = []
@@ -71,8 +79,9 @@ def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> Find
         if nv is None:
             continue
         mk = match(query, nv)
-        if mk is not None:
-            matched.append((addr, mk))
+        if mk is None or (exact and mk is not MatchKind.EXACT):
+            continue
+        matched.append((addr, mk))
 
     matches = [
         AddressMatch(
@@ -124,9 +133,9 @@ def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> Find
 
 
 def find_ips(
-    snapshot: Snapshot, raws: list[str], scope: Location | None = None
+    snapshot: Snapshot, raws: list[str], scope: Location | None = None, *, exact: bool = False
 ) -> list[FindResult]:
-    return [find_ip(snapshot, r, scope) for r in raws]
+    return [find_ip(snapshot, r, scope, exact=exact) for r in raws]
 
 
 class ObjectHit(BaseModel):
