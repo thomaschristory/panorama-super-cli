@@ -116,5 +116,6 @@ psc profile remove <name>
 ```
 
 Manage live connection profiles. `init`/`login` are the friendlier front door;
-`profile add` is the scriptable, non-interactive form. See
-[Configuration](config.md).
+`profile add` is the scriptable, non-interactive form. `profile list` also
+prints the config file's location (on stderr, so machine output stays clean) —
+handy because the path is platform-dependent. See [Configuration](config.md).

@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from psc.cli.runtime import Runtime
-from psc.config.loader import save_config
+from psc.config.loader import config_path, save_config
 from psc.config.models import Profile
 from psc.output.errors import ErrorType, PscError
 from psc.output.format import render
@@ -17,6 +17,16 @@ app = typer.Typer(no_args_is_help=True)
 def list_profiles(ctx: typer.Context) -> None:
     """Show configured live profiles (API keys are not printed)."""
     rt: Runtime = ctx.obj
+    # Where the config lives is platform-dependent (it differs on Windows), so
+    # surface it to help users find/edit the file (#48). It goes to stderr so it
+    # never pollutes the machine-readable rows on stdout, and prints even when
+    # no profiles are configured yet — the empty case is exactly when "where do
+    # I put them?" matters most.
+    path = config_path()
+    suffix = "" if path.exists() else " (not created yet)"
+    # soft_wrap + markup=False: never wrap a long path onto two lines, and never
+    # let a path with `[...]` be parsed as rich markup.
+    rt.stderr.print(f"config file: {path}{suffix}", soft_wrap=True, markup=False, highlight=False)
     rows = [
         {
             "name": p.name,
