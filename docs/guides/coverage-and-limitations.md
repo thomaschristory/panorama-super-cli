@@ -33,7 +33,7 @@ Within those rulebases it models exactly this **reference surface**:
 |-------|-----------|---------|
 | `source` / `destination` | address (+ address-group) | ✅ all rulebases |
 | `service` | service (+ service-group) | ✅ all rulebases that have it |
-| rule `tag` | tag | ✅ security + the 9 v0.3 rulebases — **not NAT** (see below) |
+| rule `tag` | tag | ✅ all rulebases (security, NAT, and the 9) |
 | NAT `source-translation` / `destination-translation` | address | ✅ where-used; **review-gated** for repoint |
 | PBF forwarding `nexthop` (`fqdn` variant) | address | ✅ where-used; **review-gated** for repoint |
 | static address-group / service-group members | address / service | ✅ |
@@ -64,14 +64,7 @@ saw the reference. **This is the most dangerous gap.** Treat every `unused`
 result on a **shared** object as "unused by policy," and verify in Panorama
 before deleting.
 
-### 2. NAT rule *tags*
-
-The reference graph walks NAT rules' address and service fields but **not their
-tags**. A tag applied only to NAT rules is reported `unused`, and a tag *rename*
-won't rewrite it on those rules. (Tracked — see the issue linked at the bottom.)
-Every other rulebase's tags *are* scanned.
-
-### 3. Dynamic address groups (DAGs) have no computed membership
+### 2. Dynamic address groups (DAGs) have no computed membership
 
 A DAG includes addresses by a **tag expression**, not a static member list, so
 psc cannot walk "which addresses this DAG contains." An address whose only use
@@ -79,7 +72,7 @@ is being matched into a DAG (via its tags) that a rule then consumes can be
 reported `unused`. (DAG *filters* are parsed for the unused-**tag** check, but
 DAG **membership** is not resolved for the unused-**address** check.)
 
-### 4. Whole object categories psc does not model
+### 3. Whole object categories psc does not model
 
 These are not object kinds psc tracks, so it can neither tell you what
 references them nor follow references *to* them:
@@ -96,7 +89,7 @@ entirely; (b) when one of these names appears in a rule field psc *does* read
 will surface as a **`dangling` false-positive** — and it never seeds
 reachability, so it can't keep a *different* object from looking unused.
 
-### 5. The config is a single snapshot
+### 4. The config is a single snapshot
 
 Findings reflect the one export/device you pointed psc at. References from
 **another Panorama**, from **pushed templates**, or from **firewall-local
@@ -135,6 +128,8 @@ config.
 
 ## Tracking
 
-The fixable gaps above are tracked in the issue tracker (NAT-rule tags;
-audit/`unused` scan-scope visibility). See
+`refs unused` prints a one-line caveat to **stderr** restating these blind spots
+at the point of use (stdout stays pure machine output). The remaining gaps —
+DAG-membership reachability, parsing template/network references, modelling more
+object kinds — are tracked in the issue tracker. See
 [github.com/thomaschristory/panorama-super-cli/issues](https://github.com/thomaschristory/panorama-super-cli/issues).
