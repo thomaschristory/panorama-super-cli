@@ -148,7 +148,11 @@ def delete_lines(d: ObjectDelete) -> list[str]:
 
 def upsert_lines(u: ObjectUpsert) -> list[str]:
     p = f"set {scope_prefix(u.location)} {u.kind.value} {u.name}"
-    lines = [f"{p} {leaf} {val}" for leaf, val in u.fields.items()]
+    # A `fields` key may be a nested leaf path (`protocol/tcp/port`,
+    # `dynamic/filter`); PAN-OS `set` addresses each node as a space-separated
+    # token, so a `/` becomes a space — matching how apply_xml/apply_live split
+    # the same path into nested XML elements.
+    lines = [f"{p} {leaf.replace('/', ' ')} {val}" for leaf, val in u.fields.items()]
     if u.members:
         leaf = "static" if u.kind.value == "address-group" else "members"
         lines.append(f"{p} {leaf} {_members(u.members)}")
