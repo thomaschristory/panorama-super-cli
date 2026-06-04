@@ -11,6 +11,7 @@ from rich.console import Console
 
 from psc import __version__
 from psc.cli import (
+    audit_cmds,
     auth_cmds,
     dedup_cmds,
     find_cmds,
@@ -136,6 +137,11 @@ app.add_typer(find_cmds.app, name="find", help="Find objects by IP/value/name.")
 app.add_typer(dedup_cmds.app, name="dedup", help="Find and merge duplicate objects.")
 app.add_typer(refs_cmds.app, name="refs", help="Where-used, unused, and dangling references.")
 app.add_typer(name_cmds.app, name="name", help="Naming-template lint and rename.")
+app.add_typer(
+    audit_cmds.app,
+    name="audit",
+    help="Audit address objects for overlapping or contained CIDR ranges.",
+)
 app.add_typer(profile_cmds.app, name="profile", help="Manage live connection profiles.")
 app.add_typer(version_cmds.app, name="version", help="Show version; check PyPI for updates.")
 app.command(
