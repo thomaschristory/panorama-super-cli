@@ -57,6 +57,7 @@ nav:
       - Finding objects: guides/finding-objects.md
       - Duplicates and merging: guides/duplicates-and-merging.md
       - References and audit: guides/references-and-audit.md
+      - Coverage and blind spots: guides/coverage-and-limitations.md
       - Naming templates: guides/naming.md
       - Output formats: guides/output-formats.md
       - Writes and safety: guides/safety.md

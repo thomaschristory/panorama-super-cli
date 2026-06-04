@@ -46,6 +46,10 @@ fields), and PBF, decryption, authentication, QoS, application-override, DoS,
 SD-WAN, tunnel-inspect, and network-packet-broker. It powers where-used, unused
 detection, and the safe repointing that merge and rename rely on.
 
+It does **not** see references in templates, network/device config, or a few
+other places — so `unused` is a candidate list, not a delete list. See
+[Coverage and blind spots](../guides/coverage-and-limitations.md).
+
 ## Sources
 
 - **Offline** (`--config file.xml`): read and rewrite an exported config.
