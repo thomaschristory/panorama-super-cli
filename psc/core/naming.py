@@ -15,7 +15,13 @@ import re
 
 from pydantic import BaseModel
 
-from psc.core.changeset import ChangeSet, ObjectKind, ObjectRename, ReferenceEdit
+from psc.core.changeset import (
+    ChangeSet,
+    ObjectKind,
+    ObjectRename,
+    ReferenceEdit,
+    gate_unmappable_reference_edits,
+)
 from psc.core.dedup import field_members
 from psc.core.models import Address, AddressType, Location, Service, Snapshot
 from psc.core.refs import ReferenceGraph
@@ -182,4 +188,12 @@ def plan_rename(
     cs.renames.append(
         ObjectRename(kind=kind, location=location_name, old_name=old_name, new_name=new_name)
     )
+    # Refuse any repoint the appliers would silently skip (e.g. a NAT translation
+    # field): skipping it while renaming the object away leaves a dangling
+    # reference. Shared gate keeps offline and live identical (#28).
+    gate_unmappable_reference_edits(cs)
+    if cs.blockers:
+        # Invariant: a blocked plan carries zero ops (see `plan_merge`).
+        cs.reference_edits.clear()
+        cs.renames.clear()
     return cs
