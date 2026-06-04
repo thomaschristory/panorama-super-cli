@@ -43,6 +43,22 @@ def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
 
 
+# Free-text leaf fields whose values may contain spaces or quotes and so must be
+# rendered as a single quoted PAN-OS token (matching the sibling object
+# renderers, which `_quote` description/filter/comments). Keyed on the leaf
+# *name* (the last path segment), so `dynamic/filter` matches via "filter".
+_FREE_TEXT_LEAVES = {"description", "comments", "filter"}
+
+
+def _quote_field_value(leaf: str, val: str) -> str:
+    """Quote a free-text leaf value so the `set` script and the XML applier
+    agree on the stored value. Simple leaves (IPs, ports, fqdns) stay bare so
+    existing object `set` lines remain byte-identical."""
+    if leaf.rsplit("/", 1)[-1] in _FREE_TEXT_LEAVES:
+        return _quote(val)
+    return val
+
+
 def address_lines(a: Address) -> list[str]:
     p = f"set {scope_prefix(a.location.name)} address {a.name}"
     lines = [f"{p} {a.type.value} {a.value}"]
@@ -148,7 +164,14 @@ def delete_lines(d: ObjectDelete) -> list[str]:
 
 def upsert_lines(u: ObjectUpsert) -> list[str]:
     p = f"set {scope_prefix(u.location)} {u.kind.value} {u.name}"
-    lines = [f"{p} {leaf} {val}" for leaf, val in u.fields.items()]
+    # A `fields` key may be a nested leaf path (`protocol/tcp/port`,
+    # `dynamic/filter`); PAN-OS `set` addresses each node as a space-separated
+    # token, so a `/` becomes a space — matching how apply_xml/apply_live split
+    # the same path into nested XML elements.
+    lines = [
+        f"{p} {leaf.replace('/', ' ')} {_quote_field_value(leaf, val)}"
+        for leaf, val in u.fields.items()
+    ]
     if u.members:
         leaf = "static" if u.kind.value == "address-group" else "members"
         lines.append(f"{p} {leaf} {_members(u.members)}")
