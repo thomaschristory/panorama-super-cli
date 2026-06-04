@@ -104,12 +104,17 @@ def render(
     rows: list[dict[str, Any]] | None = None,
     set_lines: list[str] | None = None,
     table_title: str | None = None,
+    group_by: str | None = None,
 ) -> None:
     """Print `model`/`rows`/`set_lines` in `fmt` to `console`.
 
     The console must be the *stdout* console; errors go elsewhere. Table output
     is the only format that uses rich styling — every other format is plain text
     so pipes and captures stay clean.
+
+    `group_by` is a table-only hint: a column name whose changing value marks a
+    new block. A horizontal rule is drawn between blocks so multi-target output
+    (e.g. `find ip --file`) is easy to scan. It does not affect machine formats.
     """
     # `soft_wrap=True` is critical: without it rich wraps long lines to the
     # console width and injects newlines *inside* JSON string values, producing
@@ -135,8 +140,13 @@ def render(
         table = Table(title=table_title, header_style="bold cyan")
         for col in rows[0]:
             table.add_column(col)
-        for row in rows:
+        prev: Any = None
+        for i, row in enumerate(rows):
+            if group_by and i > 0 and row.get(group_by) != prev:
+                table.add_section()
             table.add_row(*[_cell(row.get(col)) for col in rows[0]])
+            if group_by:
+                prev = row.get(group_by)
         console.print(table)
     else:
         console.print(_json(model), markup=False, highlight=False)
