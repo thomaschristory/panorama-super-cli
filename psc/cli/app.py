@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import ModuleType
 
 import click
 import typer
@@ -14,6 +15,28 @@ from psc.cli.runtime import Runtime, configure_logging
 from psc.config.loader import load_config
 from psc.output.errors import PscError
 from psc.output.format import OutputFormat
+
+
+def _click_exception_module() -> ModuleType:
+    """The Click `exceptions` module whose flavour matches what `app(...)` raises.
+
+    Typer >=0.16 vendors its own Click under `typer._click`, so the exceptions
+    `app(standalone_mode=False)` raises are not subclasses of the real `click.*`
+    (issue #31). Older Typer has no `typer._click` at all — importing it at
+    module top level would crash psc on *import*, breaking every command, which
+    is strictly worse than the bug we're fixing. Resolve defensively: prefer the
+    vendored module, fall back to the real Click (which older Typer raises).
+    """
+    try:
+        from typer._click import exceptions as vendored  # noqa: PLC0415 — conditional
+    except ImportError:
+        from click import exceptions as real  # noqa: PLC0415 — fallback for older Typer
+
+        return real
+    return vendored
+
+
+_typer_click_exc = _click_exception_module()
 
 app = typer.Typer(
     add_completion=True,
@@ -125,18 +148,27 @@ def _emit_error(err: PscError) -> None:
 
 
 def main() -> None:
+    # Typer 0.26 vendors its own Click (`typer._click`), so the exceptions
+    # `app(standalone_mode=False)` raises are NOT subclasses of the real
+    # `click.*`. Catch both flavours, or a no-args/`--help`/bad-command run
+    # escapes uncaught and prints a traceback instead of help (#31).
     try:
         app(standalone_mode=False)
     except PscError as err:
         _emit_error(err)
         raise SystemExit(err.exit_code) from None
-    except click.UsageError as err:
-        err.show()
-        raise SystemExit(2) from None
-    except (click.exceptions.Abort, KeyboardInterrupt):
+    except (KeyboardInterrupt, click.exceptions.Abort, _typer_click_exc.Abort):
         Console(stderr=True).print("aborted")
         raise SystemExit(130) from None
-    except click.exceptions.Exit as err:
+    except (click.exceptions.Exit, _typer_click_exc.Exit) as err:
+        raise SystemExit(err.exit_code) from None
+    except (click.ClickException, _typer_click_exc.ClickException) as err:
+        # `no_args_is_help` (and `--help`) already printed the help text; the
+        # raise is just a stop signal, so exit 0 rather than rendering it as an
+        # error. Genuine usage errors still print and exit non-zero.
+        if err.__class__.__name__ == "NoArgsIsHelpError":
+            raise SystemExit(0) from None
+        err.show()
         raise SystemExit(err.exit_code) from None
 
 
