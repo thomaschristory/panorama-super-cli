@@ -286,6 +286,59 @@ def test_merge_no_out_no_apply_still_dry_run(tmp_path: Path) -> None:
     assert not out.exists()
 
 
+DEDUP_GROUPS_FIXTURE = Path(__file__).parent / "fixtures" / "dedup-groups.xml"
+
+
+def test_dedup_groups_json_contract() -> None:
+    cp = run("-c", str(DEDUP_GROUPS_FIXTURE), "-o", "json", "dedup", "groups")
+    assert cp.returncode == 0
+    groups = json.loads(cp.stdout)
+    names = {m["name"] for g in groups for m in g["members"]}
+    assert names == {"grp-a", "grp-b"}  # equivalent via the nested group
+
+
+def test_dedup_groups_strict_exit_5_when_none(tmp_path: Path) -> None:
+    cfg = tmp_path / "cfg.xml"
+    cfg.write_text(_HOST_AND_NET_CONFIG)  # no address-groups at all
+    cp = run("-c", str(cfg), "--strict", "-o", "json", "dedup", "groups")
+    assert cp.returncode == 5
+    assert json.loads(cp.stdout)["type"] == "not_found"
+
+
+def test_dedup_merge_group_dry_run_set_contains_delete() -> None:
+    cp = run(
+        "-c",
+        str(DEDUP_GROUPS_FIXTURE),
+        "-o",
+        "set",
+        "dedup",
+        "merge-group",
+        "--keep",
+        "grp-a",
+        "--remove",
+        "grp-b",
+    )
+    assert cp.returncode == 0
+    assert "delete shared address-group grp-b" in cp.stdout
+
+
+def test_dedup_merge_group_blocked_exit_6_for_non_equivalent() -> None:
+    cp = run(
+        "-c",
+        str(DEDUP_GROUPS_FIXTURE),
+        "-o",
+        "json",
+        "dedup",
+        "merge-group",
+        "--keep",
+        "grp-a",
+        "--remove",
+        "grp-c",
+    )
+    assert cp.returncode == 6
+    assert json.loads(cp.stdout)["type"] == "conflict"
+
+
 def test_no_source_errors_config() -> None:
     cp = run("-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 9
