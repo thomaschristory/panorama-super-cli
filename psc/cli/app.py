@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 
 from psc import __version__
-from psc.cli import dedup_cmds, find_cmds, name_cmds, profile_cmds, refs_cmds
+from psc.cli import auth_cmds, dedup_cmds, find_cmds, name_cmds, profile_cmds, refs_cmds
 from psc.cli.runtime import Runtime, configure_logging
 from psc.config.loader import load_config
 from psc.output.errors import PscError
@@ -104,6 +104,14 @@ app.add_typer(dedup_cmds.app, name="dedup", help="Find and merge duplicate objec
 app.add_typer(refs_cmds.app, name="refs", help="Where-used, unused, and dangling references.")
 app.add_typer(name_cmds.app, name="name", help="Naming-template lint and rename.")
 app.add_typer(profile_cmds.app, name="profile", help="Manage live connection profiles.")
+app.command(
+    "init",
+    help="Interactively bootstrap a live profile (fetches an API key from a username/password).",
+)(auth_cmds.init)
+app.command(
+    "login",
+    help="Verify a profile's API key — and rotate it with --user.",
+)(auth_cmds.login)
 
 
 def _emit_error(err: PscError) -> None:

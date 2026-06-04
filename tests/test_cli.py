@@ -34,6 +34,24 @@ def test_find_ip_json_contract() -> None:
     assert {m["name"] for m in data["matches"]} >= {"h-web1", "web-primary"}
 
 
+def test_find_ip_exact_flag_json() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "find", "ip", "--exact", "10.0.0.10")
+    assert cp.returncode == 0
+    data = json.loads(cp.stdout)
+    assert data["exists"] is True
+    matches = data["matches"]
+    assert all(m["match"] == "exact" for m in matches)
+    names = {m["name"] for m in matches}
+    assert {"h-web1", "web-primary"} <= names
+    assert "net-10" not in names  # the /24 is CONTAINS, dropped under --exact
+
+
+def test_find_ip_exact_short_flag() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "find", "ip", "-e", "10.0.0.10")
+    assert cp.returncode == 0
+    assert all(m["match"] == "exact" for m in json.loads(cp.stdout)["matches"])
+
+
 def test_strict_not_found_exit_5() -> None:
     cp = run("-c", str(FIXTURE), "--strict", "-o", "json", "find", "ip", "203.0.113.9")
     assert cp.returncode == 5
