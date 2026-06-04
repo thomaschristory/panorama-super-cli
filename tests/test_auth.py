@@ -128,6 +128,17 @@ def test_verify_returns_system_info(monkeypatch: pytest.MonkeyPatch) -> None:
     assert info.serial == "0123456789"
 
 
+@pytest.mark.parametrize(("verify", "mode"), [(True, ssl.CERT_REQUIRED), (False, ssl.CERT_NONE)])
+def test_device_installs_tls_context(
+    monkeypatch: pytest.MonkeyPatch, verify: bool, mode: ssl.VerifyMode
+) -> None:
+    # Locks the read/probe path: _device() must hand the SDK a context whose
+    # verify_mode matches the profile, not the SDK's unverified default.
+    _patch_probe(monkeypatch)
+    pano = LiveSource("pano.example", "KEY", verify=verify)._device()
+    assert pano.xapi.ssl_context.verify_mode == mode  # type: ignore[attr-defined]
+
+
 def test_verify_invalid_creds_is_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_probe(monkeypatch, PanInvalidCredentials("Invalid credentials."))
     with pytest.raises(PscError) as exc:
