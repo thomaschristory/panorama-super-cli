@@ -48,13 +48,24 @@ diff <(xmllint --format panorama.xml) <(xmllint --format fixed.xml)
 
 ## Live writes
 
-Live `--apply` is not implemented in v0.1. To change a live Panorama today:
+Live `--apply` pushes the plan to Panorama's **candidate** config over the XML
+API and **never commits** — `psc` leaves a candidate for you to review and
+commit yourself, just as offline leaves a `--out` file.
 
-1. Plan against the running config (`--profile prod ... -o set`), **or**
-2. Plan offline and apply to a new file, then `load config partial` it.
+```console
+psc -p prod dedup merge --keep h-web1 --remove web-primary          # dry-run
+psc -p prod dedup merge --keep h-web1 --remove web-primary --apply  # writes the candidate
+```
 
-Either way you review a candidate config and commit on Panorama yourself —
-`psc` never commits for you.
+The same safety contract holds on the wire: `blockers` refuse the apply before
+any device contact, and references are repointed *before* the object is deleted.
+A name carrying a single quote can't be addressed by an XML-API xpath, so it's
+rejected up front (`input`, exit `2`) rather than sent malformed — rename it or
+apply that plan offline. If a write fails mid-plan, `psc` reports how far it got
+and leaves the uncommitted candidate for you to inspect or revert.
+
+Prefer to stage the change as a file instead? Plan with `-o set` (paste / `load
+config partial`) or plan offline with `--apply --out`.
 
 ## Debugging
 

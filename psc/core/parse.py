@@ -247,6 +247,39 @@ def _find_config_root(root: ET.Element) -> ET.Element:
     return found if found is not None else root
 
 
+def _editable_device_groups(root: ET.Element) -> list[ET.Element]:
+    """The user-editable device-group entries (those carrying objects/rules).
+
+    Scoped to `/config/devices/.../device-group` so the read-only hierarchy
+    mirror under `/config/readonly` is never parsed as a second set of objects.
+    Falls back to a broad search for hand-trimmed fixtures that omit the
+    `<devices>` wrapper but also have no `<readonly>` block.
+    """
+    entries = root.findall("./devices/entry/device-group/entry")
+    if entries:
+        return entries
+    if root.find("readonly") is None:
+        return [e for e in root.findall(".//device-group/entry") if e.get("name")]
+    return entries
+
+
+def _parse_dg_hierarchy(root: ET.Element) -> dict[str, str]:
+    """Read child→parent links from the `<readonly>` device-group mirror.
+
+    Panorama records nested device-group parentage as
+    `/config/readonly/devices/entry/device-group/entry/parent-dg`. A device-group
+    without a `parent-dg` (or absent here entirely) is a direct child of
+    `shared`.
+    """
+    parents: dict[str, str] = {}
+    for entry in root.findall("./readonly/devices/entry/device-group/entry"):
+        name = entry.get("name")
+        parent = entry.findtext("parent-dg")
+        if name and parent and parent.strip():
+            parents[name] = parent.strip()
+    return parents
+
+
 def parse_config(xml_text: str) -> Snapshot:
     """Parse a Panorama config XML string into a `Snapshot`."""
     root = _find_config_root(_safe_fromstring(xml_text))
@@ -256,12 +289,21 @@ def parse_config(xml_text: str) -> Snapshot:
     if shared is not None:
         _collect(snap, shared, Location.shared())
 
-    for dg in root.findall(".//device-group/entry"):
+    for dg in _editable_device_groups(root):
         name = dg.get("name")
         if not name:
             continue
         snap.device_groups.append(name)
         _collect(snap, dg, Location.dg(name))
+
+    # Only keep parent links for device-groups that actually carry config, so a
+    # stale readonly entry can't invent a phantom DG.
+    known = set(snap.device_groups)
+    snap.device_group_parents = {
+        child: parent
+        for child, parent in _parse_dg_hierarchy(root).items()
+        if child in known and parent in known
+    }
 
     return snap
 

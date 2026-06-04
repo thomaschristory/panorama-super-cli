@@ -1,0 +1,61 @@
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="h-shared"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+      <entry name="h-orphan"><ip-netmask>10.0.0.9/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="EMEA">
+          <address>
+            <entry name="h-emea"><ip-netmask>10.1.0.1/32</ip-netmask></entry>
+          </address>
+        </entry>
+        <entry name="EMEA-DC">
+          <address>
+            <entry name="h-dc"><ip-netmask>10.2.0.1/32</ip-netmask></entry>
+            <entry name="h-shared"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+          </address>
+        </entry>
+        <entry name="EMEA-DC-PROD">
+          <address>
+            <entry name="h-prod-local"><ip-netmask>10.3.0.1/32</ip-netmask></entry>
+          </address>
+          <address-group>
+            <entry name="grp-prod">
+              <static>
+                <member>h-shared</member>
+                <member>h-emea</member>
+                <member>h-dc</member>
+                <member>h-prod-local</member>
+              </static>
+            </entry>
+          </address-group>
+          <post-rulebase>
+            <security>
+              <rules>
+                <entry name="prod-rule">
+                  <source><member>grp-prod</member></source>
+                  <destination><member>any</member></destination>
+                  <service><member>any</member></service>
+                </entry>
+              </rules>
+            </security>
+          </post-rulebase>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+  <readonly>
+    <devices>
+      <entry name="localhost.localdomain">
+        <device-group>
+          <entry name="EMEA-DC"><parent-dg>EMEA</parent-dg></entry>
+          <entry name="EMEA-DC-PROD"><parent-dg>EMEA-DC</parent-dg></entry>
+        </device-group>
+      </entry>
+    </devices>
+  </readonly>
+</config>

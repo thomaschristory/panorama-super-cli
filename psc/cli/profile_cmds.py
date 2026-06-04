@@ -38,6 +38,9 @@ def add(
     api_key: str = typer.Option("", "--api-key", help="Panorama API key (stored 0600)."),
     port: int = typer.Option(443, "--port"),
     device_group: str | None = typer.Option(None, "--device-group"),
+    insecure: bool = typer.Option(
+        False, "--insecure", help="Skip TLS certificate verification (self-signed Panorama)."
+    ),
     set_default: bool = typer.Option(False, "--default", help="Make this the default profile."),
 ) -> None:
     """Add or replace a live profile in ~/.psc/config.yaml."""
@@ -46,7 +49,14 @@ def add(
     if any(p.name == name for p in cfg.profiles):
         cfg.profiles = [p for p in cfg.profiles if p.name != name]
     cfg.profiles.append(
-        Profile(name=name, hostname=hostname, api_key=api_key, port=port, device_group=device_group)
+        Profile(
+            name=name,
+            hostname=hostname,
+            api_key=api_key,
+            port=port,
+            verify_ssl=not insecure,
+            device_group=device_group,
+        )
     )
     if set_default or cfg.default_profile is None:
         cfg.default_profile = name
