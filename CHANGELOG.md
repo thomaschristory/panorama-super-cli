@@ -7,6 +7,17 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.5 — 2026-06-04
+
+### Fixed
+
+- **`psc find ip` table output now separates each target's matches with a
+  horizontal rule** (#43). Resolving several targets at once (notably with
+  `--file`) previously printed every match as one undifferentiated block, so it
+  was hard to see where one target's matches ended and the next began. The
+  table now draws a rule between per-target blocks. Machine output formats
+  (json/jsonl/yaml/csv/set) are unchanged.
+
 ## v0.2.4 — 2026-06-04
 
 ### Changed
