@@ -7,6 +7,7 @@ import json
 import click
 import typer
 from rich.console import Console
+from typer._click import exceptions as _typer_click_exc
 
 from psc import __version__
 from psc.cli import auth_cmds, dedup_cmds, find_cmds, name_cmds, profile_cmds, refs_cmds
@@ -125,18 +126,27 @@ def _emit_error(err: PscError) -> None:
 
 
 def main() -> None:
+    # Typer 0.26 vendors its own Click (`typer._click`), so the exceptions
+    # `app(standalone_mode=False)` raises are NOT subclasses of the real
+    # `click.*`. Catch both flavours, or a no-args/`--help`/bad-command run
+    # escapes uncaught and prints a traceback instead of help (#31).
     try:
         app(standalone_mode=False)
     except PscError as err:
         _emit_error(err)
         raise SystemExit(err.exit_code) from None
-    except click.UsageError as err:
-        err.show()
-        raise SystemExit(2) from None
-    except (click.exceptions.Abort, KeyboardInterrupt):
+    except (KeyboardInterrupt, click.exceptions.Abort, _typer_click_exc.Abort):
         Console(stderr=True).print("aborted")
         raise SystemExit(130) from None
-    except click.exceptions.Exit as err:
+    except (click.exceptions.Exit, _typer_click_exc.Exit) as err:
+        raise SystemExit(err.exit_code) from None
+    except (click.ClickException, _typer_click_exc.ClickException) as err:
+        # `no_args_is_help` (and `--help`) already printed the help text; the
+        # raise is just a stop signal, so exit 0 rather than rendering it as an
+        # error. Genuine usage errors still print and exit non-zero.
+        if err.__class__.__name__ == "NoArgsIsHelpError":
+            raise SystemExit(0) from None
+        err.show()
         raise SystemExit(err.exit_code) from None
 
 

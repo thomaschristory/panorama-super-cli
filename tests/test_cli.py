@@ -120,3 +120,22 @@ def test_no_source_errors_config() -> None:
     cp = run("-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 9
     assert json.loads(cp.stdout)["type"] == "config"
+
+
+def test_no_args_prints_help_without_traceback() -> None:
+    # Typer's no_args_is_help raises a *vendored* click NoArgsIsHelpError that
+    # the main() wrapper (standalone_mode=False) must swallow cleanly (#31).
+    cp = run()
+    combined = cp.stdout + cp.stderr
+    assert cp.returncode == 0
+    assert "Usage:" in combined
+    assert "Traceback" not in combined
+    assert "NoArgsIsHelpError" not in combined
+
+
+def test_unknown_command_usage_error_exit_2() -> None:
+    cp = run("no-such-command")
+    combined = cp.stdout + cp.stderr
+    assert cp.returncode == 2
+    assert "Traceback" not in combined
+    assert "No such command" in combined
