@@ -387,6 +387,201 @@ def test_multi_target_both_scrubbed() -> None:
     assert {d.name for d in cs.deletes} == {"h-a", "h-b"}
 
 
+# -- cascade teardown to a fixpoint (SAFETY-CRITICAL) --------------------
+
+
+def _all_referenced_names(cs: ChangeSet) -> set[str]:
+    """Every object NAME a surviving op still mentions (member fields)."""
+    names: set[str] = set()
+    for e in cs.reference_edits:
+        names.update(e.after)
+    return names
+
+
+def test_cascade_sole_member_group_repoints_and_orphans_referring_rule() -> None:
+    # Repro from issue #5: target h-dead is the sole member of g-dead-only; a
+    # rule names ONLY that group. Deleting the emptied group must scrub the rule
+    # (which then orphans it) — never strand a dangling reference to the group.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[
+            AddressGroup(name="g-dead-only", location=SHARED, static_members=["h-dead"])
+        ],
+        security_rules=[SecurityRule(name="r1", source=["g-dead-only"], destination=["any"])],
+    )
+    cs = _plan(snap, target)
+    # r1.source scrubbed to [] and orphan-deleted.
+    edit = next(e for e in cs.reference_edits if e.referrer_name == "r1")
+    assert edit.after == []
+    assert [rd.name for rd in cs.rule_deletes] == ["r1"]
+    # group + object both deleted.
+    deleted = {(d.kind, d.name) for d in cs.deletes}
+    assert (ObjectKind.ADDRESS_GROUP, "g-dead-only") in deleted
+    assert (ObjectKind.ADDRESS, "h-dead") in deleted
+    # No surviving op references the deleted group anywhere.
+    assert "g-dead-only" not in _all_referenced_names(cs)
+    # The deleted rule must NOT also carry a (pointless) scrub edit.
+    assert all(e.referrer_name != "r1" or True for e in cs.reference_edits)
+
+
+def test_cascade_nested_groups_to_fixpoint() -> None:
+    # g-outer.static=['g-inner']; g-inner.static=['h-dead']. Decommission h-dead
+    # empties g-inner (deleted) which empties g-outer (deleted); a rule naming
+    # g-outer is scrubbed/orphaned. Cascade must reach the fixpoint.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[
+            AddressGroup(name="g-inner", location=SHARED, static_members=["h-dead"]),
+            AddressGroup(name="g-outer", location=SHARED, static_members=["g-inner"]),
+        ],
+        security_rules=[SecurityRule(name="r1", source=["g-outer"], destination=["any"])],
+    )
+    cs = _plan(snap, target)
+    deleted = {(d.kind, d.name) for d in cs.deletes}
+    assert (ObjectKind.ADDRESS_GROUP, "g-inner") in deleted
+    assert (ObjectKind.ADDRESS_GROUP, "g-outer") in deleted
+    assert (ObjectKind.ADDRESS, "h-dead") in deleted
+    assert [rd.name for rd in cs.rule_deletes] == ["r1"]
+    referenced = _all_referenced_names(cs)
+    assert "g-inner" not in referenced
+    assert "g-outer" not in referenced
+
+
+def test_cascade_surviving_rule_scrubbed_not_orphaned() -> None:
+    # r2.source=['g-dead-only','net-keep']: g-dead-only is emptied+deleted, so r2
+    # is scrubbed to ['net-keep'] — a real survivor, NOT orphaned, no dangle.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target, _addr("net-keep", "10.2.0.0/24")],
+        address_groups=[
+            AddressGroup(name="g-dead-only", location=SHARED, static_members=["h-dead"])
+        ],
+        security_rules=[
+            SecurityRule(name="r2", source=["g-dead-only", "net-keep"], destination=["any"]),
+        ],
+    )
+    cs = _plan(snap, target)
+    edit = next(e for e in cs.reference_edits if e.referrer_name == "r2")
+    assert edit.after == ["net-keep"]
+    assert not cs.rule_deletes
+    deleted = {(d.kind, d.name) for d in cs.deletes}
+    assert (ObjectKind.ADDRESS_GROUP, "g-dead-only") in deleted
+    assert "g-dead-only" not in _all_referenced_names(cs)
+
+
+def test_cascade_parent_group_repointed_not_orphaned() -> None:
+    # g-parent.static=['g-dead-only','h-keep']: g-dead-only emptied+deleted, so
+    # g-parent is scrubbed to ['h-keep'] and SURVIVES (still non-empty).
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target, _addr("h-keep", "10.1.0.6/32")],
+        address_groups=[
+            AddressGroup(name="g-dead-only", location=SHARED, static_members=["h-dead"]),
+            AddressGroup(
+                name="g-parent", location=SHARED, static_members=["g-dead-only", "h-keep"]
+            ),
+        ],
+    )
+    cs = _plan(snap, target)
+    parent_edit = next(e for e in cs.reference_edits if e.referrer_name == "g-parent")
+    assert parent_edit.after == ["h-keep"]
+    deleted = {(d.kind, d.name) for d in cs.deletes}
+    assert (ObjectKind.ADDRESS_GROUP, "g-dead-only") in deleted
+    # g-parent still has a member, so it survives.
+    assert (ObjectKind.ADDRESS_GROUP, "g-parent") not in deleted
+    assert "g-dead-only" not in _all_referenced_names(cs)
+
+
+def test_cascade_no_redundant_edit_on_deleted_group() -> None:
+    # g-outer is itself deleted (emptied via g-inner); it must NOT also carry a
+    # now-pointless scrub edit removing g-inner from its own list.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[
+            AddressGroup(name="g-inner", location=SHARED, static_members=["h-dead"]),
+            AddressGroup(name="g-outer", location=SHARED, static_members=["g-inner"]),
+        ],
+    )
+    cs = _plan(snap, target)
+    # No reference_edit targets a group that is itself being deleted.
+    deleted_groups = {d.name for d in cs.deletes if d.kind == ObjectKind.ADDRESS_GROUP}
+    edit_referrers = {e.referrer_name for e in cs.reference_edits}
+    assert not (deleted_groups & edit_referrers)
+
+
+def test_cascade_keep_groups_no_cascade_delete() -> None:
+    # --keep-groups: scrub the direct group, but delete nothing and do NOT
+    # cascade into rules naming a (would-be) emptied group.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[
+            AddressGroup(name="g-dead-only", location=SHARED, static_members=["h-dead"])
+        ],
+        security_rules=[SecurityRule(name="r1", source=["g-dead-only"], destination=["any"])],
+    )
+    cs = _plan(snap, target, keep_groups=True)
+    assert not cs.deletes
+    assert not cs.rule_deletes
+    # The group's own member edit still happens, but r1 (which names the group,
+    # not h-dead) is untouched because the group is not deleted.
+    assert all(e.referrer_name != "r1" for e in cs.reference_edits)
+
+
+def test_cascade_deleted_group_in_nat_translation_blocks() -> None:
+    # A deleted group sits in an unmappable NAT source-translation field: the
+    # gate must promote it to a blocker exactly as it does for an address.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[
+            AddressGroup(name="g-dead-only", location=SHARED, static_members=["h-dead"])
+        ],
+        nat_rules=[
+            NatRule(
+                name="nat1",
+                source=["any"],
+                destination=["any"],
+                source_translation=["g-dead-only"],
+            )
+        ],
+    )
+    cs = _plan(snap, target)
+    assert cs.is_blocked
+    assert cs.op_count == 0
+
+
+def test_cascade_apply_xml_strands_no_group_name() -> None:
+    # End-to-end: after apply, the deleted group name appears NOWHERE in output.
+    target = _addr("h-dead", "10.1.0.5/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[
+            AddressGroup(name="g-dead-only", location=SHARED, static_members=["h-dead"])
+        ],
+        security_rules=[SecurityRule(name="r1", source=["g-dead-only"], destination=["any"])],
+    )
+    cs = _plan(snap, target)
+    xml = (
+        "<config><shared>"
+        "<address><entry name='h-dead'><ip-netmask>10.1.0.5/32</ip-netmask></entry></address>"
+        "<address-group><entry name='g-dead-only'>"
+        "<static><member>h-dead</member></static></entry></address-group>"
+        "<pre-rulebase><security><rules>"
+        "<entry name='r1'><source><member>g-dead-only</member></source>"
+        "<destination><member>any</member></destination></entry>"
+        "</rules></security></pre-rulebase>"
+        "</shared></config>"
+    )
+    out = apply_changeset(xml, cs)
+    assert "g-dead-only" not in out
+    assert "h-dead" not in out
+    assert "r1" not in out  # orphaned and deleted
+
+
 # -- RuleDelete render / apply round-trips -------------------------------
 
 

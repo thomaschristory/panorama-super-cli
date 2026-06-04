@@ -45,6 +45,18 @@ ADDRESS_KINDS = ("address", "address-group")
 SERVICE_KINDS = ("service", "service-group")
 
 
+def dag_filter_tags(filter_str: str) -> set[str]:
+    """The tag names a dynamic address-group filter references.
+
+    A DAG filter references tags as quoted tokens, e.g. "'prod' and 'web'".
+    Extract the quoted names and match exactly — a bare substring test would
+    count tag `web` as used by a `webserver` filter (or as selected by it). The
+    one place this parse lives, shared by unused-tag analysis and decommission's
+    DAG-selection blocker.
+    """
+    return set(re.findall(r"'([^']+)'", filter_str))
+
+
 @dataclass(frozen=True)
 class Target:
     """A resolved reference target: a concrete object's identity."""
@@ -434,13 +446,11 @@ class ReferenceGraph:
         for r in self.references:
             if r.namespace == "tag" and r.resolved is not None:
                 used.add((r.resolved.location.name, r.resolved.name))
-        # Dynamic address-group filters reference tags as quoted tokens, e.g.
-        # "'prod' and 'web'". Extract the quoted names and match exactly — a
-        # bare substring test would count tag `web` as used by a `webserver`
-        # filter.
+        # Dynamic address-group filters reference tags by name; see
+        # `dag_filter_tags` for why this is an exact-token match.
         for ag in self.snapshot.address_groups:
             if ag.dynamic_filter:
-                filter_tags = set(re.findall(r"'([^']+)'", ag.dynamic_filter))
+                filter_tags = dag_filter_tags(ag.dynamic_filter)
                 for t in self.snapshot.tags:
                     if t.name in filter_tags:
                         used.add((t.location.name, t.name))

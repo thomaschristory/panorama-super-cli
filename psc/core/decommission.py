@@ -4,17 +4,22 @@
 gone — remove every trace of it, safely."* Given the address objects that match
 an IP/CIDR/list, it builds one `ChangeSet` that, in this exact order:
 
-  1. scrubs each object from every static address-group's member list,
-  2. scrubs it from every rule's `source`/`destination` (security/NAT/policy),
-  3. deletes any rule left *orphaned* — a rule whose source OR destination has
+  1. scrubs every deleted object (the matched addresses *and* any group emptied
+     by the cascade) from every static address-group's member list and every
+     rule's `source`/`destination` (security/NAT/policy),
+  2. deletes any rule left *orphaned* — a rule whose source OR destination has
      no real member after the scrub (an empty field can never match traffic),
-  4. deletes any static group emptied by the scrub,
-  5. deletes the objects themselves.
+  3. deletes every group emptied by the scrub and the matched objects.
 
-The ordering is the whole point: a referent is never removed before the
-references to it are rewritten, so an executor walking the plan top-to-bottom
-can never strand a dangling reference. This composes the existing engines —
-`ReferenceGraph.where_used` for discovery, `field_members` for reading the
+The teardown CASCADES to a fixpoint: scrubbing the matched addresses out of a
+static group can empty it, so that group is deleted too — which means the
+references *to that group* must in turn be scrubbed, possibly emptying a parent
+group, and so on. Computing the delete set and the scrubs together to a fixpoint
+is what upholds the core invariant: a referent is never removed before the
+references to it are rewritten, so an executor walking the plan top-to-bottom can
+never strand a dangling reference — even when the referent is a group emptied
+mid-teardown. This composes the existing engines — `ReferenceGraph.where_used`
+for discovery (groups are reference targets too), `field_members` for reading the
 current member lists, and `gate_unmappable_reference_edits` for the
 NAT-translation / PBF-nexthop safety gate — and adds exactly one new op type,
 `RuleDelete`.
@@ -26,8 +31,6 @@ orphaned only when it is *truly empty* — no members at all, not even `'any'`.
 
 from __future__ import annotations
 
-import re
-
 from psc.core.changeset import (
     ChangeSet,
     ObjectDelete,
@@ -37,8 +40,8 @@ from psc.core.changeset import (
     gate_unmappable_reference_edits,
 )
 from psc.core.dedup import field_members
-from psc.core.models import Address, Location, Snapshot
-from psc.core.refs import Reference, ReferenceGraph
+from psc.core.models import Address, AddressGroup, Location, Snapshot
+from psc.core.refs import Reference, ReferenceGraph, dag_filter_tags
 
 # The two address-member rule fields decommission scrubs. `service`/`tag` are
 # explicitly out of scope (an address object never lives there), and NAT
@@ -66,7 +69,12 @@ def _has_real_member(members: list[str]) -> bool:
     return bool(members)
 
 
-def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
+# Identity of a deletable object: (kind, name, location_name). `kind` is
+# "address" or "address-group" — the two things a teardown can remove.
+_ObjId = tuple[str, str, str]
+
+
+def plan_decommission(  # noqa: PLR0912, PLR0915 — explicit safety phases + fixpoint
     snapshot: Snapshot,
     graph: ReferenceGraph,
     targets: list[Address],
@@ -77,10 +85,19 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
 ) -> ChangeSet:
     """Plan the reference-safe teardown of `targets` (resolved address objects).
 
+    The teardown CASCADES to a fixpoint: scrubbing the matched objects out of a
+    static group can empty it, so that group is itself deleted — which means
+    references *to that group* (a parent group's static list, a rule's
+    source/destination) must in turn be scrubbed, possibly emptying more groups,
+    and so on. We iterate scrub→find-newly-empty-groups until a pass discovers
+    nothing new, so a referent is never removed before the references to it are
+    rewritten — even when the referent is a group emptied mid-teardown.
+
     `keep_groups` scrubs rule/group fields but deletes neither groups nor the
-    objects (a "loosen, don't remove" mode); `keep_rules` keeps an orphaned
-    rule's emptied-field edit instead of deleting the rule. A blocked plan
-    carries zero ops (the invariant every consumer relies on).
+    objects (a "loosen, don't remove" mode) and therefore performs no cascade;
+    `keep_rules` keeps an orphaned rule's emptied-field edit instead of deleting
+    the rule. A blocked plan carries zero ops (the invariant every consumer
+    relies on).
     """
     cs = ChangeSet(title="decommission address objects")
 
@@ -98,8 +115,8 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
         cs.warnings.append("no address objects matched")
         return cs
 
-    # An edit accumulator keyed by referrer field identity, so multiple targets
-    # hitting the same group/rule field merge into one edit with all removed.
+    # An edit accumulator keyed by referrer field identity, so multiple removed
+    # members hitting the same group/rule field merge into one edit.
     edit_key = tuple[str, str, str, str, str | None]
     edits: dict[edit_key, ReferenceEdit] = {}
 
@@ -127,22 +144,57 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
             edits[key] = existing
         return existing
 
-    # -- PHASE 1 + 2: collect scrub edits for groups and rules ----------------
-    # Walk every reference to every matched object once; bucket by referrer.
-    for a in matched:
-        drop = {a.name}
-        for ref in graph.where_used("address", a.name, a.location):
-            is_group_static = ref.referrer_kind == "address-group" and ref.field == "static"
-            if is_group_static or ref.field in _SCRUB_FIELDS:
-                edit = _edit_for(ref)
-                edit.after = _remove_members(edit.after, drop)
-            elif ref.field in _NESTED_ADDR_FIELDS:
-                # A NAT translation field or PBF nexthop names the object but
-                # has no flat member list to rewrite. Record the would-be edit
-                # (members untouched) purely so the unmappable gate can see that
-                # the teardown strands it — and turn that into a blocker.
-                _edit_for(ref)
-            # service/tag fields are explicitly out of scope.
+    # -- the fixpoint ---------------------------------------------------------
+    # `delete_set` is every object slated for deletion (matched addresses, then
+    # any group emptied by the cascade). `worklist` holds objects whose
+    # referents still need scrubbing; we seed it with the matched addresses and
+    # add each newly-emptied group as it is discovered. Scrubbing an object's
+    # NAME out of every referrer's flat member field, then recomputing which
+    # static groups are now empty, repeats until a pass adds nothing new.
+    delete_set: set[_ObjId] = {("address", a.name, a.location.name) for a in matched}
+    worklist: list[tuple[str, str, Location]] = [("address", a.name, a.location) for a in matched]
+
+    while worklist:
+        next_worklist: list[tuple[str, str, Location]] = []
+        for kind, name, location in worklist:
+            drop = {name}
+            for ref in graph.where_used(kind, name, location):
+                is_group_static = ref.referrer_kind == "address-group" and ref.field == "static"
+                if is_group_static or ref.field in _SCRUB_FIELDS:
+                    edit = _edit_for(ref)
+                    edit.after = _remove_members(edit.after, drop)
+                elif ref.field in _NESTED_ADDR_FIELDS:
+                    # A NAT translation field or PBF nexthop names the object but
+                    # has no flat member list to rewrite. Record the would-be
+                    # edit (members untouched) purely so the unmappable gate can
+                    # see that the teardown strands it — and turn it into a
+                    # blocker. This applies equally to a deleted group named in
+                    # such a field.
+                    _edit_for(ref)
+                # service/tag fields are explicitly out of scope.
+
+        if keep_groups:
+            # "loosen, don't remove": scrub the direct referrers but never delete
+            # a group, so there is no cascade to chase.
+            break
+
+        # Recompute which static groups are now empty (every current static
+        # member is in `delete_set`, i.e. the post-scrub `after` is []). A newly
+        # empty group not already slated for deletion is added to `delete_set`
+        # AND queued so references TO it are scrubbed next pass — the cascade.
+        for ag in snapshot.address_groups:
+            if ag.static_members is None:  # dynamic group: no static list to empty
+                continue
+            gid: _ObjId = ("address-group", ag.name, ag.location.name)
+            if gid in delete_set:
+                continue
+            if ag.static_members and all(
+                _member_deleted(graph, ag, m, delete_set) for m in ag.static_members
+            ):
+                delete_set.add(gid)
+                next_worklist.append(("address-group", ag.name, ag.location))
+
+        worklist = next_worklist
 
     # -- dynamic-group filter tags (full teardown only) -----------------------
     # A dynamic group selects by tag at runtime; psc cannot rewrite a filter, so
@@ -156,8 +208,7 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
         for ag in snapshot.address_groups:
             if ag.dynamic_filter is None:
                 continue
-            filter_tags = set(re.findall(r"'([^']+)'", ag.dynamic_filter))
-            shared = target_tags & filter_tags
+            shared = target_tags & dag_filter_tags(ag.dynamic_filter)
             if shared:
                 tags = ", ".join(f"'{t}'" for t in sorted(shared))
                 cs.blockers.append(
@@ -166,7 +217,7 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
                     "filter — remove the tag(s) or the filter clause, then re-run"
                 )
 
-    # -- PHASE 3: orphan rule detection ---------------------------------------
+    # -- orphan rule detection ------------------------------------------------
     # A rule is orphaned iff after scrub its source OR destination is truly
     # empty. Reconstruct each rule's final src/dst from its edits.
     rule_fields: dict[tuple[str, str, str | None], dict[str, list[str]]] = {}
@@ -207,38 +258,37 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
                 "it can no longer match traffic — review it by hand"
             )
 
-    # Emit the accumulated scrub edits (groups + rules), groups first then rules
-    # so the human plan reads in dependency order.
-    group_edits = [e for e in edits.values() if e.referrer_kind == "address-group"]
+    # -- emit ops in the safe order, minimally -------------------------------
+    # Drop the now-pointless scrub edit on a GROUP that is itself being deleted:
+    # rewriting members that vanish with the group is redundant (the whole
+    # group entry goes). A SURVIVING group that named a deleted object keeps its
+    # scrub. Rule edits are kept even for an orphaned rule: the existing
+    # contract emits both the emptied-field edit *and* the RuleDelete (the edit
+    # makes the plan auditable, the delete removes the dead rule). Group edits
+    # first, then rule edits, so the human plan reads in dependency order.
+    deleted_group_ids = {(n, loc) for (k, n, loc) in delete_set if k == "address-group"}
+    group_edits = [
+        e
+        for e in edits.values()
+        if e.referrer_kind == "address-group"
+        and (e.referrer_name, e.referrer_location) not in deleted_group_ids
+    ]
     rule_edits = [e for e in edits.values() if e.referrer_kind != "address-group"]
     cs.reference_edits.extend(group_edits)
     cs.reference_edits.extend(rule_edits)
 
-    # -- PHASE 4: delete groups emptied by the scrub --------------------------
+    # -- delete groups (emptied by the cascade), then the matched objects ----
     if not keep_groups:
-        for edit in group_edits:
-            if not edit.after:
-                cs.deletes.append(
-                    ObjectDelete(
-                        kind=ObjectKind.ADDRESS_GROUP,
-                        name=edit.referrer_name,
-                        location=edit.referrer_location,
-                    )
-                )
+        for kind, name, loc_name in sorted(delete_set):
+            obj_kind = ObjectKind.ADDRESS_GROUP if kind == "address-group" else ObjectKind.ADDRESS
+            cs.deletes.append(ObjectDelete(kind=obj_kind, name=name, location=loc_name))
     else:
-        for edit in group_edits:
-            if not edit.after:
+        for e in edits.values():
+            if e.referrer_kind == "address-group" and not e.after:
                 cs.warnings.append(
-                    f"address-group '{edit.referrer_name}'@{edit.referrer_location} is now empty "
+                    f"address-group '{e.referrer_name}'@{e.referrer_location} is now empty "
                     "(kept per --keep-groups) — it may dangle; delete it by hand if unused"
                 )
-
-    # -- PHASE 5: delete the objects themselves -------------------------------
-    if not keep_groups:
-        for a in matched:
-            cs.deletes.append(
-                ObjectDelete(kind=ObjectKind.ADDRESS, name=a.name, location=a.location.name)
-            )
 
     # The shared gate: refuse any scrub edit the appliers would silently skip
     # (NAT translation / PBF nexthop) now that the plan tears the object down —
@@ -253,6 +303,23 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — five explicit safety phases
         cs.rule_deletes.clear()
         cs.deletes.clear()
     return cs
+
+
+def _member_deleted(
+    graph: ReferenceGraph, group: AddressGroup, member_name: str, delete_set: set[_ObjId]
+) -> bool:
+    """Whether `member_name` (a static member of `group`) is slated for deletion.
+
+    Resolves the member NAME to its actual object along the device-group chain
+    (PAN-OS shadowing) so the `delete_set` lookup keys on the real object's
+    identity, not the bare name — a member shadowed by a nearer definition must
+    test against that definition. A name that resolves to nothing (dangling) is
+    not in any delete set, so the group is treated as still non-empty.
+    """
+    target = graph.resolve("address", member_name, group.location)
+    if target is None:
+        return False
+    return (target.kind, target.name, target.location.name) in delete_set
 
 
 def _locate_rule(
