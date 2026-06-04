@@ -7,6 +7,54 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.4.0 — 2026-06-05
+
+### Added
+
+- **`psc audit overlaps`** (#8) — report address objects whose CIDR/range
+  intervals contain or overlap one another (e.g. a `/32` that sits inside a
+  `/24` that is also an object), to surface redundant or shadowing objects.
+  Pure read; table/json; honours device-group scope; `--strict` exits `5` when
+  none. A sort-then-sweep keeps it off the O(n²) path; only EXACT/WITHIN-style
+  interval relationships are emitted, per IP family.
+- **`psc dedup groups`** + **`psc dedup merge-group`** (#10) — group-level
+  deduplication. `dedup groups` buckets address-groups that resolve to the same
+  *effective* set of addresses under different names (recursively, cycle-safe),
+  warning about any dynamic/unresolvable groups it had to skip. `merge-group`
+  collapses one group into another by reusing the repoint-before-delete merge
+  engine; it blocks on non-equivalent effective sets, on nested/cyclic pairs
+  (which would create a self-referential group), and when the kept group isn't
+  visible at a referrer's scope.
+- **`psc set address|address-group|service|service-group|tag`** (#6) —
+  create or update a single object with client-side PAN-OS validation
+  (name ≤63 leading-alnum, description ≤255, tag name ≤127, exactly one address
+  value kind, `--dest-port` required for services, `colorN` tag colours).
+  Validation errors exit `4`; a cross-kind name collision or an in-place
+  type/mode change on update is a blocker (exit `6`). Dry-run `set` plan;
+  offline `--apply` (live updates of existing objects are refused — use offline).
+- **`psc rule edit-member --add/--remove`** (#7) — idempotently add or remove
+  one member of a rule field (`source`/`destination`/`service`/`application`).
+  Because PAN-OS `set` on a member field *appends*, a removal renders
+  `delete <field>` + `set <field> [ … ]`; re-running any edit is a no-op. NAT's
+  scalar `service` is blocked; `application` is valid only on security rules.
+- **`psc decommission <ip|cidr|file>`** (#5) — flagship reference-safe teardown.
+  Given the address objects matching an IP/CIDR/list, it scrubs them from every
+  group and rulebase, deletes rules left orphaned (no real source *or* no real
+  destination — `any` survives), deletes emptied groups, and deletes the objects
+  — in that order, dry-run by default. The teardown **cascades to a fixpoint**:
+  deleting an emptied group repoints/orphans the rules and parent groups that
+  named it, so a referent is never removed before its references are rewritten.
+  References in nested NAT-translation / PBF-nexthop fields, and dynamic-group
+  filter-tag matches, are hard blockers; orphan-rule deletions are warnings.
+  `--keep-groups` / `--keep-rules` narrow the teardown. Adds the `RuleDelete`
+  changeset op (offline and live appliers updated atomically).
+
+### Documentation
+
+- New "Editing objects" guide (set / rule edit-member / decommission) and
+  expanded audit, duplicates, and safety guides; CLI reference, README, and the
+  contributor architecture cheat-sheet updated for all five commands.
+
 ## v0.3.1 — 2026-06-04
 
 ### Added
