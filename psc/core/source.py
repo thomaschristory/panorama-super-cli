@@ -114,6 +114,15 @@ class OfflineSource:
         out = Path(out_path)
         if out.resolve() == self.path.resolve():
             raise PscError("--out must differ from the source config path", ErrorType.CONFIG)
+        # The blocker gate is enforced here for *every* format — the XML path
+        # relies on `apply_changeset`, but the set path renders the plan without
+        # it, so refuse before writing rather than emit a `# BLOCKED` file.
+        if cs.is_blocked:
+            raise PscError(
+                "refusing to apply a blocked plan",
+                ErrorType.CONFLICT,
+                details={"blockers": cs.blockers},
+            )
         # Both artifacts share the same safety guards above; only the bytes differ.
         if out_format is ConfigFormat.SET:
             script = render_changeset(cs)

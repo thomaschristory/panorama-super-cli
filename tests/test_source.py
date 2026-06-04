@@ -46,3 +46,17 @@ def test_apply_set_format_still_refuses_overwriting_source() -> None:
 def test_apply_set_format_still_requires_out_path() -> None:
     with pytest.raises(PscError):
         OfflineSource(FIXTURE).apply(_delete_cs(), out_path=None, out_format=ConfigFormat.SET)
+
+
+def test_apply_set_format_refuses_blocked_plan_and_writes_nothing(tmp_path: Path) -> None:
+    # The blocker gate is enforced at the applier level for every format, not
+    # only in the CLI — a blocked plan must never reach a written artifact.
+    out = tmp_path / "plan.set"
+    blocked = ChangeSet(
+        title="t",
+        blockers=["cross-scope reference can't be repointed"],
+        deletes=[ObjectDelete(kind=ObjectKind.ADDRESS, name="web-primary", location="shared")],
+    )
+    with pytest.raises(PscError):
+        OfflineSource(FIXTURE).apply(blocked, out_path=out, out_format=ConfigFormat.SET)
+    assert not out.exists()
