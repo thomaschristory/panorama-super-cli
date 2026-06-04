@@ -95,9 +95,16 @@ Rename **refuses** a shared-vs-device-group shadow collision (exit `6`).
 ### profile — live connections
 
 ```bash
-psc profile add --name prod --host panorama.example.com --api-key "$KEY" --default
+psc init --name prod --host panorama.example.com --user admin   # password→API key, verify, save (0600)
+psc login                                                       # verify the stored key (show system info)
+psc login --user admin                                          # rotate the key (re-keygen + verify)
+psc profile add --name prod --host panorama.example.com --api-key "$KEY" --default  # scriptable, key in hand
 psc profile list
 ```
+
+Password comes from `$PSC_PASSWORD` or a hidden prompt, never a flag. TLS is
+verified by default; add `--insecure` to `init` for a self-signed Panorama. Auth
+failures exit `8`, unreachable host exits `7`.
 
 ## Output formats
 
