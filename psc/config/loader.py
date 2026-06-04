@@ -42,9 +42,11 @@ def load_config(path: Path | None = None) -> Config:
 def save_config(config: Config) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    buf = io.StringIO()
+    # Inline YAML setup (not shared with psc.output) so config persistence never
+    # depends on the rendering layer.
     yaml = YAML()
     yaml.default_flow_style = False
-    buf = io.StringIO()
     yaml.dump(config.model_dump(mode="json"), buf)
     path.write_text(buf.getvalue(), encoding="utf-8")
     path.chmod(0o600)  # contains API keys

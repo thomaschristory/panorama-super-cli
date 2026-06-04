@@ -60,9 +60,9 @@ def _jsonl(model: Any) -> str:
 
 
 def _yaml(data: Any) -> str:
+    buf = io.StringIO()
     yaml = YAML()
     yaml.default_flow_style = False
-    buf = io.StringIO()
     yaml.dump(to_jsonable(data), buf)
     return buf.getvalue().rstrip("\n")
 
@@ -70,11 +70,8 @@ def _yaml(data: Any) -> str:
 def _csv(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return ""
-    fields: list[str] = []
-    for row in rows:
-        for k in row:
-            if k not in fields:
-                fields.append(k)
+    # dict.fromkeys preserves first-seen column order while de-duplicating.
+    fields = list(dict.fromkeys(k for row in rows for k in row))
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()

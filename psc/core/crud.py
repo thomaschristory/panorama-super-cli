@@ -125,6 +125,17 @@ def _new_changeset(verb_kind: str, name: str, location: Location) -> ChangeSet:
     return ChangeSet(title=f"set {verb_kind} '{name}' @{location.name}")
 
 
+def _validate_common(name: str, description: str | None, tags: list[str]) -> None:
+    """Shared name/description/tag validation for the object planners.
+
+    The three validators must fire in this order (name, description, tags) so the
+    first VALIDATION error a caller hits is identical to running them inline.
+    """
+    validate_name(name)
+    validate_description(description)
+    _validate_tags(tags)
+
+
 def plan_address(
     snapshot: Snapshot,
     name: str,
@@ -135,9 +146,7 @@ def plan_address(
     tags: list[str],
     location: Location,
 ) -> ChangeSet:
-    validate_name(name)
-    validate_description(description)
-    _validate_tags(tags)
+    _validate_common(name, description, tags)
     cs = _new_changeset("address", name, location)
     _collision_blocker(cs, snapshot, ObjectKind.ADDRESS_GROUP, name, location)
     existing = _existing_address(snapshot, name, location)
@@ -175,9 +184,7 @@ def plan_address_group(
     tags: list[str],
     location: Location,
 ) -> ChangeSet:
-    validate_name(name)
-    validate_description(description)
-    _validate_tags(tags)
+    _validate_common(name, description, tags)
     has_static = bool(static_members)
     has_dynamic = dynamic_filter is not None
     if has_static == has_dynamic:
@@ -265,9 +272,7 @@ def plan_service(
     tags: list[str],
     location: Location,
 ) -> ChangeSet:
-    validate_name(name)
-    validate_description(description)
-    _validate_tags(tags)
+    _validate_common(name, description, tags)
     if protocol not in _PROTOCOLS:
         raise PscError(
             f"protocol '{protocol}' is not supported (use tcp or udp)", ErrorType.VALIDATION
