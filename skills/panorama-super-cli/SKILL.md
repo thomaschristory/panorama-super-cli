@@ -84,8 +84,10 @@ like `10.0.0.0/8` would otherwise drown out the host you asked for.
 psc -c cfg.xml -o json dedup addresses            # strict: byte-identical values only
 psc -c cfg.xml -o json dedup addresses --not-strict  # also mask host bits (10.1.1.50/24 ~ 10.1.1.0/24)
 psc -c cfg.xml -o json dedup services
+psc -c cfg.xml -o json dedup groups               # address-groups w/ identical effective member set
 psc -c cfg.xml -o json dedup merge --keep h-web1 --remove web-primary   # dry-run plan
 psc -c cfg.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml
+psc -c cfg.xml dedup merge-group --keep grp-a --remove grp-b --apply --out fixed.xml
 ```
 
 `merge` repoints **every** group/security-rule/NAT reference onto `--keep`
@@ -93,6 +95,14 @@ psc -c cfg.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixe
 (use `--allow-value-change` to override) or if the survivor isn't visible where
 a reference lives. Per-object locations: `--keep-location` / `--remove-location`
 (default: `--device-group` or `shared`).
+
+`dedup groups` buckets address-groups by the canonical leaf-address set they
+expand to (nested groups flattened); dynamic/unresolvable groups are skipped and
+noted on stderr (not exhaustive). `--location` scopes the comparison.
+`merge-group` collapses `--remove` into `--keep` with the same repoint-before-
+delete engine, but has **no value-change override** — it **blocks** (exit `6`)
+unless both groups expand to the *same* set, on a nested/cyclic pair, or if the
+survivor isn't visible where a reference lives.
 
 ### refs — where-used, unused, dangling
 
@@ -128,6 +138,68 @@ psc -c cfg.xml name apply --object h-web1          # rename to the scheme's name
 ```
 
 Rename **refuses** a shared-vs-device-group shadow collision (exit `6`).
+
+### audit — overlapping / contained ranges
+
+```bash
+psc -c cfg.xml -o json audit overlaps             # pairs where one range contains/overlaps another
+psc -c cfg.xml --strict audit overlaps            # exit 5 when none (CI gate)
+```
+
+Pure read. Each pair once; `relationship` is `contains` (one broader) or
+`overlaps`. `ip-netmask`/`ip-range` only (no FQDN/wildcard). Scope with `-d`;
+`--strict` is the global flag (before the group).
+
+### set — create / update one object
+
+```bash
+psc -c cfg.xml set address --name h-web1 --type ip-netmask --value 10.0.0.10/32
+psc -c cfg.xml set address-group --name grp-web --member h-web1 --member h-web2   # OR --filter "'prod'"
+psc -c cfg.xml set service --name tcp-8443 --protocol tcp --dest-port 8443
+psc -c cfg.xml set service-group --name svc-web --member tcp-443 --member tcp-8443
+psc -c cfg.xml set tag --name prod --color color5 --comments "prod"
+psc -c cfg.xml set address --name h-web1 --type ip-netmask --value 10.0.0.11/32 --apply --out updated.xml  # update = offline only
+```
+
+Dry-run by default. PAN-OS validation: name ≤63 leading-alnum (tag ≤127), desc
+≤255, address exactly one `--type`/`--value`, service needs a dest (or source)
+port, tag `--color` is `color1..color42` (note: tag uses `--comments`, not
+`--description`). Validation error → exit `4`. **Blockers** (exit `6`):
+cross-kind name collision; an in-place value-type or static↔dynamic mode change
+on update. Live `--apply` **only creates** — to *update* an existing object use
+offline `--apply --out`.
+
+### rule edit-member — idempotent rule-field edits
+
+```bash
+psc -c cfg.xml rule edit-member --rule allow-web --field source --add h-web1
+psc -c cfg.xml rule edit-member --rule allow-web --field source --remove h-old
+psc -c cfg.xml rule edit-member --rule allow-web --field service --add tcp-8443 --rulebase post
+```
+
+Exactly one of `--add`/`--remove`; `--field` is source|destination|service|
+application; `--rulebase` defaults `pre`. Removal renders delete-field + re-set
+(PAN-OS `set` on a member field appends), so every op is idempotent. NAT
+`service` is scalar → **blocked**; `application` on a non-security rule →
+validation. Unknown rule → exit `5`; ambiguous → exit `4`.
+
+### decommission — reference-safe teardown
+
+```bash
+psc -c cfg.xml -o json decommission 10.1.0.5             # dry-run plan
+psc -c cfg.xml decommission 10.1.0.0/24 --apply --out torn-down.xml
+psc -c cfg.xml decommission -f retired-ips.txt --scope DG-EDGE
+```
+
+Targets: positional args, repeated `--target`, and/or `-f/--file` (one per line,
+`#` comments). Tears down address objects matching the IP/CIDR/range in order:
+scrub groups → scrub rules → delete orphaned rules (empty source OR destination;
+`any` survives) → delete emptied groups → delete the objects, cascading to a
+fixpoint. **Only EXACT + WITHIN matches** are removed (a broader containing
+object is left in place). `--keep-groups`/`--keep-rules` stop short of deleting
+those. **Blocks** (exit `6`) on NAT-translation/PBF-next-hop references and
+DAG-filter-tag matches; orphan-rule deletions are warnings. This is the safe
+teardown path — prefer it over hand-scrubbing then `refs unused` + manual delete.
 
 ### profile — live connections
 
@@ -177,6 +249,11 @@ echo "$plan" | jq -e '.blockers | length == 0' >/dev/null || { echo "blocked"; e
 # 2. Apply to a new file, then load it into Panorama yourself and commit.
 psc -c cfg.xml dedup merge --keep a --remove b --apply --out fixed.xml
 ```
+
+**Tearing down an object?** Don't hand-scrub groups/rules then guess at
+`refs unused`. Use `decommission <ip|cidr>` — it plans the whole reference-safe
+cascade (groups → rules → orphaned rules → emptied groups → objects) and blocks
+on anything it can't safely rewrite. Same dry-run-then-`--apply --out` flow.
 
 ## What NOT to do
 

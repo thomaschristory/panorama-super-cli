@@ -5,8 +5,9 @@ is always explicit.
 
 ## Dry-run by default
 
-Every mutating command (`dedup merge`, `name rename`, `name apply`) **prints a
-plan and exits without changing anything** unless you pass `--apply`. The plan
+Every mutating command (`dedup merge`, `dedup merge-group`, `name rename`,
+`name apply`, `set …`, `rule edit-member`, `decommission`) **prints a plan and
+exits without changing anything** unless you pass `--apply`. The plan
 you see is the exact change-set that `--apply` would execute — there's no
 second, hidden code path.
 
@@ -36,11 +37,30 @@ and `psc` refuses to apply it — even with `--apply` — exiting `6` (`conflict
 Blockers are raised instead of doing something surprising. Examples:
 
 - merging objects with different values (changes what rules match),
+- merging address-groups that expand to different effective member sets, or a
+  nested/cyclic group pair,
 - a reference that can't be repointed because the survivor isn't visible there,
-- a rename that would shadow a same-named object in another scope.
+- a rename that would shadow a same-named object in another scope,
+- a `set` whose name collides with a *different* kind, or that would change an
+  existing object's value type or static/dynamic mode in place,
+- a `decommission` target referenced by a NAT translation field or a PBF
+  forwarding next-hop, or matched by a dynamic-address-group filter tag.
 
-Warnings (e.g. a NAT translation field that needs manual review) are surfaced but
-don't block.
+Warnings (e.g. a NAT translation field that needs manual review, or an
+orphan-rule deletion during `decommission`) are surfaced but don't block.
+
+## Ordered, cascading teardown
+
+[`decommission`](editing-objects.md#decommission-an-address) is the safe inverse
+of a hand-rolled delete: rather than scrubbing groups and rules yourself before
+removing an address, you name the IP/CIDR and `psc` plans the whole cascade in a
+fixed, reference-safe order — scrub groups → scrub rules → delete orphaned rules
+(empty `source`/`destination`; `any` survives) → delete emptied groups → delete
+the objects — repeating to a fixpoint so that deleting an emptied group also
+repoints or orphans *its* referrers. Only objects that **equal** or fall
+**within** a target are torn down; a broader containing object is left in place.
+Like every write it is dry-run until `--apply`, and the blocker gate above
+applies before any change is made.
 
 ## Offline apply never overwrites your export
 

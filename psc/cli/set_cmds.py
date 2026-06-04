@@ -122,8 +122,12 @@ def service(
     ctx: typer.Context,
     name: str = typer.Option(..., "--name", help="Service name."),
     protocol: str = typer.Option(..., "--protocol", help="tcp | udp."),
-    dest_port: str | None = typer.Option(None, "--dest-port", help="Destination port(s)."),
-    source_port: str | None = typer.Option(None, "--source-port", help="Source port(s)."),
+    dest_port: str | None = typer.Option(
+        None, "--dest-port", help="Destination port(s) — required (PAN-OS mandates it)."
+    ),
+    source_port: str | None = typer.Option(
+        None, "--source-port", help="Source port(s) — optional."
+    ),
     description: str | None = typer.Option(None, "--description"),
     tag: list[str] = typer.Option([], "--tag", help="Tag name (repeatable)."),
     location: str | None = _LOCATION_OPTION,
@@ -131,7 +135,7 @@ def service(
     out: str | None = _OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
-    """Create or update a service object (at least one of --dest-port/--source-port).
+    """Create or update a service object (--dest-port required; --source-port optional).
 
     Live --apply only creates; updating an existing service live is refused
     (CONFIG) — use offline --apply for updates.
