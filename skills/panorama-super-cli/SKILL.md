@@ -29,7 +29,8 @@ psc [GLOBAL OPTS] <group> <command> [ARGS] [WRITE OPTS]
 - **Global (context) options go *before* the group:** `-c/--config FILE`,
   `-p/--profile NAME`, `-o/--output FMT`, `-d/--device-group NAME`, `--strict`,
   `--debug`.
-- **Write-execution options go *after* the command:** `--apply`, `--out PATH`.
+- **Write-execution options go *after* the command:** `--apply`, `--out PATH`,
+  `-of/--output-format xml|set`.
 
 ```bash
 psc -c panorama.xml -o json find ip 10.0.0.10
@@ -39,7 +40,20 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
 ## Pick a source
 
 - **Offline:** `-c panorama.xml` — an exported config. Read-only against the
-  device; `--apply` writes a *new* file via `--out`.
+  device; `--apply` writes a *new* file via `--out` (it never overwrites the
+  source export). Choose what that file holds with `-of/--output-format`:
+  - `xml` (default) — the whole config rewritten, loadable with `load config`.
+  - `set` — just the equivalent PAN-OS `set` script (the creates/deletes/
+    repoints that achieve the change). Easier to read and to paste into a
+    config session or `load config partial`. Use this when a human reviews the
+    change or you want a minimal, diff-like artifact; use `xml` when you need a
+    full, directly-loadable replacement config.
+
+  ```bash
+  psc -c cfg.xml dedup merge --keep a --remove b --apply --out plan.set -of set
+  ```
+  (`-of` only shapes the `--out` file; for the script on stdout in a dry-run,
+  use `-o set` instead.)
 - **Live:** `-p prod` — fetches the running config over the XML API. `--apply`
   (no `--out`) pushes the plan to Panorama's **candidate** config and never
   commits; you review and commit yourself.

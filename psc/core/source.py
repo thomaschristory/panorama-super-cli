@@ -18,6 +18,7 @@ Writes are deliberately conservative:
 from __future__ import annotations
 
 import ssl
+from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -26,7 +27,21 @@ from psc.core.apply_xml import apply_changeset
 from psc.core.changeset import ChangeSet
 from psc.core.models import Snapshot
 from psc.core.parse import parse_config
+from psc.core.setcmd import render_changeset
 from psc.output.errors import ErrorType, PscError
+
+
+class ConfigFormat(str, Enum):
+    """Format of the artifact an offline `apply` writes to `--out`.
+
+    `xml` rewrites the whole exported config (loadable with `load config`);
+    `set` emits the equivalent PAN-OS `set` script (the creations/deletes/
+    repoints that achieve the same change) — easier to read and to paste into a
+    config session or `load config partial`.
+    """
+
+    XML = "xml"
+    SET = "set"
 
 
 class ApplyResult(BaseModel):
@@ -83,7 +98,13 @@ class OfflineSource:
         except Exception as exc:
             raise PscError(f"failed to parse {self.path}: {exc}", ErrorType.INPUT) from exc
 
-    def apply(self, cs: ChangeSet, *, out_path: str | Path | None) -> ApplyResult:
+    def apply(
+        self,
+        cs: ChangeSet,
+        *,
+        out_path: str | Path | None,
+        out_format: ConfigFormat = ConfigFormat.XML,
+    ) -> ApplyResult:
         if out_path is None:
             raise PscError(
                 "offline apply needs --out PATH (the rewritten config is never "
@@ -93,6 +114,11 @@ class OfflineSource:
         out = Path(out_path)
         if out.resolve() == self.path.resolve():
             raise PscError("--out must differ from the source config path", ErrorType.CONFIG)
+        # Both artifacts share the same safety guards above; only the bytes differ.
+        if out_format is ConfigFormat.SET:
+            script = render_changeset(cs)
+            out.write_text("\n".join(script) + "\n", encoding="utf-8")
+            return ApplyResult(applied=True, ops=cs.op_count, out_path=str(out), set_script=script)
         new_xml = apply_changeset(self._xml, cs)
         out.write_text(new_xml, encoding="utf-8")
         return ApplyResult(applied=True, ops=cs.op_count, out_path=str(out))
@@ -221,8 +247,18 @@ class LiveSource:
     def snapshot(self) -> Snapshot:
         return parse_config(self.raw_xml())
 
-    def apply(self, cs: ChangeSet, *, out_path: str | Path | None) -> ApplyResult:
+    def apply(
+        self,
+        cs: ChangeSet,
+        *,
+        out_path: str | Path | None,
+        out_format: ConfigFormat = ConfigFormat.XML,
+    ) -> ApplyResult:
         """Push `cs` to Panorama's candidate config over the XML API.
+
+        `out_path`/`out_format` are accepted for interface parity with the
+        offline source but ignored — a live apply leaves a candidate on the
+        device, not a file, so there is no artifact to format.
 
         The plan is lowered to xpath set/edit/delete/rename ops and replayed in
         order (repoint before delete). The `blockers` gate and name-addressing

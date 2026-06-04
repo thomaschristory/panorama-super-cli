@@ -122,6 +122,51 @@ def test_merge_apply_writes_out(tmp_path: Path) -> None:
     assert "web-primary" not in out.read_text(encoding="utf-8")
 
 
+def test_merge_apply_out_set_writes_set_script(tmp_path: Path) -> None:
+    out = tmp_path / "fixed.set"
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "dedup",
+        "merge",
+        "--keep",
+        "h-web1",
+        "--remove",
+        "web-primary",
+        "--apply",
+        "--out",
+        str(out),
+        "-of",
+        "set",
+    )
+    assert cp.returncode == 0
+    assert out.exists()
+    text = out.read_text(encoding="utf-8")
+    assert "delete shared address web-primary" in text
+    assert "<entry" not in text  # the --out artifact is a set script, not XML
+
+
+def test_merge_apply_out_xml_is_default(tmp_path: Path) -> None:
+    out = tmp_path / "fixed.xml"
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "dedup",
+        "merge",
+        "--keep",
+        "h-web1",
+        "--remove",
+        "web-primary",
+        "--apply",
+        "--out",
+        str(out),
+        "--output-format",
+        "xml",
+    )
+    assert cp.returncode == 0
+    assert "web-primary" not in out.read_text(encoding="utf-8")  # rewritten XML, object gone
+
+
 def test_no_source_errors_config() -> None:
     cp = run("-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 9
