@@ -7,6 +7,8 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.0 — 2026-06-04
+
 ### Added
 
 - **Live `--apply`.** Mutating commands can now push their plan to Panorama's
