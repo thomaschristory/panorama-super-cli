@@ -27,6 +27,12 @@ collapses a host-with-mask onto its network:
 psc -c panorama.xml dedup addresses --not-strict
 ```
 
+`--not-strict` only widens what's *listed* — it grants no merge power. A pair it
+surfaces (e.g. a host and its network) has different exact values, so
+[`dedup merge`](#the-safety-gate) still refuses it unless you pass
+`--allow-value-change`. Treat `--not-strict` as a discovery aid, then decide
+case by case whether the masked-equal objects really should be merged.
+
 ## Merge two objects
 
 `dedup merge` collapses one object (`--remove`) into another (`--keep`),
