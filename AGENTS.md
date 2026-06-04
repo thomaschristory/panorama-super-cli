@@ -31,7 +31,10 @@ UI would import `psc.core` directly and never touch `psc.cli`.
 - `psc/core/changeset.py` — the inspectable mutation plan every write produces.
 - `psc/core/setcmd.py` — render objects/changesets as PAN-OS `set` commands.
 - `psc/core/apply_xml.py` — apply a `ChangeSet` to config XML (offline `--apply`).
-- `psc/core/source.py` — `OfflineSource` (file) / `LiveSource` (pan-os-python).
+- `psc/core/apply_live.py` — lower a `ChangeSet` to XML-API xpath ops (live
+  `--apply`); pure/device-free, so the xpath construction is unit-testable.
+- `psc/core/source.py` — `OfflineSource` (file) / `LiveSource` (pan-os-python);
+  live `apply` pushes to the candidate config and never commits.
 - `psc/output/` — formatters (table/json/jsonl/yaml/csv/set) + error envelope.
 - `psc/config/` — profiles + defaults (ruamel round-trip).
 - `psc/cli/` — the Typer app; one thin command module per feature group.

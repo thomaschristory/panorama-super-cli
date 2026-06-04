@@ -50,7 +50,7 @@ pip install panorama-super-cli
 
 | Area | Commands (v0.1) |
 | --- | --- |
-| **Find / resolve** | `psc find ip <ip>`, `find ip -f ips.txt`, `find object <name>` |
+| **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip -f ips.txt`, `find object <name>` |
 | **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup merge` |
 | **Naming** | `psc name suggest`, `name lint`, `name apply` (opt-in templates) |
 | **References** | `psc refs <object>` (where-used), `refs unused` |

@@ -20,12 +20,15 @@ XXE / billion-laughs attacks.
 
 ## Live (`--profile name`)
 
-Configure a profile once:
+Configure a profile once — `psc init` fetches the API key from your
+username/password and verifies it before saving:
 
 ```console
-psc profile add --name prod --host panorama.example.com --api-key "$PANOS_KEY" --default
+psc init --name prod --host panorama.example.com --user admin   # prompts for the password
 psc profile list
 ```
+
+(Already hold a key? `psc profile add --name prod --host … --api-key "$PANOS_KEY" --default`.)
 
 Then run any read command:
 
@@ -41,10 +44,11 @@ Profiles live in `~/.psc/config.yaml` (created `0600`, since it holds the API
 key). A profile can set a default `device_group` scope. See
 [Configuration](../reference/config.md).
 
-!!! warning "Live writes are v0.2"
-    Live `--apply` is not yet implemented. Plan against the live config with
-    `-o set`, or plan offline and `load config partial` the result. See
-    [Writes and safety](safety.md).
+Live `--apply` pushes the plan to Panorama's **candidate** config over the XML
+API and **never commits** — you review the candidate and commit yourself, the
+device-side analog of reviewing the offline `--out` file. The same `blockers`
+gate and repoint-before-delete ordering apply on the wire. See
+[Writes and safety](safety.md).
 
 ## Choosing a source
 
@@ -52,5 +56,5 @@ key). A profile can set a default `device_group` scope. See
 | --- | --- | --- |
 | Credentials | none | API key |
 | Reads | ✅ | ✅ |
-| Writes | new file via `--out` | v0.2 |
-| Best for | audits, CI, safe edits | quick lookups against prod |
+| Writes | new file via `--out` | candidate config (you commit) |
+| Best for | audits, CI, safe edits | lookups and edits against prod |

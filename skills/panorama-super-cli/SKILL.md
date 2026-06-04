@@ -40,8 +40,9 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
 
 - **Offline:** `-c panorama.xml` — an exported config. Read-only against the
   device; `--apply` writes a *new* file via `--out`.
-- **Live:** `-p prod` — fetches the running config over the XML API. Reads only
-  in v0.1 (writes land in v0.2).
+- **Live:** `-p prod` — fetches the running config over the XML API. `--apply`
+  (no `--out`) pushes the plan to Panorama's **candidate** config and never
+  commits; you review and commit yourself.
 
 ## The commands
 
@@ -49,6 +50,7 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
 
 ```bash
 psc -c cfg.xml -o json find ip 10.0.0.10          # exact/contains/within + groups
+psc -c cfg.xml -o json find ip -e 10.0.0.10       # exact only (10.0.0.10 == /32)
 psc -c cfg.xml -o json find ip 10.0.0.0/24        # everything inside the /24
 psc -c cfg.xml -o json find ip -f ips.txt         # a whole list (array result)
 psc -c cfg.xml -o json find object grp-web        # locate by exact name
@@ -56,6 +58,8 @@ psc -c cfg.xml -o json find object grp-web        # locate by exact name
 
 `exists: true` means there's an exact-match object. `matches[].match` is one of
 `exact` (equal), `contains` (object is broader), `within` (object is narrower).
+Pass `--exact`/`-e` to keep only `exact` matches — handy when a broad object
+like `10.0.0.0/8` would otherwise drown out the host you asked for.
 
 ### dedup — duplicates and merging
 
@@ -95,9 +99,16 @@ Rename **refuses** a shared-vs-device-group shadow collision (exit `6`).
 ### profile — live connections
 
 ```bash
-psc profile add --name prod --host panorama.example.com --api-key "$KEY" --default
+psc init --name prod --host panorama.example.com --user admin   # password→API key, verify, save (0600)
+psc login                                                       # verify the stored key (show system info)
+psc login --user admin                                          # rotate the key (re-keygen + verify)
+psc profile add --name prod --host panorama.example.com --api-key "$KEY" --default  # scriptable, key in hand
 psc profile list
 ```
+
+Password comes from `$PSC_PASSWORD` or a hidden prompt, never a flag. TLS is
+verified by default; add `--insecure` to `init` for a self-signed Panorama. Auth
+failures exit `8`, unreachable host exits `7`.
 
 ## Output formats
 
@@ -139,7 +150,8 @@ psc -c cfg.xml dedup merge --keep a --remove b --apply --out fixed.xml
 - DO NOT add `--apply` to a read command by reflex (ignored on reads, dangerous habit).
 - DO NOT parse the `table` format — use `json`/`jsonl`.
 - DO NOT apply a plan whose `blockers` is non-empty — fix the cause.
-- DO NOT expect live `--apply` in v0.1 — use `-o set` or offline `--apply --out`.
+- DO NOT pass `--out` with a live profile — it's offline-only; live `--apply`
+  targets the candidate config. And remember `psc` never commits — you do.
 - DO NOT put `--apply`/`--out` before the subcommand, or `-c`/`-o` after it.
 
 ## When something fails

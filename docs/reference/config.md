@@ -41,7 +41,17 @@ defaults:
 
 ## Managing profiles
 
-Use the CLI rather than hand-editing:
+Use the CLI rather than hand-editing. The easiest start is `psc init`, which
+fetches an API key from a username/password and verifies it before saving:
+
+```console
+psc init --name prod --host panorama.example.com --user admin   # prompts for the password
+psc login                                                       # re-verify the stored key
+psc login --user admin                                          # rotate the key
+```
+
+For scripting (or when you already hold a key) use the non-interactive forms —
+supply the password via `$PSC_PASSWORD`, never a flag:
 
 ```console
 psc profile add --name prod --host panorama.example.com --api-key "$PANOS_KEY" --default

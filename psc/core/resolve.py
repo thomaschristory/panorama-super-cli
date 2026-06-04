@@ -50,30 +50,38 @@ def _query_kind(q: Query) -> str:
     return "cidr"
 
 
-def _in_scope(loc: Location, scope: Location | None) -> bool:
-    """`scope=None` => every location; a shared scope still includes shared
-    (inherited everywhere); a DG scope includes that DG plus shared.
-    """
+def _visible_names(snapshot: Snapshot, scope: Location | None) -> set[str] | None:
+    """Location names visible from `scope`: the device-group, every ancestor,
+    and `shared`. `None` means unscoped (every location)."""
     if scope is None:
-        return True
-    if loc.is_shared:
-        return True
-    return loc == scope
+        return None
+    return {loc.name for loc in snapshot.ancestors(scope)}
 
 
-def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> FindResult:
-    """Find every address object/group matching `raw` within `scope`."""
+def find_ip(
+    snapshot: Snapshot, raw: str, scope: Location | None = None, *, exact: bool = False
+) -> FindResult:
+    """Find every address object/group matching `raw` within `scope` (which
+    includes the scoped device-group's ancestors and `shared`).
+
+    With `exact=True`, only objects whose value equals the query exactly are
+    kept — broader (`CONTAINS`) and narrower (`WITHIN`) matches are dropped.
+    Netmask and bare-host forms still canonicalize equal (`10.0.0.10` ==
+    `10.0.0.10/32`), so those remain exact.
+    """
     query = parse_query(raw)
+    visible = _visible_names(snapshot, scope)
     matched: list[tuple[Address, MatchKind]] = []
     for addr in snapshot.addresses:
-        if not _in_scope(addr.location, scope):
+        if visible is not None and addr.location.name not in visible:
             continue
         nv = normalize_address(addr)
         if nv is None:
             continue
         mk = match(query, nv)
-        if mk is not None:
-            matched.append((addr, mk))
+        if mk is None or (exact and mk is not MatchKind.EXACT):
+            continue
+        matched.append((addr, mk))
 
     matches = [
         AddressMatch(
@@ -86,19 +94,32 @@ def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> Find
         for a, mk in sorted(matched, key=lambda t: (t[1].value, t[0].location.name, t[0].name))
     ]
 
-    matched_names_by_loc: dict[str, set[str]] = {}
-    for a, _ in matched:
-        matched_names_by_loc.setdefault(a.location.name, set()).add(a.name)
+    # Identity (not just name) of every matched object, plus a per-location name
+    # index so a group member can be resolved to the object it actually denotes.
+    matched_keys = {(a.location.name, a.name) for a, _ in matched}
+    names_by_loc: dict[str, set[str]] = {}
+    for a in snapshot.addresses:
+        names_by_loc.setdefault(a.location.name, set()).add(a.name)
+
+    def _resolve_member(group_loc: Location, member: str) -> tuple[str, str] | None:
+        # PAN-OS name resolution: a name binds to its closest definition up the
+        # device-group chain (local shadows ancestors shadow shared). Without
+        # this, a group in DG `prod` listing `H-web` could falsely match a
+        # *shared* `H-web` of a different value when `prod` defines its own.
+        for loc in snapshot.ancestors(group_loc):
+            if member in names_by_loc.get(loc.name, set()):
+                return (loc.name, member)
+        return None  # nested group or dangling — not a direct address here
 
     groups: list[GroupMatch] = []
     for ag in snapshot.address_groups:
-        if not _in_scope(ag.location, scope) or not ag.static_members:
+        if (visible is not None and ag.location.name not in visible) or not ag.static_members:
             continue
-        # A group at location L sees its own + shared members.
-        visible = matched_names_by_loc.get(ag.location.name, set()) | matched_names_by_loc.get(
-            "shared", set()
-        )
-        via = [m for m in ag.static_members if m in visible]
+        via = [
+            m
+            for m in ag.static_members
+            if (_resolve_member(ag.location, m) or ("", "")) in matched_keys
+        ]
         if via:
             groups.append(GroupMatch(name=ag.name, location=ag.location.name, via=via))
 
@@ -112,9 +133,9 @@ def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> Find
 
 
 def find_ips(
-    snapshot: Snapshot, raws: list[str], scope: Location | None = None
+    snapshot: Snapshot, raws: list[str], scope: Location | None = None, *, exact: bool = False
 ) -> list[FindResult]:
-    return [find_ip(snapshot, r, scope) for r in raws]
+    return [find_ip(snapshot, r, scope, exact=exact) for r in raws]
 
 
 class ObjectHit(BaseModel):
