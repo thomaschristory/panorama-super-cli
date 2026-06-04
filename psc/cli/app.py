@@ -18,6 +18,7 @@ from psc.cli import (
     name_cmds,
     profile_cmds,
     refs_cmds,
+    rule_cmds,
     set_cmds,
     version_cmds,
 )
@@ -138,6 +139,7 @@ app.add_typer(find_cmds.app, name="find", help="Find objects by IP/value/name.")
 app.add_typer(dedup_cmds.app, name="dedup", help="Find and merge duplicate objects.")
 app.add_typer(refs_cmds.app, name="refs", help="Where-used, unused, and dangling references.")
 app.add_typer(name_cmds.app, name="name", help="Naming-template lint and rename.")
+app.add_typer(rule_cmds.app, name="rule", help="Edit rule field members (add/remove, idempotent).")
 app.add_typer(set_cmds.app, name="set", help="Create or update address/service/tag objects.")
 app.add_typer(
     audit_cmds.app,
