@@ -259,17 +259,3 @@ class Snapshot(BaseModel):
         for dg in sorted(self.device_groups):
             seen.append(Location.dg(dg))
         return seen
-
-    def visible_addresses(self, location: Location) -> dict[str, Address]:
-        """Addresses a reference *in* `location` can resolve to: each name bound
-        to its closest definition up the device-group chain (local shadows
-        ancestors shadow `shared`).
-        """
-        by_loc: dict[str, dict[str, Address]] = defaultdict(dict)
-        for a in self.addresses:
-            by_loc[a.location.name][a.name] = a
-        out: dict[str, Address] = {}
-        # Walk farthest → closest so nearer definitions overwrite inherited ones.
-        for loc in reversed(self.ancestors(location)):
-            out.update(by_loc.get(loc.name, {}))
-        return out
