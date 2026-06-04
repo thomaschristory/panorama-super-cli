@@ -16,6 +16,7 @@ from psc.core.changeset import (
     ObjectRename,
     ObjectUpsert,
     ReferenceEdit,
+    reference_edit_is_mappable,
 )
 from psc.core.models import (
     Address,
@@ -24,6 +25,7 @@ from psc.core.models import (
     ServiceGroup,
     Tag,
 )
+from psc.core.rulebases import rule_container
 
 
 def scope_prefix(location_name: str) -> str:
@@ -99,23 +101,22 @@ def tag_lines(t: Tag) -> list[str]:
 
 # -- reference-edit field paths -----------------------------------------
 
-_SECURITY_FIELDS = {"source", "destination", "service", "tag", "application", "source-user"}
-
 
 def _referrer_path(edit: ReferenceEdit) -> tuple[str, str] | None:
     """Return `(path_to_field_parent, field_leaf)` or None if the field path
-    is too complex to render as a flat member-list (NAT translation).
+    is too complex to render as a flat member-list (NAT translation, PBF
+    nexthop). Uses the same mappability gate as both appliers, so a `# REVIEW`
+    here lines up exactly with an op the appliers skip.
     """
     scope = scope_prefix(edit.referrer_location)
-    rb = f"{edit.rulebase}-rulebase" if edit.rulebase else None
     if edit.referrer_kind == "address-group":
         return (f"{scope} address-group {edit.referrer_name}", "static")
     if edit.referrer_kind == "service-group":
         return (f"{scope} service-group {edit.referrer_name}", "members")
-    if edit.referrer_kind == "security-rule" and rb and edit.field in _SECURITY_FIELDS:
-        return (f"{scope} {rb} security rules {edit.referrer_name}", edit.field)
-    if edit.referrer_kind == "nat-rule" and rb and edit.field in ("source", "destination"):
-        return (f"{scope} {rb} nat rules {edit.referrer_name}", edit.field)
+    if reference_edit_is_mappable(edit):
+        rb = f"{edit.rulebase}-rulebase"
+        container = rule_container(edit.referrer_kind)
+        return (f"{scope} {rb} {container} rules {edit.referrer_name}", edit.field)
     return None
 
 

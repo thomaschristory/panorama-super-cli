@@ -17,7 +17,8 @@ import xml.etree.ElementTree as ET
 
 from defusedxml.ElementTree import fromstring as _safe_fromstring
 
-from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit
+from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit, reference_edit_is_mappable
+from psc.core.rulebases import rule_container
 from psc.output.errors import ErrorType, PscError
 
 
@@ -68,15 +69,13 @@ def _referrer_field_element(scope: ET.Element, edit: ReferenceEdit) -> ET.Elemen
     elif edit.referrer_kind == "service-group":
         entry = _find_named(scope.find("service-group"), "entry", name)
         leaf = "members"
-    elif edit.referrer_kind == "security-rule" and edit.rulebase:
-        entry = _find_named(scope.find(f"./{edit.rulebase}-rulebase/security/rules"), "entry", name)
-        leaf = edit.field
-    elif (
-        edit.referrer_kind == "nat-rule"
-        and edit.rulebase
-        and edit.field in ("source", "destination")
-    ):
-        entry = _find_named(scope.find(f"./{edit.rulebase}-rulebase/nat/rules"), "entry", name)
+    elif reference_edit_is_mappable(edit):
+        # Any rulebase whose field is a flat member list: container == the
+        # tag derived from referrer_kind (security/nat/pbf/qos/…).
+        container = rule_container(edit.referrer_kind)
+        entry = _find_named(
+            scope.find(f"./{edit.rulebase}-rulebase/{container}/rules"), "entry", name
+        )
         leaf = edit.field
     else:
         return None

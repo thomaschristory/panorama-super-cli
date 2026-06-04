@@ -58,7 +58,11 @@ Every reference the [reference graph](references-and-audit.md) knows about:
 
 - static address-group membership,
 - security rule `source` / `destination`,
-- NAT rule `source` / `destination` (translation fields are flagged for review).
+- NAT rule `source` / `destination` (translation fields are flagged for review),
+- every other rulebase's `source` / `destination` / `service` / `tag` (PBF,
+  decryption, authentication, QoS, application-override, DoS, SD-WAN,
+  tunnel-inspect, network-packet-broker). A PBF next-hop object has no flat
+  member list, so a merge that would strand it is **blocked** for manual review.
 
 References are rewritten **before** the object is deleted, and duplicate members
 are collapsed (a group that listed both names ends up with just the survivor).

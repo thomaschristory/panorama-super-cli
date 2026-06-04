@@ -23,7 +23,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit
+from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit, reference_edit_is_mappable
+from psc.core.rulebases import rule_container
 from psc.output.errors import ErrorType, PscError
 
 # The device entry under which Panorama keeps its device-groups. Fixed on
@@ -84,11 +85,10 @@ def _referrer_field_xpath(edit: ReferenceEdit) -> tuple[str, str] | None:
         return f"{base}/address-group/entry[@name='{name}']/static", "static"
     if edit.referrer_kind == "service-group":
         return f"{base}/service-group/entry[@name='{name}']/members", "members"
-    if edit.referrer_kind == "security-rule" and rb:
-        path = f"{base}/{rb}-rulebase/security/rules/entry[@name='{name}']/{edit.field}"
-        return path, edit.field
-    if edit.referrer_kind == "nat-rule" and rb and edit.field in ("source", "destination"):
-        path = f"{base}/{rb}-rulebase/nat/rules/entry[@name='{name}']/{edit.field}"
+    if reference_edit_is_mappable(edit):
+        # Any rulebase flat member field: container derives from referrer_kind.
+        container = rule_container(edit.referrer_kind)
+        path = f"{base}/{rb}-rulebase/{container}/rules/entry[@name='{name}']/{edit.field}"
         return path, edit.field
     return None
 

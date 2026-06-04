@@ -13,7 +13,10 @@ psc -c panorama.xml refs used h-web1
 ```
 
 Lists every reference that *resolves* to that object — group memberships,
-security rule `source`/`destination`, NAT `source`/`destination`/translation.
+security rule `source`/`destination`, NAT `source`/`destination`/translation,
+and the `source`/`destination`/`service`/`tag` fields of every other rulebase
+(PBF, decryption, authentication, QoS, application-override, DoS, SD-WAN,
+tunnel-inspect, network-packet-broker), plus a PBF forwarding next-hop object.
 
 If a name is ambiguous (exists in multiple kinds/locations), pass `--kind` and
 `--location`:
@@ -59,7 +62,10 @@ if `refs dangling` finds anything).
 psc -c panorama.xml --strict refs dangling || echo "config has dangling refs"
 ```
 
-!!! note "v0.2"
-    The reference graph currently covers address-groups, service-groups,
-    security rules, and NAT. Other rulebases (PBF, decryption, authentication,
-    QoS, …) are planned.
+!!! note "Rulebase coverage"
+    The reference graph covers address-groups, service-groups, and **every**
+    object-referencing rulebase: security, NAT, PBF, decryption, authentication,
+    QoS, application-override, DoS, SD-WAN, tunnel-inspect, and
+    network-packet-broker. A PBF forwarding next-hop that names an address
+    object is shown in where-used and blocks a merge/rename that would strand it
+    (it has no flat member list to rewrite — edit it by hand, then re-run).

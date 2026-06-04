@@ -3,7 +3,35 @@ from __future__ import annotations
 from psc.core.changeset import ObjectKind
 from psc.core.models import SHARED, Address, AddressType, Location, Service, Snapshot
 from psc.core.naming import NamingScheme, lint, plan_rename, sanitize_name
+from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
+
+
+def test_rename_tag_preserves_other_tags_on_a_security_rule() -> None:
+    # A security rule tagged [t-old, t-keep]: renaming t-old must rewrite that
+    # one member and leave t-keep intact — not wipe the rule's tag list.
+    xml = """<config><shared>
+      <tag><entry name="t-old"/><entry name="t-keep"/></tag>
+      <pre-rulebase><security><rules>
+        <entry name="r">
+          <source><member>any</member></source>
+          <tag><member>t-old</member><member>t-keep</member></tag>
+        </entry>
+      </rules></security></pre-rulebase>
+    </shared></config>"""
+    snap = parse_config(xml)
+    graph = ReferenceGraph.build(snap)
+    cs = plan_rename(
+        snap,
+        graph,
+        kind=ObjectKind.TAG,
+        location_name="shared",
+        old_name="t-old",
+        new_name="T-OLD",
+    )
+    assert not cs.is_blocked
+    edit = next(e for e in cs.reference_edits if e.referrer_name == "r")
+    assert edit.after == ["T-OLD", "t-keep"]
 
 
 def test_scheme_host_and_network_names() -> None:
@@ -49,6 +77,39 @@ def test_rename_repoints_references(snapshot: Snapshot) -> None:
     edits = {(e.referrer_name, e.field): e.after for e in cs.reference_edits}
     assert "H-10.0.0.10" in edits[("grp-web", "static")]
     assert cs.renames[0].new_name == "H-10.0.0.10"
+
+
+def test_rename_repoints_across_new_rulebases(all_rb_snapshot: Snapshot) -> None:
+    # a1 is a source in every new rulebase; a rename must repoint them all.
+    graph = ReferenceGraph.build(all_rb_snapshot)
+    cs = plan_rename(
+        all_rb_snapshot,
+        graph,
+        kind=ObjectKind.ADDRESS,
+        location_name="shared",
+        old_name="a1",
+        new_name="H-10.1.0.1",
+    )
+    assert not cs.is_blocked
+    by_kind = {(e.referrer_kind, e.referrer_name): e.after for e in cs.reference_edits}
+    assert "H-10.1.0.1" in by_kind[("tunnel-inspect-rule", "ti-1")]
+    assert "H-10.1.0.1" in by_kind[("dos-rule", "dos-1")]
+
+
+def test_rename_blocks_when_repoint_hits_pbf_nexthop(all_rb_snapshot: Snapshot) -> None:
+    # Renaming a PBF next-hop object can't be repointed (nested field) → block.
+    graph = ReferenceGraph.build(all_rb_snapshot)
+    cs = plan_rename(
+        all_rb_snapshot,
+        graph,
+        kind=ObjectKind.ADDRESS,
+        location_name="shared",
+        old_name="nh-host",
+        new_name="GW-1",
+    )
+    assert cs.is_blocked
+    assert any("nh-host" in b and "pbf-1" in b for b in cs.blockers)
+    assert cs.op_count == 0
 
 
 def test_rename_blocks_on_existing_name(snapshot: Snapshot) -> None:

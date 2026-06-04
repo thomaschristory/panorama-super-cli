@@ -1,0 +1,153 @@
+<?xml version="1.0"?>
+<!-- One rule per object-referencing rulebase, exercising the reference surface
+     (source/destination address, service, tag) plus the PBF forwarding nexthop.
+     Used by the issue-#2 tests for parse/refs/dedup/naming/apply across all
+     rulebases. -->
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="a1"><ip-netmask>10.1.0.1/32</ip-netmask></entry>
+      <entry name="a2"><ip-netmask>10.1.0.2/32</ip-netmask></entry>
+      <entry name="a2-dup">
+        <ip-netmask>10.1.0.2/32</ip-netmask>
+        <description>Duplicate of a2 — merge target</description>
+      </entry>
+      <entry name="qos-only"><ip-netmask>10.1.0.9/32</ip-netmask></entry>
+      <entry name="pbf-only"><ip-netmask>10.1.0.10/32</ip-netmask></entry>
+      <entry name="nh-host"><ip-netmask>10.1.0.254/32</ip-netmask></entry>
+      <entry name="nh-dup">
+        <ip-netmask>10.1.0.254/32</ip-netmask>
+        <description>Duplicate of nh-host — merge would tear down a PBF nexthop</description>
+      </entry>
+      <entry name="lonely"><ip-netmask>10.1.0.99/32</ip-netmask></entry>
+    </address>
+    <service>
+      <entry name="s1"><protocol><tcp><port>443</port></tcp></protocol></entry>
+      <entry name="lonely-svc"><protocol><udp><port>53</port></udp></protocol></entry>
+    </service>
+    <tag>
+      <entry name="t1"><color>color1</color></entry>
+    </tag>
+    <pre-rulebase>
+      <pbf>
+        <rules>
+          <entry name="pbf-1">
+            <source><member>a1</member></source>
+            <destination><member>pbf-only</member></destination>
+            <service><member>s1</member></service>
+            <tag><member>t1</member></tag>
+            <action>
+              <forward>
+                <nexthop><fqdn>nh-host</fqdn></nexthop>
+                <egress-interface>ethernet1/1</egress-interface>
+              </forward>
+            </action>
+          </entry>
+          <entry name="pbf-2">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+            <action>
+              <forward>
+                <nexthop><ip-address>192.0.2.1</ip-address></nexthop>
+              </forward>
+            </action>
+          </entry>
+        </rules>
+      </pbf>
+      <decryption>
+        <rules>
+          <entry name="decrypt-1">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+            <service><member>bad-svc</member></service>
+            <tag><member>t1</member></tag>
+          </entry>
+        </rules>
+      </decryption>
+      <authentication>
+        <rules>
+          <entry name="auth-1">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+            <service><member>s1</member></service>
+          </entry>
+        </rules>
+      </authentication>
+      <qos>
+        <rules>
+          <entry name="qos-1">
+            <source><member>a1</member></source>
+            <destination><member>qos-only</member></destination>
+            <service><member>s1</member></service>
+            <tag><member>t1</member></tag>
+          </entry>
+        </rules>
+      </qos>
+      <application-override>
+        <rules>
+          <entry name="appov-1">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+          </entry>
+        </rules>
+      </application-override>
+      <dos>
+        <rules>
+          <entry name="dos-1">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+            <service><member>s1</member></service>
+          </entry>
+        </rules>
+      </dos>
+      <sdwan>
+        <rules>
+          <entry name="sdwan-1">
+            <source><member>a1</member></source>
+            <destination><member>a2-dup</member></destination>
+            <service><member>s1</member></service>
+          </entry>
+        </rules>
+      </sdwan>
+      <tunnel-inspect>
+        <rules>
+          <entry name="ti-1">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+            <service><member>s1</member></service>
+          </entry>
+        </rules>
+      </tunnel-inspect>
+      <network-packet-broker>
+        <rules>
+          <entry name="npb-1">
+            <source><member>a1</member></source>
+            <destination><member>a2</member></destination>
+            <service><member>s1</member></service>
+          </entry>
+        </rules>
+      </network-packet-broker>
+    </pre-rulebase>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="DG1">
+          <address>
+            <entry name="dg-host"><ip-netmask>192.168.0.1/32</ip-netmask></entry>
+          </address>
+          <post-rulebase>
+            <qos>
+              <rules>
+                <entry name="dg-qos">
+                  <source><member>any</member></source>
+                  <destination><member>dg-host</member></destination>
+                </entry>
+              </rules>
+            </qos>
+          </post-rulebase>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
