@@ -7,6 +7,17 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+### Changed
+
+- **`psc dedup addresses` is now strict by default** (#38). Addresses are
+  grouped only when their values are byte-identical, so a host accidentally
+  written with a subnet mask (`10.1.1.50/24`) is no longer reported as a
+  duplicate of the network `10.1.1.0/24` — merging those would have silently
+  changed rule matching. Genuinely identical forms (`10.0.0.10` and
+  `10.0.0.10/32`) still group. Pass `--not-strict` for the previous
+  host-bit-masking behaviour. The `dedup merge` safety gate now compares exact
+  values too, so such a merge is blocked unless `--allow-value-change` is given.
+
 ## v0.2.3 — 2026-06-04
 
 ### Added

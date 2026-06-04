@@ -64,6 +64,36 @@ def test_strict_not_found_exit_5() -> None:
     assert json.loads(cp.stdout)["type"] == "not_found"
 
 
+_HOST_AND_NET_CONFIG = """<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="host-with-mask"><ip-netmask>10.1.1.50/24</ip-netmask></entry>
+      <entry name="real-network"><ip-netmask>10.1.1.0/24</ip-netmask></entry>
+    </address>
+  </shared>
+</config>
+"""
+
+
+def test_dedup_addresses_strict_default_finds_no_duplicates(tmp_path: Path) -> None:
+    cfg = tmp_path / "cfg.xml"
+    cfg.write_text(_HOST_AND_NET_CONFIG)
+    cp = run("-c", str(cfg), "-o", "json", "dedup", "addresses")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout) == []
+
+
+def test_dedup_addresses_not_strict_groups_host_with_network(tmp_path: Path) -> None:
+    cfg = tmp_path / "cfg.xml"
+    cfg.write_text(_HOST_AND_NET_CONFIG)
+    cp = run("-c", str(cfg), "-o", "json", "dedup", "addresses", "--not-strict")
+    assert cp.returncode == 0
+    groups = json.loads(cp.stdout)
+    assert len(groups) == 1
+    assert {m["name"] for m in groups[0]["members"]} == {"host-with-mask", "real-network"}
+
+
 def test_merge_dry_run_exit_0_writes_nothing(tmp_path: Path) -> None:
     out = tmp_path / "x.xml"
     cp = run(

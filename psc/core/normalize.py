@@ -41,15 +41,34 @@ class AddrValue:
     range: tuple[int, int] | None = None
     family: int | None = None
     fqdn: str | None = None
+    exact: str | None = None
+    """Host-bit-preserving canonical string for ip-netmask (e.g. `10.1.1.50/24`
+    stays distinct from `10.1.1.0/24`); `None` means `key` is already exact."""
 
     def overlaps_key(self) -> str:
-        """Kind-qualified key for grouping exact duplicates."""
+        """Kind-qualified key grouping by *masked network* — loose: a host
+        written with a subnet mask collapses onto its network."""
         return f"{self.kind.value}:{self.key}"
+
+    def exact_key(self) -> str:
+        """Kind-qualified key grouping only *byte-identical* values — strict:
+        host bits are preserved, so `10.1.1.50/24` != `10.1.1.0/24`."""
+        return f"{self.kind.value}:{self.exact or self.key}"
 
 
 def _as_network(value: str) -> IPNetwork | None:
     try:
         return ipaddress.ip_network(value.strip(), strict=False)
+    except ValueError:
+        return None
+
+
+def _as_interface(value: str) -> ipaddress.IPv4Interface | ipaddress.IPv6Interface | None:
+    """Parse host-preserving: `10.1.1.50/24` keeps its host bits, `10.0.0.10`
+    becomes `10.0.0.10/32`. `.network` is the masked form (equals
+    `_as_network`), `str(...)` is the exact form. `None` if unparseable."""
+    try:
+        return ipaddress.ip_interface(value.strip())
     except ValueError:
         return None
 
@@ -75,10 +94,19 @@ def normalize_address(addr: Address) -> AddrValue | None:
     """
     v = addr.value.strip()
     if addr.type is AddressType.IP_NETMASK:
-        net = _as_network(v)
-        if net is None:
+        # One parse yields both keys: `.network` is the masked grouping key
+        # (loose), `str(iface)` preserves host bits for the exact key (strict).
+        iface = _as_interface(v)
+        if iface is None:
             return None
-        return AddrValue(kind=addr.type, key=str(net), network=net, family=net.version)
+        net = iface.network
+        return AddrValue(
+            kind=addr.type,
+            key=str(net),
+            network=net,
+            family=net.version,
+            exact=str(iface),
+        )
     if addr.type is AddressType.IP_RANGE:
         bounds = _range_bounds(v)
         if bounds is None:

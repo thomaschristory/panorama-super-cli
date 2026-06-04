@@ -78,7 +78,8 @@ like `10.0.0.0/8` would otherwise drown out the host you asked for.
 ### dedup — duplicates and merging
 
 ```bash
-psc -c cfg.xml -o json dedup addresses            # same value, different names
+psc -c cfg.xml -o json dedup addresses            # strict: byte-identical values only
+psc -c cfg.xml -o json dedup addresses --not-strict  # also mask host bits (10.1.1.50/24 ~ 10.1.1.0/24)
 psc -c cfg.xml -o json dedup services
 psc -c cfg.xml -o json dedup merge --keep h-web1 --remove web-primary   # dry-run plan
 psc -c cfg.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml

@@ -30,10 +30,23 @@ def _dup_rows(groups: list[DuplicateGroup]) -> list[dict[str, object]]:
 
 
 @app.command("addresses")
-def addresses(ctx: typer.Context) -> None:
-    """List address objects that share an identical value under different names."""
+def addresses(
+    ctx: typer.Context,
+    not_strict: bool = typer.Option(
+        False,
+        "--not-strict",
+        help="Also group host objects onto their network (mask host bits). "
+        "Default: only byte-identical values are duplicates.",
+    ),
+) -> None:
+    """List address objects that share an identical value under different names.
+
+    By default this is *strict*: a host written with a subnet mask
+    (`10.1.1.50/24`) is not treated as a duplicate of the network `10.1.1.0/24`.
+    Pass `--not-strict` for the looser, host-bit-masking behaviour.
+    """
     rt: Runtime = ctx.obj
-    groups = find_duplicate_addresses(rt.snapshot())
+    groups = find_duplicate_addresses(rt.snapshot(), strict=not not_strict)
     if rt.strict and not groups:
         raise PscError("no duplicate addresses", ErrorType.NOT_FOUND)
     render(
