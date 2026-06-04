@@ -285,6 +285,14 @@ class Snapshot(BaseModel):
         chain.append(SHARED)
         return chain
 
+    def visible_location_names(self, scope: Location | None) -> set[str] | None:
+        """Location names visible from `scope` — the device-group, its ancestors,
+        and shared. `None` means unscoped (every location). The single model of
+        PAN-OS scope visibility, shared by `find` and `audit`."""
+        if scope is None:
+            return None
+        return {loc.name for loc in self.ancestors(scope)}
+
     def descendant_dgs(self, dg_name: str) -> set[str]:
         """Every device-group that has `dg_name` somewhere among its ancestors."""
         out: set[str] = set()

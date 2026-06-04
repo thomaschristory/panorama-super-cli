@@ -58,6 +58,57 @@ def test_range_partial_overlap() -> None:
     pairs = find_overlapping_addresses(snap)
     assert len(pairs) == 1
     assert pairs[0].relationship is OverlapKind.OVERLAPS
+    # OVERLAPS contract: left = lower-starting interval. Guards an endpoint swap.
+    assert pairs[0].left_name == "r1"  # starts at .1 (lower)
+    assert pairs[0].right_name == "r2"  # starts at .50 (higher)
+
+
+def test_range_equals_cidr_is_contains() -> None:
+    # Fix 3a: ip-range and ip-netmask spanning the identical interval. Equal
+    # intervals collapse to a single CONTAINS with deterministic broader-left.
+    snap = Snapshot(
+        addresses=[
+            _addr("rng", "10.0.0.0-10.0.0.255", kind=AddressType.IP_RANGE),
+            _addr("cidr", "10.0.0.0/24"),
+        ]
+    )
+    pairs = find_overlapping_addresses(snap)
+    assert len(pairs) == 1
+    assert pairs[0].relationship is OverlapKind.CONTAINS
+    # Equal interval → deterministic left by (location, name): "cidr" < "rng".
+    assert pairs[0].left_name == "cidr"
+    assert pairs[0].right_name == "rng"
+
+
+def test_range_inside_cidr_is_contains() -> None:
+    # Fix 3b: an ip-range fully inside a CIDR. The /24 is broader → left.
+    snap = Snapshot(
+        addresses=[
+            _addr("inner", "10.0.0.10-10.0.0.20", kind=AddressType.IP_RANGE),
+            _addr("outer", "10.0.0.0/24"),
+        ]
+    )
+    pairs = find_overlapping_addresses(snap)
+    assert len(pairs) == 1
+    assert pairs[0].relationship is OverlapKind.CONTAINS
+    assert pairs[0].left_name == "outer"
+    assert pairs[0].right_name == "inner"
+
+
+def test_range_straddling_cidr_boundary_overlaps() -> None:
+    # Fix 3c: an ip-range straddling a CIDR boundary — neither contains the
+    # other → OVERLAPS. The range starts lower (.0.200 < .1.0) so it is left.
+    snap = Snapshot(
+        addresses=[
+            _addr("cidr", "10.0.1.0/24"),
+            _addr("rng", "10.0.0.200-10.0.1.50", kind=AddressType.IP_RANGE),
+        ]
+    )
+    pairs = find_overlapping_addresses(snap)
+    assert len(pairs) == 1
+    assert pairs[0].relationship is OverlapKind.OVERLAPS
+    assert pairs[0].left_name == "rng"  # starts lower (10.0.0.200)
+    assert pairs[0].right_name == "cidr"
 
 
 def test_cidrs_never_partially_overlap() -> None:
@@ -172,6 +223,28 @@ def test_large_n_hosts_in_one_network() -> None:
     elapsed = time.perf_counter() - start
     assert len(pairs) == 1000  # big contains each host exactly once
     assert all(p.left_name == "big" and p.relationship is OverlapKind.CONTAINS for p in pairs)
+    assert elapsed < 1.0
+
+
+def test_wide_ipv6_does_not_keep_ipv4_active() -> None:
+    # Fix 5: many wide IPv6 nets interleaved with many disjoint IPv4 hosts. The
+    # per-family partition means the wide IPv6 intervals never hold unrelated
+    # IPv4 hosts "active" — zero cross-family pairs, and it stays fast.
+    v6 = [_addr(f"v6_{i}", f"2001:db8:{i:x}::/48") for i in range(500)]
+    v4 = [_addr(f"v4_{i}", f"10.{i // 256}.{i % 256}.1") for i in range(500)]
+    # Interleave so a naive single sweep would keep IPv6 intervals active across
+    # all the IPv4 hosts (and vice versa).
+    addrs: list[Address] = []
+    for a, b in zip(v6, v4, strict=True):
+        addrs.append(a)
+        addrs.append(b)
+    snap = Snapshot(addresses=addrs)
+    start = time.perf_counter()
+    pairs = find_overlapping_addresses(snap)
+    elapsed = time.perf_counter() - start
+    # Distinct IPv4 hosts and distinct IPv6 /48s are pairwise disjoint within
+    # their family, and never pair across families → nothing emitted.
+    assert pairs == []
     assert elapsed < 1.0
 
 

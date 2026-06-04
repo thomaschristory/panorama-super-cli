@@ -27,8 +27,6 @@ class OverlapKind(str, Enum):
 
     CONTAINS = "contains"
     """Left's interval fully spans right's (left is broader, or equal)."""
-    CONTAINED_BY = "contained_by"
-    """Reserved for symmetry; not emitted — pairs normalize to broader-left."""
     OVERLAPS = "overlaps"
     """Intervals intersect but neither contains the other (ip-range only)."""
 
@@ -47,15 +45,6 @@ class OverlapPair(BaseModel):
     right_location: str
     right_value: str
     relationship: OverlapKind
-
-
-def _visible_names(snapshot: Snapshot, scope: Location | None) -> set[str] | None:
-    """Location names visible from `scope` (the DG, its ancestors, and shared).
-    `None` means unscoped. Mirrors `resolve._visible_names` so audit honours
-    `--device-group` exactly like `find`."""
-    if scope is None:
-        return None
-    return {loc.name for loc in snapshot.ancestors(scope)}
 
 
 class _Interval:
@@ -97,14 +86,17 @@ def find_overlapping_addresses(
     `left`; a partial intersection yields `OVERLAPS`. Disjoint intervals and
     cross-family pairs yield nothing.
 
-    Sort-then-sweep, not O(n²) all-pairs: sorting by `(lo asc, hi desc)` means
-    that when interval `cur` starts, every interval still "active" (its `hi`
-    not yet passed) either contains `cur` or partially overlaps it — never the
-    reverse — so each comparison is decided in O(1) and only genuinely related
-    objects are touched. Worst case (n hosts in one broad net) is ~n pairs.
+    Sort-then-sweep, not O(n²) all-pairs: intervals are partitioned by address
+    family first, then each family group is sorted by `(lo asc, hi desc)` and
+    swept independently. Within a group, when interval `cur` starts every
+    interval still "active" (its `hi` not yet passed) either contains `cur` or
+    partially overlaps it — never the reverse — so each comparison is decided in
+    O(1) and only genuinely related objects are touched. Partitioning keeps the
+    active list per-family, so a wide IPv6 object never holds unrelated IPv4
+    intervals active. Worst case (n hosts in one broad net) is ~n pairs.
     """
-    visible = _visible_names(snapshot, scope)
-    intervals: list[_Interval] = []
+    visible = snapshot.visible_location_names(scope)
+    by_family: dict[int | None, list[_Interval]] = {}
     for addr in snapshot.addresses:
         if visible is not None and addr.location.name not in visible:
             continue
@@ -115,30 +107,31 @@ def find_overlapping_addresses(
         if bounds is None:  # FQDN / ip-wildcard — no comparable interval
             continue
         lo, hi = bounds
-        intervals.append(_Interval(addr, nv, lo, hi))
-
-    # Earlier-starting first; among equal starts the wider (larger hi) first so
-    # a container is already active when its contained peers begin. order_key
-    # breaks remaining ties for a stable, deterministic `left` on equal spans.
-    intervals.sort(key=lambda iv: (iv.lo, -iv.hi, iv.order_key))
+        iv = _Interval(addr, nv, lo, hi)
+        by_family.setdefault(iv.family, []).append(iv)
 
     pairs: list[OverlapPair] = []
-    active: list[_Interval] = []
-    for cur in intervals:
-        # Drop intervals that ended before `cur` starts: they can't relate to
-        # `cur` or anything after it (everything after starts >= cur.lo).
-        active = [iv for iv in active if iv.hi >= cur.lo]
-        for prev in active:
-            if prev.family != cur.family:
-                continue  # never pair across address families
-            # `prev` starts at or before `cur` (sort order). If it also ends at
-            # or after `cur`, it spans `cur` → containment, broader is `prev`.
-            if prev.hi >= cur.hi:
-                pairs.append(_pair(prev, cur, OverlapKind.CONTAINS))
-            else:
-                # prev.lo <= cur.lo <= prev.hi < cur.hi → genuine partial overlap.
-                pairs.append(_pair(prev, cur, OverlapKind.OVERLAPS))
-        active.append(cur)
+    for intervals in by_family.values():
+        # Earlier-starting first; among equal starts the wider (larger hi) first
+        # so a container is already active when its contained peers begin.
+        # order_key breaks remaining ties for a stable, deterministic `left` on
+        # equal spans.
+        intervals.sort(key=lambda iv: (iv.lo, -iv.hi, iv.order_key))
+        active: list[_Interval] = []
+        for cur in intervals:
+            # Drop intervals that ended before `cur` starts: they can't relate to
+            # `cur` or anything after it (everything after starts >= cur.lo).
+            active = [iv for iv in active if iv.hi >= cur.lo]
+            for prev in active:
+                # `prev` starts at or before `cur` (sort order). If it also ends
+                # at or after `cur`, it spans `cur` → containment, broader is
+                # `prev`.
+                if prev.hi >= cur.hi:
+                    pairs.append(_pair(prev, cur, OverlapKind.CONTAINS))
+                else:
+                    # prev.lo <= cur.lo <= prev.hi < cur.hi → partial overlap.
+                    pairs.append(_pair(prev, cur, OverlapKind.OVERLAPS))
+            active.append(cur)
 
     pairs.sort(key=lambda p: (p.left_location, p.left_name, p.right_location, p.right_name))
     return pairs
