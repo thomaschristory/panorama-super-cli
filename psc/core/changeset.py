@@ -62,6 +62,27 @@ class ObjectDelete(BaseModel):
         return f"delete {self.kind.value} '{self.name}' @{self.location}"
 
 
+class RuleDelete(BaseModel):
+    """Delete an entire rule that a teardown left non-functional.
+
+    Emitted (only) by `decommission` when scrubbing an address from a rule's
+    source/destination empties that field: a rule with no real source *or* no
+    real destination can never match traffic, so it is removed rather than left
+    as a dead entry. `referrer_kind` is the `*-rule` tag (`security-rule`,
+    `nat-rule`, `pbf-rule`, …); `rulebase` is `pre`/`post`. Like `ObjectDelete`
+    this is a teardown, so the unmappable-reference gate treats it accordingly.
+    """
+
+    referrer_kind: str
+    name: str
+    location: str
+    rulebase: str
+
+    @property
+    def summary(self) -> str:
+        return f"delete {self.referrer_kind} rule '{self.name}' @{self.location} {self.rulebase}"
+
+
 class ObjectRename(BaseModel):
     kind: ObjectKind
     location: str
@@ -103,6 +124,7 @@ class ChangeSet(BaseModel):
     title: str
     upserts: list[ObjectUpsert] = Field(default_factory=list)
     reference_edits: list[ReferenceEdit] = Field(default_factory=list)
+    rule_deletes: list[RuleDelete] = Field(default_factory=list)
     renames: list[ObjectRename] = Field(default_factory=list)
     deletes: list[ObjectDelete] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -114,16 +136,26 @@ class ChangeSet(BaseModel):
 
     @property
     def op_count(self) -> int:
-        return len(self.upserts) + len(self.reference_edits) + len(self.renames) + len(self.deletes)
+        return (
+            len(self.upserts)
+            + len(self.reference_edits)
+            + len(self.rule_deletes)
+            + len(self.renames)
+            + len(self.deletes)
+        )
 
     @property
     def is_empty(self) -> bool:
         return self.op_count == 0
 
     def summaries(self) -> list[str]:
+        # Order mirrors safe execution: scrub member fields (reference_edits)
+        # *before* deleting whole rules they emptied, and delete rules before
+        # the objects they referenced are themselves removed.
         out: list[str] = []
         out += [u.summary for u in self.upserts]
         out += [e.summary for e in self.reference_edits]
+        out += [rd.summary for rd in self.rule_deletes]
         out += [r.summary for r in self.renames]
         out += [d.summary for d in self.deletes]
         return out
@@ -170,7 +202,11 @@ def gate_unmappable_reference_edits(cs: ChangeSet) -> None:
     unmappable = [e for e in cs.reference_edits if not reference_edit_is_mappable(e)]
     if not unmappable:
         return
-    torn_down = [d.name for d in cs.deletes] + [r.old_name for r in cs.renames]
+    torn_down = (
+        [d.name for d in cs.deletes]
+        + [r.old_name for r in cs.renames]
+        + [rd.name for rd in cs.rule_deletes]
+    )
     for e in unmappable:
         referrer = f"{e.referrer_kind} '{e.referrer_name}'@{e.referrer_location} {e.field}"
         if torn_down:

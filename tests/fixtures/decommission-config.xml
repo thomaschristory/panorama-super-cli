@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<!-- Decommission scenario: host h-dead (10.1.0.5/32) lives in two groups and
+     three security rules — one sole-source (orphan), one sole-destination
+     (orphan), one mixed (survives). A separate shared host (nat-host) is named
+     only in a NAT source-translation field, which is unmappable and therefore
+     blocks a teardown that includes it. -->
+<config>
+  <shared>
+    <address>
+      <entry name="h-dead"><ip-netmask>10.1.0.5/32</ip-netmask></entry>
+      <entry name="h-keep"><ip-netmask>10.1.0.6/32</ip-netmask></entry>
+      <entry name="nat-host"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="g-dead-only">
+        <static><member>h-dead</member></static>
+      </entry>
+      <entry name="g-mixed">
+        <static>
+          <member>h-dead</member>
+          <member>h-keep</member>
+        </static>
+      </entry>
+    </address-group>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="r-sole-source">
+            <source><member>h-dead</member></source>
+            <destination><member>any</member></destination>
+            <action>allow</action>
+          </entry>
+          <entry name="r-sole-dest">
+            <source><member>any</member></source>
+            <destination><member>h-dead</member></destination>
+            <action>allow</action>
+          </entry>
+          <entry name="r-mixed">
+            <source>
+              <member>h-dead</member>
+              <member>h-keep</member>
+            </source>
+            <destination><member>h-keep</member></destination>
+            <action>allow</action>
+          </entry>
+        </rules>
+      </security>
+      <nat>
+        <rules>
+          <entry name="nat-snat">
+            <source><member>any</member></source>
+            <destination><member>any</member></destination>
+            <source-translation>
+              <dynamic-ip-and-port>
+                <translated-address>
+                  <member>nat-host</member>
+                </translated-address>
+              </dynamic-ip-and-port>
+            </source-translation>
+          </entry>
+        </rules>
+      </nat>
+    </pre-rulebase>
+  </shared>
+</config>

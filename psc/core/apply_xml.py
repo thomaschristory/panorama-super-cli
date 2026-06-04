@@ -17,7 +17,13 @@ import xml.etree.ElementTree as ET
 
 from defusedxml.ElementTree import fromstring as _safe_fromstring
 
-from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit, reference_edit_is_mappable
+from psc.core.changeset import (
+    ChangeSet,
+    ObjectUpsert,
+    ReferenceEdit,
+    RuleDelete,
+    reference_edit_is_mappable,
+)
 from psc.core.rulebases import rule_container
 from psc.output.errors import ErrorType, PscError
 
@@ -113,6 +119,19 @@ def _apply_delete(root: ET.Element, kind: str, name: str, location: str) -> None
         container.remove(entry)
 
 
+def _apply_rule_delete(root: ET.Element, d: RuleDelete) -> None:
+    scope = _scope_element(root, d.location)
+    if scope is None:
+        return
+    container = rule_container(d.referrer_kind)
+    rules = scope.find(f"./{d.rulebase}-rulebase/{container}/rules")
+    if rules is None:
+        return
+    entry = _find_named(rules, "entry", d.name)
+    if entry is not None:
+        rules.remove(entry)
+
+
 def _apply_rename(root: ET.Element, kind: str, location: str, old: str, new: str) -> None:
     scope = _scope_element(root, location)
     if scope is None:
@@ -175,6 +194,8 @@ def apply_changeset(xml_text: str, cs: ChangeSet) -> str:
         _apply_upsert(config, u)
     for edit in cs.reference_edits:
         _apply_reference_edit(config, edit)
+    for rd in cs.rule_deletes:
+        _apply_rule_delete(config, rd)
     for r in cs.renames:
         _apply_rename(config, r.kind.value, r.location, r.old_name, r.new_name)
     for d in cs.deletes:

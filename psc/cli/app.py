@@ -13,6 +13,7 @@ from psc import __version__
 from psc.cli import (
     audit_cmds,
     auth_cmds,
+    decommission_cmds,
     dedup_cmds,
     find_cmds,
     name_cmds,
@@ -148,6 +149,10 @@ app.add_typer(
 )
 app.add_typer(profile_cmds.app, name="profile", help="Manage live connection profiles.")
 app.add_typer(version_cmds.app, name="version", help="Show version; check PyPI for updates.")
+app.command(
+    "decommission",
+    help="Reference-safe teardown of address objects matching an IP/CIDR.",
+)(decommission_cmds.decommission)
 app.command(
     "init",
     help="Interactively bootstrap a live profile (fetches an API key from a username/password).",
