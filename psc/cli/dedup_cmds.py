@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from psc.cli._plan import complete
+from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core.dedup import (
     DuplicateGroup,
@@ -14,6 +14,7 @@ from psc.core.dedup import (
     plan_merge,
 )
 from psc.core.refs import ReferenceGraph
+from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
 from psc.output.format import render
 
@@ -71,8 +72,9 @@ def merge(
     ),
     apply: bool = typer.Option(False, "--apply", help="Execute the merge (default: dry-run)."),
     out: str | None = typer.Option(
-        None, "--out", help="Offline: write the rewritten config XML here."
+        None, "--out", help="Offline: write the rewritten config here (see --output-format)."
     ),
+    output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Collapse one address object into another, repointing every reference.
 
@@ -91,4 +93,4 @@ def merge(
         drop=ObjectRef(name=remove, location=remove_location or default_loc),
         allow_value_change=allow_value_change,
     )
-    complete(rt, cs, apply=apply, out_path=out)
+    complete(rt, cs, apply=apply, out_path=out, out_format=output_format)

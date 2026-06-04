@@ -7,14 +7,39 @@ refused, dry-run is the default, and `--apply` is the only path to a write.
 
 from __future__ import annotations
 
+import typer
+
 from psc.cli.runtime import Runtime
 from psc.core.changeset import ChangeSet
 from psc.core.setcmd import render_changeset
+from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
 from psc.output.format import OutputFormat, render
 
+# Shared across every mutating command so the `--out` artifact toggle reads and
+# behaves identically wherever `complete()` is used (dedup merge, name rename,
+# name apply). Default `xml` keeps existing scripts byte-for-byte compatible.
+OUT_FORMAT_OPTION = typer.Option(
+    ConfigFormat.XML,
+    "--output-format",
+    "-of",
+    help=(
+        "Format of the offline --out artifact. 'xml' (default) rewrites the whole "
+        "config to load with `load config`; 'set' writes the equivalent PAN-OS set "
+        "script (the creates/deletes/repoints) — easier to read and to paste into a "
+        "config session. Only affects --out; ignored without --apply."
+    ),
+)
 
-def complete(rt: Runtime, cs: ChangeSet, *, apply: bool, out_path: str | None) -> None:
+
+def complete(
+    rt: Runtime,
+    cs: ChangeSet,
+    *,
+    apply: bool,
+    out_path: str | None,
+    out_format: ConfigFormat = ConfigFormat.XML,
+) -> None:
     """Render `cs` in the chosen format, then apply it iff `apply`.
 
     A blocked plan raises `CONFLICT` (exit 6) before any write. The structured
@@ -43,7 +68,7 @@ def complete(rt: Runtime, cs: ChangeSet, *, apply: bool, out_path: str | None) -
         return
 
     if apply:
-        result = rt.source().apply(cs, out_path=out_path)
+        result = rt.source().apply(cs, out_path=out_path, out_format=out_format)
         rt.stderr.print(
             f"[green]applied[/green] {result.ops} operation(s)"
             + (f" → {result.out_path}" if result.out_path else "")
