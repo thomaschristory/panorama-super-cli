@@ -7,7 +7,7 @@ import pytest
 from psc.core.apply_live import plan_xapi_ops
 from psc.core.apply_xml import apply_changeset
 from psc.core.changeset import ChangeSet, ReferenceEdit, reference_edit_is_mappable
-from psc.core.models import Location, PolicyRule, Rulebase, RuleType, Snapshot
+from psc.core.models import Location, PolicyRule, Rulebase, RuleType, SecurityRule, Snapshot
 from psc.core.parse import parse_config_file
 from psc.core.rule_edit import plan_rule_member_edit
 from psc.core.setcmd import render_changeset
@@ -154,6 +154,36 @@ def test_application_override_has_no_service_field(all_rb_snapshot: Snapshot) ->
     assert ei.value.error_type is ErrorType.VALIDATION
 
 
+def test_policy_rule_application_field_raises_validation(all_rb_snapshot: Snapshot) -> None:
+    # Only SecurityRule models `application`; a policy rule (qos/pbf/...) has no
+    # such field, so an `application` edit would emit a phantom edit the device
+    # rejects on commit. Refuse it like the NAT application guard.
+    for rule_name in ("qos-1", "pbf-1"):
+        with pytest.raises(PscError) as ei:
+            plan(all_rb_snapshot, rule_name, "application", add="ssl")
+        assert ei.value.error_type is ErrorType.VALIDATION
+
+
+def test_add_first_service_member_to_service_bearing_policy_rule(
+    all_rb_snapshot: Snapshot,
+) -> None:
+    # `dg-qos` is a service-bearing rulebase (qos) with no service configured, so
+    # `service` parses to []. Adding the first member must work — an empty list
+    # is the normal unconfigured state, not "this rulebase lacks the field".
+    cs = plan(
+        all_rb_snapshot,
+        "dg-qos",
+        "service",
+        location=Location.dg("DG1"),
+        rulebase=Rulebase.POST,
+        add="s1",
+    )
+    e = _edit(cs)
+    assert e.referrer_kind == "qos-rule"
+    assert e.before == []
+    assert e.after == ["s1"]
+
+
 # --- ambiguity ----------------------------------------------------------
 
 
@@ -169,6 +199,22 @@ def test_ambiguous_rule_across_locations_raises_validation() -> None:
         plan(snap, "dup", "source", location=None, add="x")
     assert ei.value.error_type is ErrorType.VALIDATION
     assert ei.value.details["candidates"]
+
+
+def test_multi_kind_same_location_picks_security_and_warns() -> None:
+    # A malformed export with a security-rule and a policy-rule of the SAME
+    # name/location/rulebase: resolution order takes the security rule and the
+    # ChangeSet carries a multi-kind warning.
+    snap = Snapshot(
+        security_rules=[SecurityRule(name="dup", location=SHARED, rulebase=Rulebase.PRE)],
+        policy_rules=[
+            PolicyRule(name="dup", location=SHARED, rulebase=Rulebase.PRE, rule_type=RuleType.QOS)
+        ],
+    )
+    cs = plan(snap, "dup", "source", add="x")
+    e = _edit(cs)
+    assert e.referrer_kind == "security-rule"
+    assert any("rule kinds" in w for w in cs.warnings)
 
 
 # --- setcmd render ------------------------------------------------------

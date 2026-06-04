@@ -461,10 +461,14 @@ def _field_attr(field: str) -> str:
     return "tags" if field == "tag" else field.replace("-", "_")
 
 
-def _attr_as_members(obj: object, field: str) -> list[str]:
+def attr_as_members(obj: object, field: str) -> list[str]:
     """Read a rule's reference field as a member list (a scalar wraps to one)."""
     val = getattr(obj, _field_attr(field), [])
     return list(val) if isinstance(val, list) else [val]
+
+
+# Back-compat alias for the prior private name.
+_attr_as_members = attr_as_members
 
 
 def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
@@ -481,7 +485,7 @@ def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
                 and r.location == loc
                 and (ref.rulebase is None or r.rulebase == ref.rulebase)
             ):
-                return _attr_as_members(r, ref.field)
+                return attr_as_members(r, ref.field)
     elif ref.referrer_kind == "nat-rule":
         for n in snapshot.nat_rules:
             if (
@@ -489,7 +493,7 @@ def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
                 and n.location == loc
                 and (ref.rulebase is None or n.rulebase == ref.rulebase)
             ):
-                return _attr_as_members(n, ref.field)
+                return attr_as_members(n, ref.field)
     elif rule_container(ref.referrer_kind) is not None:
         for p in snapshot.policy_rules:
             if (
@@ -498,5 +502,5 @@ def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
                 and p.location == loc
                 and (ref.rulebase is None or p.rulebase == ref.rulebase)
             ):
-                return _attr_as_members(p, ref.field)
+                return attr_as_members(p, ref.field)
     return [ref.target_name]

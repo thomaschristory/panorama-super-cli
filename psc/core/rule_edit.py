@@ -15,13 +15,29 @@ Framework-free: it returns a `ChangeSet`; the CLI formats and applies it.
 from __future__ import annotations
 
 from psc.core.changeset import ChangeSet, ReferenceEdit, gate_unmappable_reference_edits
-from psc.core.dedup import _attr_as_members
-from psc.core.models import Location, NatRule, PolicyRule, Rulebase, SecurityRule, Snapshot
+from psc.core.dedup import attr_as_members
+from psc.core.models import (
+    Location,
+    NatRule,
+    PolicyRule,
+    Rulebase,
+    RuleType,
+    SecurityRule,
+    Snapshot,
+)
 from psc.output.errors import ErrorType, PscError
 
 # The member-list rule fields this command can edit. NAT's `service` is a scalar
 # and NAT has no `application`; those are caught per-rule-type below.
 _EDITABLE_FIELDS: frozenset[str] = frozenset({"source", "destination", "service", "application"})
+
+# Policy rulebases that structurally have NO `service` field. Membership here —
+# not an empty `service` list — is what makes a `service` edit illegal, because
+# an empty list is also the normal unconfigured state of a service-bearing rule.
+# application-override is the only one of the nine `RuleType` rulebases that
+# omits service entirely; the rest (qos/pbf/dos/sdwan/tunnel-inspect/
+# authentication/decryption/network-packet-broker) all carry a service list.
+_NO_SERVICE_RULE_TYPES: frozenset[RuleType] = frozenset({RuleType.APPLICATION_OVERRIDE})
 
 
 def _candidates(
@@ -126,16 +142,23 @@ def plan_rule_member_edit(
             )
             return cs
     elif isinstance(rule, PolicyRule):
-        # A policy rulebase that has no service field (e.g. application-override)
-        # carries an empty `service`; adding to it would invent a field PAN-OS
-        # rejects for that rulebase.
-        if field == "service" and not rule.service:
+        # Only SecurityRule models `application`; a policy rule has no such field,
+        # so an edit would invent an `<application>` element PAN-OS rejects.
+        if field == "application":
+            raise PscError(
+                f"rule '{rule_name}' ({rule.referrer_kind}) has no application field",
+                ErrorType.VALIDATION,
+            )
+        # Gate `service` on rule TYPE, not emptiness: a service-bearing rulebase
+        # with no service configured has an empty list, and adding the first
+        # member must work. Only rulebases that structurally omit the field refuse.
+        if field == "service" and rule.rule_type in _NO_SERVICE_RULE_TYPES:
             raise PscError(
                 f"rule '{rule_name}' ({rule.referrer_kind}) has no service field",
                 ErrorType.VALIDATION,
             )
 
-    before = _attr_as_members(rule, field)
+    before = attr_as_members(rule, field)
     after = _rewrite(before, add=add, remove=remove)
     if after == before:
         return cs  # idempotent no-op
