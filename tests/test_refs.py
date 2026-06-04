@@ -89,6 +89,25 @@ def test_unresolved_pbf_nexthop_is_not_flagged_dangling() -> None:
     assert all(r.field != "nexthop" for r in g.dangling())
 
 
+def test_nat_rule_tags_are_scanned() -> None:
+    # A tag used only on a NAT rule must be reachable in where-used and must not
+    # be reported unused — NAT was the lone rulebase whose tags were skipped.
+    xml = """<config><shared>
+      <tag><entry name="t-nat"/></tag>
+      <pre-rulebase><nat><rules>
+        <entry name="n">
+          <source><member>any</member></source>
+          <destination><member>any</member></destination>
+          <tag><member>t-nat</member></tag>
+        </entry>
+      </rules></nat></pre-rulebase>
+    </shared></config>"""
+    g = ReferenceGraph.build(parse_config(xml))
+    used = {(r.referrer_kind, r.referrer_name) for r in g.where_used("tag", "t-nat", SHARED)}
+    assert ("nat-rule", "n") in used
+    assert "t-nat" not in {t.name for t in g.unused("tag")}
+
+
 def test_predefined_any_not_dangling() -> None:
     xml = """<config><shared>
       <pre-rulebase><security><rules>

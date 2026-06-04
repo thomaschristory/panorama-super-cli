@@ -72,6 +72,19 @@ def unused(
     if rt.strict and not targets:
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
     render(rt.stdout, rt.output, model=model, rows=rows, table_title=f"unused {kind}")
+    if targets:
+        # `unused` only sees device-group objects + policy rulebases. Objects
+        # referenced from templates/network config, NAT-rule tags, or matched
+        # into a dynamic address group are NOT scanned and look unused here. Warn
+        # on stderr so stdout stays pure machine output (#56).
+        rt.stderr.print(
+            "[yellow]caveat[/yellow]: candidates only — these are unreferenced by the "
+            "scanned objects/policy rulebases. NOT scanned: templates & network/device "
+            "config, dynamic-address-group membership. Verify before deleting (esp. "
+            "shared). See docs: Coverage and blind spots.",
+            soft_wrap=True,
+            highlight=False,
+        )
 
 
 @app.command("dangling")
