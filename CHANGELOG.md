@@ -7,6 +7,20 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.3 — 2026-06-04
+
+### Added
+
+- **`-of` / `--output-format xml|set` for the offline `--apply --out` artifact.**
+  Mutating commands (`dedup merge`, `name rename`, `name apply`) can now write the
+  rewritten config file as the equivalent PAN-OS `set` script instead of XML.
+  `xml` (the rewritten, `load config`-able config) stays the default, so existing
+  invocations are unchanged; `set` writes the creates/deletes/repoints that
+  achieve the same change, which is easier to read and to paste into a config
+  session or `load config partial`. This is distinct from `-o set`, which renders
+  the dry-run plan to stdout. The blocker hard-gate and repoint-before-delete
+  ordering apply to both formats; a blocked plan writes no file. (#37)
+
 ## v0.2.2 — 2026-06-04
 
 ### Fixed

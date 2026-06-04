@@ -17,9 +17,11 @@ These are **context** options — pass them *before* the subcommand:
 | `--debug` | Verbose structured logs on stderr. |
 | `--version` | Print version and exit. |
 
-Write-execution options (`--apply`, `--out`) belong to the individual mutating
-commands and are passed *after* the command. `--apply` is the only path to a
-write; offline it requires `--out PATH` (a new file), while live it pushes to
+Write-execution options (`--apply`, `--out`, `-of/--output-format`) belong to
+the individual mutating commands and are passed *after* the command. `--apply`
+is the only path to a write; offline it requires `--out PATH` (a new file) and
+`-of xml|set` chooses what that file holds (default `xml`), while live it pushes
+to
 Panorama's candidate config and never commits. See
 [Writes and safety](../guides/safety.md).
 
@@ -42,7 +44,7 @@ psc dedup addresses
 psc dedup services
 psc dedup merge --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
-               [--allow-value-change] [--apply] [--out PATH]
+               [--allow-value-change] [--apply] [--out PATH] [-of xml|set]
 ```
 
 Find duplicates; merge one object into another, repointing all references. See
@@ -63,8 +65,8 @@ Where-used, recursive unused, and dangling-reference audit. See
 
 ```
 psc name lint [--all]
-psc name rename --object OLD --to NEW [--kind KIND] [--location LOC] [--apply] [--out PATH]
-psc name apply  --object NAME            [--location LOC] [--apply] [--out PATH]
+psc name rename --object OLD --to NEW [--kind KIND] [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc name apply  --object NAME            [--location LOC] [--apply] [--out PATH] [-of xml|set]
 ```
 
 Opt-in naming-template lint and reference-aware rename. See
