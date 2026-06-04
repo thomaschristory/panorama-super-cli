@@ -65,6 +65,9 @@ def init(
         None, "--api-key", help="Use an existing key instead of generating one."
     ),
     no_verify: bool = typer.Option(False, "--no-verify", help="Skip the live pre-flight probe."),
+    insecure: bool = typer.Option(
+        False, "--insecure", help="Skip TLS certificate verification (self-signed Panorama)."
+    ),
     set_default: bool = typer.Option(
         True, "--default/--no-default", help="Make this the default profile."
     ),
@@ -72,6 +75,7 @@ def init(
     """Interactively bootstrap a live profile and write it to ~/.psc/config.yaml."""
     rt: Runtime = ctx.obj
     cfg = rt.config
+    verify_ssl = not insecure
 
     if hostname is None:
         if not _interactive():
@@ -88,17 +92,26 @@ def init(
             username = typer.prompt("Username")
         password = _resolve_password(username)
         rt.stderr.print(f"requesting API key from {hostname} …")
-        api_key = LiveSource.fetch_api_key(hostname, username, password, port=port)
+        api_key = LiveSource.fetch_api_key(
+            hostname, username, password, port=port, verify=verify_ssl
+        )
         rt.stderr.print("[green]received API key[/green]")
 
     if not no_verify:
-        info = LiveSource(hostname, api_key, port=port).verify()
+        info = LiveSource(hostname, api_key, port=port, verify=verify_ssl).verify()
         _announce_verified(rt, info)
 
     # Replace any same-named profile, then append (mirrors `profile add`).
     cfg.profiles = [p for p in cfg.profiles if p.name != name]
     cfg.profiles.append(
-        Profile(name=name, hostname=hostname, api_key=api_key, port=port, device_group=device_group)
+        Profile(
+            name=name,
+            hostname=hostname,
+            api_key=api_key,
+            port=port,
+            verify_ssl=verify_ssl,
+            device_group=device_group,
+        )
     )
     if set_default or cfg.default_profile is None:
         cfg.default_profile = name
@@ -130,7 +143,9 @@ def login(
     if username is not None:
         password = _resolve_password(username)
         rt.stderr.print(f"rotating API key for '{prof.name}' …")
-        new_key = LiveSource.fetch_api_key(prof.hostname, username, password, port=prof.port)
+        new_key = LiveSource.fetch_api_key(
+            prof.hostname, username, password, port=prof.port, verify=prof.verify_ssl
+        )
     elif not prof.api_key:
         raise PscError(
             f"profile '{prof.name}' has no API key — run `psc login --user <name>`",

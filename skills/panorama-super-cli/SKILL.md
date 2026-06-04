@@ -102,7 +102,8 @@ psc profile add --name prod --host panorama.example.com --api-key "$KEY" --defau
 psc profile list
 ```
 
-Password comes from `$PSC_PASSWORD` or a hidden prompt, never a flag. Auth
+Password comes from `$PSC_PASSWORD` or a hidden prompt, never a flag. TLS is
+verified by default; add `--insecure` to `init` for a self-signed Panorama. Auth
 failures exit `8`, unreachable host exits `7`.
 
 ## Output formats

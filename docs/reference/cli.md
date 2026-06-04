@@ -71,7 +71,7 @@ Opt-in naming-template lint and reference-aware rename. See
 
 ```
 psc init [--name N] [--host H] [--port P] [--device-group DG] \
-         [--user U | --api-key K] [--no-verify] [--default/--no-default]
+         [--user U | --api-key K] [--no-verify] [--insecure] [--default/--no-default]
 ```
 
 Interactively bootstrap the first live profile. With `--user` (or an
@@ -79,6 +79,11 @@ interactive prompt) it exchanges a username/password for an API key via the
 PAN-OS keygen API, runs a pre-flight probe, and writes a `0600` config. Pass
 `--api-key` to store a key you already have instead of generating one. The
 password is read from `$PSC_PASSWORD` or a hidden prompt — never a flag.
+
+TLS certificates are verified by default (the keygen request carries the
+password). For a self-signed Panorama, pass `--insecure` — it is recorded as the
+profile's `verify_ssl: false` and reused by later live commands. `--no-verify`
+is unrelated: it skips the *reachability* probe, not certificate checking.
 
 ### login
 
