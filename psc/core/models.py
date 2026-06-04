@@ -315,12 +315,6 @@ class Snapshot(BaseModel):
     def service_index(self) -> dict[tuple[str, str], Service]:
         return {s.key: s for s in self.services}
 
-    def address_group_index(self) -> dict[tuple[str, str], AddressGroup]:
-        return {g.key: g for g in self.address_groups}
-
-    def service_group_index(self) -> dict[tuple[str, str], ServiceGroup]:
-        return {g.key: g for g in self.service_groups}
-
     def addresses_by_location(self) -> dict[str, list[Address]]:
         out: dict[str, list[Address]] = defaultdict(list)
         for a in self.addresses:
