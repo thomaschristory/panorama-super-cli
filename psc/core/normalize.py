@@ -154,10 +154,19 @@ def _query_bounds(q: Query) -> tuple[int, int] | None:
     return q.range
 
 
-def _value_bounds(a: AddrValue) -> tuple[int, int] | None:
+def value_bounds(a: AddrValue) -> tuple[int, int] | None:
+    """Integer `(lo, hi)` interval covered by an `AddrValue`, or `None` when it
+    isn't a comparable IP interval (FQDN and ip-wildcard have no interval).
+
+    The numeric basis shared by `match` (find), and `audit` overlap detection.
+    """
     if a.network is not None:
         return (int(a.network.network_address), int(a.network.broadcast_address))
     return a.range
+
+
+# Back-compat alias: `match` predates the public name and still calls `_value_bounds`.
+_value_bounds = value_bounds
 
 
 def match(query: Query, value: AddrValue) -> MatchKind | None:  # noqa: PLR0911 — interval cases

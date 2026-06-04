@@ -50,14 +50,6 @@ def _query_kind(q: Query) -> str:
     return "cidr"
 
 
-def _visible_names(snapshot: Snapshot, scope: Location | None) -> set[str] | None:
-    """Location names visible from `scope`: the device-group, every ancestor,
-    and `shared`. `None` means unscoped (every location)."""
-    if scope is None:
-        return None
-    return {loc.name for loc in snapshot.ancestors(scope)}
-
-
 def find_ip(
     snapshot: Snapshot, raw: str, scope: Location | None = None, *, exact: bool = False
 ) -> FindResult:
@@ -70,7 +62,7 @@ def find_ip(
     `10.0.0.10/32`), so those remain exact.
     """
     query = parse_query(raw)
-    visible = _visible_names(snapshot, scope)
+    visible = snapshot.visible_location_names(scope)
     matched: list[tuple[Address, MatchKind]] = []
     for addr in snapshot.addresses:
         if visible is not None and addr.location.name not in visible:
