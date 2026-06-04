@@ -7,6 +7,30 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.3.0 — 2026-06-04
+
+### Added
+
+- **Where-used across every object-referencing rulebase** (#2). The reference
+  graph previously covered only `security` and `nat`; it now also scans PBF,
+  decryption, authentication, QoS, application-override, DoS, SD-WAN,
+  tunnel-inspect, and network-packet-broker. `refs used`/`unused`/`dangling`
+  and the merge/rename repointing all account for them, so an object referenced
+  only by, say, a QoS or PBF rule is no longer reported unused (and can no
+  longer be deleted out from under a live rule). A PBF forwarding next-hop that
+  names an address object is shown in where-used and **blocks** a merge/rename
+  that would strand it (it has no flat member list to rewrite — edit it by hand,
+  then re-run). The `referrer_kind` in the output (`qos-rule`, `pbf-rule`, …)
+  names the exact rulebase.
+
+### Fixed
+
+- **Tag rename/merge no longer wipes a rule's other tags** (#2). `field_members`
+  read the wrong attribute name for a rule's `tag` field, so renaming or merging
+  a tag referenced by a security rule rewrote the rule's tag list to an empty (or
+  single-entry) value, destroying its co-tags. All rule kinds now resolve the
+  field uniformly.
+
 ## v0.2.6 — 2026-06-04
 
 ### Added
