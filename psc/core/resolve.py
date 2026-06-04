@@ -50,23 +50,22 @@ def _query_kind(q: Query) -> str:
     return "cidr"
 
 
-def _in_scope(loc: Location, scope: Location | None) -> bool:
-    """`scope=None` => every location; a shared scope still includes shared
-    (inherited everywhere); a DG scope includes that DG plus shared.
-    """
+def _visible_names(snapshot: Snapshot, scope: Location | None) -> set[str] | None:
+    """Location names visible from `scope`: the device-group, every ancestor,
+    and `shared`. `None` means unscoped (every location)."""
     if scope is None:
-        return True
-    if loc.is_shared:
-        return True
-    return loc == scope
+        return None
+    return {loc.name for loc in snapshot.ancestors(scope)}
 
 
 def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> FindResult:
-    """Find every address object/group matching `raw` within `scope`."""
+    """Find every address object/group matching `raw` within `scope` (which
+    includes the scoped device-group's ancestors and `shared`)."""
     query = parse_query(raw)
+    visible = _visible_names(snapshot, scope)
     matched: list[tuple[Address, MatchKind]] = []
     for addr in snapshot.addresses:
-        if not _in_scope(addr.location, scope):
+        if visible is not None and addr.location.name not in visible:
             continue
         nv = normalize_address(addr)
         if nv is None:
@@ -93,24 +92,24 @@ def find_ip(snapshot: Snapshot, raw: str, scope: Location | None = None) -> Find
     for a in snapshot.addresses:
         names_by_loc.setdefault(a.location.name, set()).add(a.name)
 
-    def _resolve_member(group_loc: str, member: str) -> tuple[str, str] | None:
-        # PAN-OS name resolution: a device-group-local object shadows a
-        # same-named shared one. Without this, a group in DG `prod` listing
-        # `H-web` would falsely match a *shared* `H-web` of a different value.
-        if member in names_by_loc.get(group_loc, set()):
-            return (group_loc, member)
-        if member in names_by_loc.get("shared", set()):
-            return ("shared", member)
+    def _resolve_member(group_loc: Location, member: str) -> tuple[str, str] | None:
+        # PAN-OS name resolution: a name binds to its closest definition up the
+        # device-group chain (local shadows ancestors shadow shared). Without
+        # this, a group in DG `prod` listing `H-web` could falsely match a
+        # *shared* `H-web` of a different value when `prod` defines its own.
+        for loc in snapshot.ancestors(group_loc):
+            if member in names_by_loc.get(loc.name, set()):
+                return (loc.name, member)
         return None  # nested group or dangling — not a direct address here
 
     groups: list[GroupMatch] = []
     for ag in snapshot.address_groups:
-        if not _in_scope(ag.location, scope) or not ag.static_members:
+        if (visible is not None and ag.location.name not in visible) or not ag.static_members:
             continue
         via = [
             m
             for m in ag.static_members
-            if (_resolve_member(ag.location.name, m) or ("", "")) in matched_keys
+            if (_resolve_member(ag.location, m) or ("", "")) in matched_keys
         ]
         if via:
             groups.append(GroupMatch(name=ag.name, location=ag.location.name, via=via))

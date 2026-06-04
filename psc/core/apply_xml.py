@@ -38,7 +38,15 @@ def _find_named(container: ET.Element | None, tag: str, name: str) -> ET.Element
 def _scope_element(root: ET.Element, location: str) -> ET.Element | None:
     if location == "shared":
         return root.find("shared")
-    for dg in root.findall(".//device-group/entry"):
+    # Prefer the editable device-group tree; never write into the read-only
+    # hierarchy mirror under `/config/readonly`, which carries the same names.
+    editable = root.findall("./devices/entry/device-group/entry")
+    candidates = editable or [
+        e
+        for e in root.findall(".//device-group/entry")
+        if e.get("name") and root.find("readonly") is None
+    ]
+    for dg in candidates:
         if dg.get("name") == location:
             return dg
     return None

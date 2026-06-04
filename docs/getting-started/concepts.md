@@ -12,14 +12,16 @@ never mutate it.
 ## Locations and inheritance
 
 An object lives in a **location**: `shared`, or a named device-group. A
-reference inside a device-group resolves to a same-named object in that
-device-group if one exists (a local **shadow**), otherwise to the `shared`
-object. This is exactly why renames are dangerous, and `psc` models it
-faithfully.
+reference inside a device-group resolves to its **closest** definition up the
+device-group chain — the device-group itself, then each parent, then `shared`
+(a nearer definition is a local **shadow** of the inherited one). This is
+exactly why renames are dangerous, and `psc` models it faithfully.
 
-!!! note "v0.1 scope"
-    Nested device-group hierarchies are flattened to the leaf; only
-    "device-group shadows shared" inheritance is modelled.
+Nested device-group hierarchies are read from the config's read-only
+`parent-dg` metadata, so where-used, unused, and dangling analysis — and the
+merge/rename shadow guards — all account for multi-level inheritance across
+ancestors and descendants. A config with no hierarchy metadata is treated as a
+flat single level (every device-group a direct child of `shared`).
 
 ## Value vs name
 
