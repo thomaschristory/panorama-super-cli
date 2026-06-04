@@ -64,6 +64,25 @@ def test_rename_blocks_on_existing_name(snapshot: Snapshot) -> None:
     assert cs.is_blocked
 
 
+def test_rename_blocks_when_repoint_hits_nat_translation(snapshot: Snapshot) -> None:
+    """net-10 is referenced by nat-web's source-translation (a nested field with
+    no flat member list). The rename can repoint the security-rule destination
+    but not the translation field — so applying it would delete the old name out
+    from under a dangling reference. Block it (#28)."""
+    graph = ReferenceGraph.build(snapshot)
+    cs = plan_rename(
+        snapshot,
+        graph,
+        kind=ObjectKind.ADDRESS,
+        location_name="shared",
+        old_name="net-10",
+        new_name="N-10.0.0.0_24",
+    )
+    assert cs.is_blocked
+    assert any("net-10" in b and "nat-web" in b for b in cs.blockers)
+    assert cs.op_count == 0
+
+
 def test_rename_blocks_shared_dg_shadow() -> None:
     # Renaming a shared object to a name a DG already defines is refused.
     snap = Snapshot(

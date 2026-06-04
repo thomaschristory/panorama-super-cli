@@ -72,3 +72,22 @@ def test_merge_missing_object_blocks(snapshot: Snapshot) -> None:
         drop=ObjectRef(name="web-primary", location="shared"),
     )
     assert cs.is_blocked
+
+
+def test_merge_blocks_when_repoint_hits_nat_translation(snapshot: Snapshot) -> None:
+    """net-10 is referenced by nat-web's source-translation, which has no flat
+    member list — repointing it away can't be expressed offline or live, so a
+    merge that would delete net-10 must be blocked, not silently skipped (#28).
+    """
+    graph = ReferenceGraph.build(snapshot)
+    cs = plan_merge(
+        snapshot,
+        graph,
+        keep=ObjectRef(name="h-web1", location="shared"),
+        drop=ObjectRef(name="net-10", location="shared"),
+        allow_value_change=True,
+    )
+    assert cs.is_blocked
+    assert any("net-10" in b and "nat-web" in b for b in cs.blockers)
+    # a blocked plan carries zero executable ops
+    assert cs.op_count == 0
