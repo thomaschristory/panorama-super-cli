@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from psc.core.changeset import ChangeSet, ObjectDelete, ObjectKind, ReferenceEdit
+from psc.core.changeset import (
+    ChangeSet,
+    ObjectDelete,
+    ObjectKind,
+    ReferenceEdit,
+    gate_unmappable_reference_edits,
+)
 from psc.core.models import Location, Snapshot
 from psc.core.normalize import normalize_address, service_key
 from psc.core.refs import Reference, ReferenceGraph
@@ -155,23 +161,18 @@ def plan_merge(
             cs.warnings.append(
                 f"{ref.referrer_kind} '{ref.referrer_name}' {ref.field} would be emptied"
             )
-        if ref.field in ("source-translation", "destination-translation"):
-            # psc cannot safely rewrite NAT translation fields offline (the XML
-            # path is nested and renderer-flagged), so deleting `drop` would
-            # leave a dangling translation reference. Refuse rather than warn.
-            cs.blockers.append(
-                f"NAT rule '{ref.referrer_name}' references '{drop.name}' in "
-                f"{ref.field}; psc can't safely rewrite NAT translation offline — "
-                "edit that field manually, then re-run the merge"
-            )
+
+    cs.deletes.append(ObjectDelete(kind=ObjectKind.ADDRESS, name=drop.name, location=drop.location))
+    # Refuse any repoint the appliers would silently skip (e.g. a NAT translation
+    # field) now that the delete is in the plan — a skipped repoint + delete is a
+    # dangling reference. Mirrors `plan_rename`; offline and live share the gate.
+    gate_unmappable_reference_edits(cs)
 
     if cs.blockers:
         # Invariant: a blocked plan carries zero ops, so no consumer can execute
         # a partial rewrite by iterating ops without checking `is_blocked`.
         cs.reference_edits.clear()
-        return cs
-
-    cs.deletes.append(ObjectDelete(kind=ObjectKind.ADDRESS, name=drop.name, location=drop.location))
+        cs.deletes.clear()
     return cs
 
 
