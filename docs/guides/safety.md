@@ -18,9 +18,16 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
 ## Repoint before delete
 
 A merge or rename never deletes or renames an object until every reference to it
-has been rewritten — across `shared` and every device-group, in groups, security
-rules, and NAT. The change-set is ordered: upserts → reference rewrites →
-renames → deletes.
+has been rewritten — across `shared` and every device-group, in groups and every
+object-referencing rulebase (security, NAT, and PBF, decryption, authentication,
+QoS, application-override, DoS, SD-WAN, tunnel-inspect, network-packet-broker).
+The change-set is ordered: upserts → reference rewrites → renames → deletes.
+
+This guarantee covers the reference sites psc **scans**. Some legitimate
+reference sites are *not* scanned (templates, network/device config, NAT-rule
+tags, and more) — so a *delete* driven by `refs unused` is not protected the way
+a merge/rename is. Read **[Coverage and blind spots](coverage-and-limitations.md)**
+before deleting anything, especially `shared` objects.
 
 ## Blockers are a hard gate
 
