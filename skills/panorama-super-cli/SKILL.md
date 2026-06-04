@@ -50,6 +50,7 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
 
 ```bash
 psc -c cfg.xml -o json find ip 10.0.0.10          # exact/contains/within + groups
+psc -c cfg.xml -o json find ip -e 10.0.0.10       # exact only (10.0.0.10 == /32)
 psc -c cfg.xml -o json find ip 10.0.0.0/24        # everything inside the /24
 psc -c cfg.xml -o json find ip -f ips.txt         # a whole list (array result)
 psc -c cfg.xml -o json find object grp-web        # locate by exact name
@@ -57,6 +58,8 @@ psc -c cfg.xml -o json find object grp-web        # locate by exact name
 
 `exists: true` means there's an exact-match object. `matches[].match` is one of
 `exact` (equal), `contains` (object is broader), `within` (object is narrower).
+Pass `--exact`/`-e` to keep only `exact` matches — handy when a broad object
+like `10.0.0.0/8` would otherwise drown out the host you asked for.
 
 ### dedup — duplicates and merging
 
