@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import typer
 
+from psc.cli._options import location_from_name
 from psc.cli.runtime import Runtime
-from psc.core.models import Location
 from psc.core.refs import ReferenceGraph
 from psc.core.resolve import find_object
 from psc.output.errors import ErrorType, PscError
@@ -41,7 +41,7 @@ def used(
         kind = kind or hits[0].kind
         location = location or hits[0].location
 
-    loc = Location.shared() if location == "shared" else Location.dg(location)
+    loc = location_from_name(location)
     refs = graph.where_used(kind, name, loc)
     rows = [
         {
@@ -68,10 +68,9 @@ def unused(
     graph = ReferenceGraph.build(rt.snapshot())
     targets = graph.unused(kind)
     rows = [{"kind": t.kind, "name": t.name, "location": t.location.name} for t in targets]
-    model = [{"kind": t.kind, "name": t.name, "location": t.location.name} for t in targets]
     if rt.strict and not targets:
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
-    render(rt.stdout, rt.output, model=model, rows=rows, table_title=f"unused {kind}")
+    render(rt.stdout, rt.output, model=rows, rows=rows, table_title=f"unused {kind}")
     if targets:
         # `unused` only sees device-group objects + policy rulebases. Objects
         # referenced from templates/network config, NAT-rule tags, or matched
