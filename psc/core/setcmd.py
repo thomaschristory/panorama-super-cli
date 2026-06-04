@@ -16,6 +16,7 @@ from psc.core.changeset import (
     ObjectRename,
     ObjectUpsert,
     ReferenceEdit,
+    RuleDelete,
     reference_edit_is_mappable,
 )
 from psc.core.models import (
@@ -157,6 +158,17 @@ def rename_lines(r: ObjectRename) -> list[str]:
     return [f"rename {scope} {r.kind.value} {r.old_name} to {r.new_name}"]
 
 
+def rule_delete_lines(d: RuleDelete) -> list[str]:
+    """`delete <scope> <rb>-rulebase <container> rules <name>` for a whole rule.
+
+    Removing the rule entry; `rule_container` maps the `*-rule` referrer_kind to
+    its XML/`set` container tag (`security-rule` -> `security`), matching the
+    appliers so the `set` script and the XML/live ops address the same node.
+    """
+    container = rule_container(d.referrer_kind)
+    return [f"delete {scope_prefix(d.location)} {d.rulebase}-rulebase {container} rules {d.name}"]
+
+
 def delete_lines(d: ObjectDelete) -> list[str]:
     scope = scope_prefix(d.location)
     return [f"delete {scope} {d.kind.value} {d.name}"]
@@ -197,6 +209,8 @@ def render_changeset(cs: ChangeSet) -> list[str]:
         lines += upsert_lines(u)
     for e in cs.reference_edits:
         lines += reference_edit_lines(e)
+    for rd in cs.rule_deletes:
+        lines += rule_delete_lines(rd)
     for r in cs.renames:
         lines += rename_lines(r)
     for d in cs.deletes:
