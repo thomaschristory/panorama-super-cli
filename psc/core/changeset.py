@@ -125,3 +125,56 @@ class ChangeSet(BaseModel):
         out += [r.summary for r in self.renames]
         out += [d.summary for d in self.deletes]
         return out
+
+
+def reference_edit_is_mappable(edit: ReferenceEdit) -> bool:
+    """Whether both appliers can express `edit` as a flat member-field rewrite.
+
+    The single source of truth behind `apply_xml._referrer_field_element` and
+    `apply_live._referrer_field_xpath`: a member field they know how to address
+    (a group's `static`/`members`, a security-rule field, a NAT src/dst list).
+    A NAT *translation* field is nested with no flat list, and a rule edit with
+    no `rulebase` can't be located — both are unmappable, and an applier silently
+    skips them. The planner uses this to refuse such a skip when the same plan
+    tears the target down, instead of leaving a dangling reference (#28).
+    """
+    kind = edit.referrer_kind
+    if kind in ("address-group", "service-group"):
+        return True
+    if kind == "security-rule":
+        return edit.rulebase is not None
+    if kind == "nat-rule":
+        return edit.rulebase is not None and edit.field in ("source", "destination")
+    return False
+
+
+def gate_unmappable_reference_edits(cs: ChangeSet) -> None:
+    """Promote unsafe unmappable reference edits to blockers, in place.
+
+    An unmappable edit (see `reference_edit_is_mappable`) is silently skipped at
+    apply time. If the plan also deletes or renames an object, that skip drops
+    the repoint that kept the teardown safe — a dangling reference, the exact
+    failure repoint-before-delete exists to prevent. Make it a hard blocker. With
+    no teardown the edit is advisory only, so it stays a warning.
+
+    Clearing the ops is the planner's job (a blocked plan carries zero ops); this
+    only classifies.
+    """
+    unmappable = [e for e in cs.reference_edits if not reference_edit_is_mappable(e)]
+    if not unmappable:
+        return
+    torn_down = [d.name for d in cs.deletes] + [r.old_name for r in cs.renames]
+    for e in unmappable:
+        referrer = f"{e.referrer_kind} '{e.referrer_name}'@{e.referrer_location} {e.field}"
+        if torn_down:
+            targets = ", ".join(f"'{t}'" for t in torn_down)
+            cs.blockers.append(
+                f"cannot repoint {referrer} automatically (no flat member list to rewrite); "
+                f"removing/renaming {targets} would leave a dangling reference — edit that "
+                "field manually, then re-run"
+            )
+        else:
+            cs.warnings.append(
+                f"{referrer} can't be repointed automatically (no flat member list); "
+                "review and edit it by hand"
+            )
