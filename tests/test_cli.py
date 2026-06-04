@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+import click
+import pytest
+
+from psc.cli import app
 
 FIXTURE = Path(__file__).parent / "fixtures" / "panorama-config.xml"
 
@@ -139,3 +145,28 @@ def test_unknown_command_usage_error_exit_2() -> None:
     assert cp.returncode == 2
     assert "Traceback" not in combined
     assert "No such command" in combined
+
+
+def test_click_exception_module_resolves_with_required_attrs() -> None:
+    # main() reads ClickException/Exit/Abort off the resolved module, so it must
+    # expose them whichever Typer flavour is installed.
+    mod = app._click_exception_module()
+    for attr in ("ClickException", "Exit", "Abort"):
+        assert hasattr(mod, attr)
+
+
+def test_click_exception_module_falls_back_when_typer_unvendored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Older Typer (<0.16) has no `typer._click`; a top-level import of it would
+    # crash psc at import time — worse than #31. Resolution must degrade to the
+    # real Click instead of raising.
+    real_import = builtins.__import__
+
+    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        if name.startswith("typer._click"):
+            raise ImportError("simulated Typer without vendored Click")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    assert app._click_exception_module() is click.exceptions

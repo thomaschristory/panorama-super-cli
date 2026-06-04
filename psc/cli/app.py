@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
+from types import ModuleType
 
 import click
 import typer
 from rich.console import Console
-from typer._click import exceptions as _typer_click_exc
 
 from psc import __version__
 from psc.cli import auth_cmds, dedup_cmds, find_cmds, name_cmds, profile_cmds, refs_cmds
@@ -15,6 +15,28 @@ from psc.cli.runtime import Runtime, configure_logging
 from psc.config.loader import load_config
 from psc.output.errors import PscError
 from psc.output.format import OutputFormat
+
+
+def _click_exception_module() -> ModuleType:
+    """The Click `exceptions` module whose flavour matches what `app(...)` raises.
+
+    Typer >=0.16 vendors its own Click under `typer._click`, so the exceptions
+    `app(standalone_mode=False)` raises are not subclasses of the real `click.*`
+    (issue #31). Older Typer has no `typer._click` at all — importing it at
+    module top level would crash psc on *import*, breaking every command, which
+    is strictly worse than the bug we're fixing. Resolve defensively: prefer the
+    vendored module, fall back to the real Click (which older Typer raises).
+    """
+    try:
+        from typer._click import exceptions as vendored  # noqa: PLC0415 — conditional
+    except ImportError:
+        from click import exceptions as real  # noqa: PLC0415 — fallback for older Typer
+
+        return real
+    return vendored
+
+
+_typer_click_exc = _click_exception_module()
 
 app = typer.Typer(
     add_completion=True,
