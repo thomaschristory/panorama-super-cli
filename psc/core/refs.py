@@ -10,14 +10,16 @@ translation fields). This module builds that graph once and answers:
 - `dangling()` — references to names that don't resolve to any object.
 
 PAN-OS name resolution is modelled faithfully: a reference inside a
-device-group resolves to a same-named object in that device-group if one
-exists (a local *shadow*), otherwise to the `shared` object, otherwise it
-dangles. This shadowing is exactly why renames are dangerous, so it lives
-here, in one place, rather than being re-derived per feature.
+device-group binds to its *closest* definition up the hierarchy — that
+device-group, then each ancestor device-group, then `shared` (a nearer
+definition *shadows* an inherited one); if nothing matches it dangles. This
+shadowing is exactly why renames are dangerous, so it lives here, in one place
+(`Snapshot.ancestors`), rather than being re-derived per feature.
 """
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -67,25 +69,27 @@ class Reference:
 
 
 class _NamespaceIndex:
-    """Per-namespace name resolver honouring DG-shadows-shared."""
+    """Per-namespace name resolver honouring the device-group chain.
+
+    A name binds to its *closest* definition along `chain` (the referrer's
+    device-group, then each ancestor, then `shared`) — exactly PAN-OS shadowing.
+    """
 
     def __init__(self) -> None:
-        self._shared: dict[str, str] = {}  # name -> kind
-        self._dg: dict[str, dict[str, str]] = defaultdict(dict)  # dg -> {name: kind}
+        self._by_loc: dict[str, dict[str, str]] = defaultdict(dict)  # loc name -> {name: kind}
 
     def add(self, name: str, kind: str, location: Location) -> None:
-        if location.is_shared:
-            self._shared[name] = kind
-        else:
-            self._dg[location.name][name] = kind
+        self._by_loc[location.name][name] = kind
 
-    def resolve(self, name: str, ref_location: Location) -> Target | None:
-        if not ref_location.is_shared:
-            local = self._dg.get(ref_location.name, {})
-            if name in local:
-                return Target(local[name], name, ref_location)
-        if name in self._shared:
-            return Target(self._shared[name], name, Location.shared())
+    def defined_at(self, name: str, location: Location) -> bool:
+        """True if `name` is defined *directly* at `location` (no inheritance)."""
+        return name in self._by_loc.get(location.name, {})
+
+    def resolve(self, name: str, chain: list[Location]) -> Target | None:
+        for loc in chain:
+            here = self._by_loc.get(loc.name)
+            if here is not None and name in here:
+                return Target(here[name], name, loc)
         return None
 
 
@@ -137,7 +141,9 @@ class ReferenceGraph:
     ) -> None:
         if target_name in PREDEFINED:
             return
-        resolved = self._idx_for(namespace).resolve(target_name, referrer_location)
+        resolved = self._idx_for(namespace).resolve(
+            target_name, self.snapshot.ancestors(referrer_location)
+        )
         ref = Reference(
             target_name=target_name,
             namespace=namespace,
@@ -274,8 +280,14 @@ class ReferenceGraph:
     # -- queries ---------------------------------------------------------
 
     def resolve(self, namespace: str, name: str, ref_location: Location) -> Target | None:
-        """Resolve a bare name in a referrer's scope (DG shadow then shared)."""
-        return self._idx_for(namespace).resolve(name, ref_location)
+        """Resolve a bare name in a referrer's scope (closest DG up the chain,
+        then ancestors, then shared)."""
+        return self._idx_for(namespace).resolve(name, self.snapshot.ancestors(ref_location))
+
+    def defined_at(self, namespace: str, name: str, location: Location) -> bool:
+        """True if `name` is defined *directly* at `location` (ignoring
+        inheritance) — used by shadow guards to find cross-level name clashes."""
+        return self._idx_for(namespace).defined_at(name, location)
 
     def where_used(self, kind: str, name: str, location: Location) -> list[Reference]:
         return list(self._by_target.get(Target(kind, name, location), []))
@@ -294,18 +306,19 @@ class ReferenceGraph:
     def _members_of(self, target: Target) -> list[Target]:
         """Resolved members of a group target (empty for leaf objects)."""
         out: list[Target] = []
+        chain = self.snapshot.ancestors(target.location)
         if target.kind == "address-group":
             for ag in self.snapshot.address_groups:
                 if ag.name == target.name and ag.location == target.location:
                     for m in ag.static_members or []:
-                        t = self._addr_idx.resolve(m, target.location)
+                        t = self._addr_idx.resolve(m, chain)
                         if t is not None:
                             out.append(t)
         elif target.kind == "service-group":
             for sg in self.snapshot.service_groups:
                 if sg.name == target.name and sg.location == target.location:
                     for m in sg.members:
-                        t = self._svc_idx.resolve(m, target.location)
+                        t = self._svc_idx.resolve(m, chain)
                         if t is not None:
                             out.append(t)
         return out
@@ -352,11 +365,15 @@ class ReferenceGraph:
         for r in self.references:
             if r.namespace == "tag" and r.resolved is not None:
                 used.add((r.resolved.location.name, r.resolved.name))
-        # Dynamic address-group filters reference tags by bare name.
+        # Dynamic address-group filters reference tags as quoted tokens, e.g.
+        # "'prod' and 'web'". Extract the quoted names and match exactly — a
+        # bare substring test would count tag `web` as used by a `webserver`
+        # filter.
         for ag in self.snapshot.address_groups:
             if ag.dynamic_filter:
+                filter_tags = set(re.findall(r"'([^']+)'", ag.dynamic_filter))
                 for t in self.snapshot.tags:
-                    if t.name in ag.dynamic_filter:
+                    if t.name in filter_tags:
                         used.add((t.location.name, t.name))
         return [
             Target("tag", t.name, t.location)

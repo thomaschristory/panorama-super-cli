@@ -35,10 +35,11 @@ class Rulebase(str, Enum):
 class Location(BaseModel):
     """Where an object lives: Panorama `shared`, or a named device-group.
 
-    Nested device-group hierarchies are flattened to the leaf name in v0.1;
-    inheritance is modelled only as "device-group falls back to shared". The
-    `Location` is frozen so it can key dictionaries and sets (dedup buckets,
-    reference graphs).
+    A `Location` names a single device-group (or `shared`); the *hierarchy*
+    between device-groups lives on the `Snapshot` (`device_group_parents`), so
+    inheritance is resolved with `Snapshot.ancestors(...)`. The `Location` is
+    frozen so it can key dictionaries and sets (dedup buckets, reference
+    graphs).
     """
 
     model_config = {"frozen": True}
@@ -198,6 +199,45 @@ class Snapshot(BaseModel):
     security_rules: list[SecurityRule] = Field(default_factory=list)
     nat_rules: list[NatRule] = Field(default_factory=list)
     device_groups: list[str] = Field(default_factory=list)
+    device_group_parents: dict[str, str] = Field(default_factory=dict)
+    """Child device-group name → its parent device-group name. A device-group
+    absent here (or whose chain reaches the top) is a direct child of `shared`.
+    Empty for a flat (single-level) Panorama.
+    """
+
+    # --- device-group hierarchy -----------------------------------------
+
+    def ancestors(self, location: Location) -> list[Location]:
+        """The locations a reference *in* `location` can resolve against, in
+        precedence order (closest first, `shared` last).
+
+        `shared` → `[shared]`. A device-group → itself, then each parent up the
+        chain, then `shared`. Self-referential/cyclic parent data is truncated
+        rather than looped forever.
+        """
+        chain: list[Location] = []
+        cur = location.device_group
+        seen: set[str] = set()
+        while cur is not None and cur not in seen:
+            seen.add(cur)
+            chain.append(Location.dg(cur))
+            cur = self.device_group_parents.get(cur)
+        chain.append(SHARED)
+        return chain
+
+    def descendant_dgs(self, dg_name: str) -> set[str]:
+        """Every device-group that has `dg_name` somewhere among its ancestors."""
+        out: set[str] = set()
+        for dg in self.device_groups:
+            cur = self.device_group_parents.get(dg)
+            seen: set[str] = set()
+            while cur is not None and cur not in seen:
+                if cur == dg_name:
+                    out.add(dg)
+                    break
+                seen.add(cur)
+                cur = self.device_group_parents.get(cur)
+        return out
 
     # --- indexes (built lazily, not serialized) -------------------------
 
@@ -219,17 +259,3 @@ class Snapshot(BaseModel):
         for dg in sorted(self.device_groups):
             seen.append(Location.dg(dg))
         return seen
-
-    def visible_addresses(self, location: Location) -> dict[str, Address]:
-        """Addresses a reference *in* `location` can resolve to: the
-        location's own objects shadowing the inherited `shared` ones.
-        """
-        out: dict[str, Address] = {}
-        for a in self.addresses:
-            if a.location.is_shared:
-                out.setdefault(a.name, a)
-        if not location.is_shared:
-            for a in self.addresses:
-                if a.location == location:
-                    out[a.name] = a  # local shadows shared
-        return out

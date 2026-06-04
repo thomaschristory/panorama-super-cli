@@ -7,6 +7,31 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.1 — 2026-06-04
+
+### Added
+
+- **`find ip --exact` / `-e`.** Restrict `find ip` to objects whose value
+  equals the target exactly, dropping the broader (`contains`) and narrower
+  (`within`) matches that a host query normally also surfaces. Netmask and
+  bare-host forms still canonicalize equal, so `10.0.0.10` and `10.0.0.10/32`
+  remain exact matches of each other. Address-groups are reported only when
+  they carry an exact match. (#30)
+
+## v0.2.0 — 2026-06-04
+
+### Added
+
+- **Live `--apply`.** Mutating commands can now push their plan to Panorama's
+  candidate config over the XML API against a profile (`-p`), not just offline
+  to a file. `psc` **never commits** — it leaves a reviewable candidate, the
+  device-side analog of the offline `--out` file. The `blockers` gate and
+  repoint-before-delete ordering are enforced on the wire before any device
+  contact; a name that can't be addressed by an xpath (single quote) is
+  rejected up front; a mid-plan failure reports how far it got and leaves the
+  uncommitted candidate for inspection. Live *updates* of an existing object
+  remain offline-only for now (apply with `--out`).
+
 ## v0.1.0 — 2026-06-03
 
 First public release. Agent-friendly Panorama object management, offline or live.

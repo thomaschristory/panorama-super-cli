@@ -141,17 +141,26 @@ def plan_rename(
         else ("service" if kind in (ObjectKind.SERVICE, ObjectKind.SERVICE_GROUP) else "tag")
     )
 
-    # Shadow guard: renaming a shared object to a name a child DG already
-    # defines (or vice-versa) silently re-points references — refuse it.
-    if loc.is_shared:
-        for dg in snapshot.device_groups:
-            if graph.resolve(namespace, new_name, Location.dg(dg)) is not None:
-                cs.blockers.append(
-                    f"device-group '{dg}' already defines '{new_name}' in the "
-                    f"{namespace} namespace; renaming shared object would collide"
-                )
-    if graph.resolve(namespace, new_name, loc) is not None:
+    # Shadow guard: introducing `new_name` at `loc` is unsafe if that name is
+    # already defined anywhere in loc's visibility cone — an ancestor (the new
+    # name would shadow it for references here and below) or a descendant (it
+    # would shadow this one for references in between). Renaming a same-location
+    # clash is a plain collision. All silently re-point references, so refuse.
+    if graph.defined_at(namespace, new_name, loc):
         cs.blockers.append(f"'{new_name}' already exists in {namespace} namespace @{location_name}")
+    cone: set[str] = set()
+    if loc.is_shared:
+        cone = set(snapshot.device_groups)
+    else:
+        cone = {a.name for a in snapshot.ancestors(loc) if a != loc}
+        cone |= snapshot.descendant_dgs(location_name)
+    for other in sorted(cone):
+        other_loc = Location.shared() if other == "shared" else Location.dg(other)
+        if graph.defined_at(namespace, new_name, other_loc):
+            cs.blockers.append(
+                f"{other_loc} already defines '{new_name}' in the {namespace} "
+                f"namespace; renaming would shadow it across the device-group hierarchy"
+            )
 
     if cs.is_blocked:
         return cs
