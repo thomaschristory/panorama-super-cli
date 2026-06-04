@@ -7,6 +7,25 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.2 — 2026-06-04
+
+### Fixed
+
+- **Repoint-before-delete no longer skipped silently.** A merge or rename whose
+  only safe repoint is a reference the appliers can't express as a flat member
+  rewrite — a NAT source/destination *translation* field, or a rule edit with no
+  rulebase — is now refused with a `blocker` (exit 6) on both the offline and
+  live paths, naming the object and the unmappable referrer. Previously the edit
+  was dropped while the delete/rename still ran, leaving a dangling reference.
+  Advisory unmappable edits with no accompanying teardown still pass with a
+  warning. (#28)
+- **`psc` with no arguments (and unknown commands) print help, not a traceback.**
+  Typer 0.16+ vendors its own Click, so the exceptions the entry point raised
+  were not the `click.*` the wrapper caught and escaped as a traceback ending in
+  `NoArgsIsHelpError`. The wrapper now handles both the vendored and the real
+  Click hierarchies, resolving the module defensively so psc still imports on
+  older Typer. No-args/`--help` exit 0; usage errors exit 2. (#31)
+
 ## v0.2.1 — 2026-06-04
 
 ### Added
