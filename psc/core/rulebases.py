@@ -36,9 +36,14 @@ POLICY_RULE_TYPES: tuple[str, ...] = (
 _RULE_CONTAINERS: frozenset[str] = frozenset({"security", "nat", *POLICY_RULE_TYPES})
 
 # Flat `<member>` rule fields a merge/rename can rewrite in place. Excludes
-# NAT translation fields and the PBF `nexthop` (nested → review-gated), and
-# `application`/`source-user` (never named in an object reference-edit).
-FLAT_RULE_FIELDS: frozenset[str] = frozenset({"source", "destination", "service", "tag"})
+# NAT translation fields and the PBF `nexthop` (nested → review-gated) and
+# `source-user` (never named in an object reference-edit). `application` carries
+# no psc-managed object reference, so merge/rename never generate an edit for
+# it — but `rule edit-member` does, and both appliers must recognise it as a
+# flat member list (else they'd silently skip the edit), hence it lives here.
+FLAT_RULE_FIELDS: frozenset[str] = frozenset(
+    {"source", "destination", "service", "application", "tag"}
+)
 
 _SUFFIX = "-rule"
 
