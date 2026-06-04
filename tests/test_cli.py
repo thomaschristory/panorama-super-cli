@@ -339,6 +339,26 @@ def test_dedup_merge_group_blocked_exit_6_for_non_equivalent() -> None:
     assert json.loads(cp.stdout)["type"] == "conflict"
 
 
+def test_dedup_groups_location_shared_finds_shared_buckets() -> None:
+    # `--location shared` must target the shared scope, not a device-group
+    # literally named "shared"; the fixture's equivalent pair lives in shared.
+    cp = run(
+        "-c", str(DEDUP_GROUPS_FIXTURE), "-o", "json", "dedup", "groups", "--location", "shared"
+    )
+    assert cp.returncode == 0
+    names = {m["name"] for g in json.loads(cp.stdout) for m in g["members"]}
+    assert names == {"grp-a", "grp-b"}
+
+
+def test_dedup_groups_no_local_d_alias() -> None:
+    # `dedup groups` must NOT declare its own `-d` (it would collide with the
+    # global `-d`/--device-group). After removal, `-d` is unknown *as a local
+    # option* on the subcommand.
+    cp = run("-c", str(DEDUP_GROUPS_FIXTURE), "-o", "json", "dedup", "groups", "-d", "shared")
+    assert cp.returncode == 2
+    assert "No such option: -d" in cp.stderr
+
+
 def test_no_source_errors_config() -> None:
     cp = run("-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 9

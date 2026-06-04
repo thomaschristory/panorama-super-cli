@@ -79,7 +79,6 @@ def groups(
     location: str | None = typer.Option(
         None,
         "--location",
-        "-d",
         help="Only compare address-groups at this location (default: --device-group "
         "if set, else compare across all locations).",
     ),
@@ -96,7 +95,11 @@ def groups(
     snap = rt.snapshot()
     graph = ReferenceGraph.build(snap)
     loc_name = location or rt.device_group
-    loc = Location.dg(loc_name) if loc_name else None
+    loc = (
+        None
+        if loc_name is None
+        else (Location.shared() if loc_name == "shared" else Location.dg(loc_name))
+    )
     result = find_duplicate_groups(snap, graph, loc)
     if result.dynamic_skipped or result.unresolvable_skipped:
         rt.stderr.print(

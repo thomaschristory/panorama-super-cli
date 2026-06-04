@@ -168,6 +168,39 @@ def resolve_group_members(  # noqa: PLR0911 — each early return is a distinct 
     return frozenset(keys)
 
 
+def _group_closure(
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    name: str,
+    loc: Location,
+    *,
+    _seen: frozenset[tuple[str, str]] = frozenset(),
+) -> set[tuple[str, str]]:
+    """The transitive set of address-GROUPS contained by a static group.
+
+    Walks group→member-groups, resolving each member name to its actual object
+    along the device-group chain (PAN-OS shadowing) and recursing only into
+    members whose resolved target is itself an `address-group`. Cycle-safe via
+    `_seen`. The returned identities are `(name, location.name)` of every nested
+    group; the starting group is *not* included.
+    """
+    group = next((g for g in snapshot.address_groups if g.name == name and g.location == loc), None)
+    if group is None or group.static_members is None:
+        return set()
+    if (name, loc.name) in _seen:
+        return set()
+    seen = _seen | {(name, loc.name)}
+
+    out: set[tuple[str, str]] = set()
+    for member in group.static_members:
+        target = graph.resolve(ADDR_NS, member, loc)
+        if target is None or target.kind != "address-group":
+            continue
+        out.add((target.name, target.location.name))
+        out |= _group_closure(snapshot, graph, target.name, target.location, _seen=seen)
+    return out
+
+
 def find_duplicate_groups(
     snapshot: Snapshot, graph: ReferenceGraph, location: Location | None = None
 ) -> GroupDedupResult:
@@ -352,11 +385,33 @@ def plan_merge_group(
         )
         return cs
 
-    # Address-groups live in the `address` namespace, both for where-used edges
-    # and for the visibility check below — using `'address-group'` would resolve
-    # to nothing and falsely block every merge.
+    # Nested groups: if one of the pair contains the other (directly or
+    # transitively), repointing drop->keep would make the kept group reference
+    # itself or form a cycle, which PAN-OS rejects. Block rather than corrupt.
+    keep_closure = _group_closure(snapshot, graph, keep.name, keep.loc)
+    drop_closure = _group_closure(snapshot, graph, drop.name, drop.loc)
+    if (drop.name, drop.loc.name) in keep_closure or (keep.name, keep.loc.name) in drop_closure:
+        cs.blockers.append(
+            f"cannot merge: '{keep.name}'@{keep.location} and '{drop.name}'@{drop.location} are "
+            "nested (one contains the other); merging would create a self-referential or cyclic "
+            "group — restructure manually"
+        )
+        return cs
+
+    # `where_used` keys by the resolved Target KIND — which for a group is
+    # "address-group" (see refs.py `_by_target`), so that is the correct lookup
+    # key here. The visibility `resolve()` below, by contrast, takes a NAMESPACE,
+    # which for both addresses and groups is "address" (ADDR_NS).
     refs = graph.where_used("address-group", drop.name, drop.loc)
     for ref in refs:
+        # Defense-in-depth: the keep group must never be repointed into a member
+        # of itself. The containment block above should already prevent reaching
+        # here, but guard so a self-member edit can never be emitted.
+        if ref.referrer_kind == "address-group" and (
+            ref.referrer_name,
+            ref.referrer_location,
+        ) == (keep.name, keep.loc):
+            continue
         target = graph.resolve(ADDR_NS, keep.name, ref.referrer_location)
         if target is None or (target.name, target.location) != (keep.name, keep.loc):
             cs.blockers.append(
