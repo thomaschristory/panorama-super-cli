@@ -63,11 +63,12 @@ def _as_network(value: str) -> IPNetwork | None:
         return None
 
 
-def _as_interface_key(value: str) -> str | None:
-    """Host-preserving canonical form: `10.1.1.50/24` -> `10.1.1.50/24`,
-    `10.0.0.10` -> `10.0.0.10/32`. `None` if unparseable."""
+def _as_interface(value: str) -> ipaddress.IPv4Interface | ipaddress.IPv6Interface | None:
+    """Parse host-preserving: `10.1.1.50/24` keeps its host bits, `10.0.0.10`
+    becomes `10.0.0.10/32`. `.network` is the masked form (equals
+    `_as_network`), `str(...)` is the exact form. `None` if unparseable."""
     try:
-        return str(ipaddress.ip_interface(value.strip()))
+        return ipaddress.ip_interface(value.strip())
     except ValueError:
         return None
 
@@ -93,15 +94,18 @@ def normalize_address(addr: Address) -> AddrValue | None:
     """
     v = addr.value.strip()
     if addr.type is AddressType.IP_NETMASK:
-        net = _as_network(v)
-        if net is None:
+        # One parse yields both keys: `.network` is the masked grouping key
+        # (loose), `str(iface)` preserves host bits for the exact key (strict).
+        iface = _as_interface(v)
+        if iface is None:
             return None
+        net = iface.network
         return AddrValue(
             kind=addr.type,
             key=str(net),
             network=net,
             family=net.version,
-            exact=_as_interface_key(v),
+            exact=str(iface),
         )
     if addr.type is AddressType.IP_RANGE:
         bounds = _range_bounds(v)

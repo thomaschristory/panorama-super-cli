@@ -33,6 +33,15 @@ def test_exact_key_unifies_host_and_slash32() -> None:
     assert a.exact_key() == b.exact_key()
 
 
+def test_exact_key_canonicalizes_ipv6_forms() -> None:
+    # Strict must still group genuinely identical objects written differently:
+    # `0:0:0:0:0:0:0:1` and `::1` are the same host.
+    a = normalize_address(_addr("0:0:0:0:0:0:0:1"))
+    b = normalize_address(_addr("::1"))
+    assert a is not None and b is not None
+    assert a.exact_key() == b.exact_key()
+
+
 def test_exact_contains_within() -> None:
     host = normalize_address(_addr("10.0.0.10/32"))
     net = normalize_address(_addr("10.0.0.0/24"))
