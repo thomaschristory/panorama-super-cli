@@ -16,6 +16,12 @@ from __future__ import annotations
 
 import typer
 
+from psc.cli._options import (
+    APPLY_OPTION,
+    LOCATION_OPTION,
+    OUT_OPTION,
+    location_from_name,
+)
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core import crud
@@ -24,21 +30,9 @@ from psc.core.source import ConfigFormat
 
 app = typer.Typer(no_args_is_help=True)
 
-_LOCATION_OPTION = typer.Option(
-    None, "--location", help="Target location (default: global --device-group, else shared)."
-)
-_APPLY_OPTION = typer.Option(False, "--apply", help="Execute the change (default: dry-run).")
-_OUT_OPTION = typer.Option(
-    None,
-    "--out",
-    help="Write the plan artifact (set script or rewritten config) to this file; "
-    "honoured even in a dry-run (see --output-format).",
-)
-
 
 def _resolve_location(rt: Runtime, location: str | None) -> Location:
-    name = location or rt.device_group or "shared"
-    return Location.shared() if name == "shared" else Location.dg(name)
+    return location_from_name(location or rt.device_group or "shared")
 
 
 @app.command("address")
@@ -51,9 +45,9 @@ def address(
     value: str = typer.Option(..., "--value", help="The address value (stored verbatim)."),
     description: str | None = typer.Option(None, "--description"),
     tag: list[str] = typer.Option([], "--tag", help="Tag name (repeatable)."),
-    location: str | None = _LOCATION_OPTION,
-    apply: bool = _APPLY_OPTION,
-    out: str | None = _OUT_OPTION,
+    location: str | None = LOCATION_OPTION,
+    apply: bool = APPLY_OPTION,
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Create or update an address object.
@@ -94,9 +88,9 @@ def address_group(
     ),
     description: str | None = typer.Option(None, "--description"),
     tag: list[str] = typer.Option([], "--tag", help="Tag name (repeatable)."),
-    location: str | None = _LOCATION_OPTION,
-    apply: bool = _APPLY_OPTION,
-    out: str | None = _OUT_OPTION,
+    location: str | None = LOCATION_OPTION,
+    apply: bool = APPLY_OPTION,
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Create or update an address-group (exactly one of --member.../--filter).
@@ -130,9 +124,9 @@ def service(
     ),
     description: str | None = typer.Option(None, "--description"),
     tag: list[str] = typer.Option([], "--tag", help="Tag name (repeatable)."),
-    location: str | None = _LOCATION_OPTION,
-    apply: bool = _APPLY_OPTION,
-    out: str | None = _OUT_OPTION,
+    location: str | None = LOCATION_OPTION,
+    apply: bool = APPLY_OPTION,
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Create or update a service object (--dest-port required; --source-port optional).
@@ -160,9 +154,9 @@ def service_group(
     name: str = typer.Option(..., "--name", help="Group name."),
     member: list[str] = typer.Option(..., "--member", help="Member name (repeatable, >=1)."),
     tag: list[str] = typer.Option([], "--tag", help="Tag name (repeatable)."),
-    location: str | None = _LOCATION_OPTION,
-    apply: bool = _APPLY_OPTION,
-    out: str | None = _OUT_OPTION,
+    location: str | None = LOCATION_OPTION,
+    apply: bool = APPLY_OPTION,
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Create or update a service-group.
@@ -187,9 +181,9 @@ def tag(
     name: str = typer.Option(..., "--name", help="Tag name (<=127 chars)."),
     color: str | None = typer.Option(None, "--color", help="color1..color42."),
     comments: str | None = typer.Option(None, "--comments"),
-    location: str | None = _LOCATION_OPTION,
-    apply: bool = _APPLY_OPTION,
-    out: str | None = _OUT_OPTION,
+    location: str | None = LOCATION_OPTION,
+    apply: bool = APPLY_OPTION,
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Create or update a tag.
