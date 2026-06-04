@@ -10,9 +10,9 @@ Writes are deliberately conservative:
 - **Offline** `apply` never touches the input file — it writes the rewritten
   config to a separate path. That keeps the original export pristine and the
   operation reviewable.
-- **Live** `apply` is not yet implemented (v0.2). Until then the actionable
-  artifact for a live config is the rendered `set` script; `psc` refuses to
-  half-write to a production device.
+- **Live** `apply` pushes the plan to Panorama's *candidate* config over the
+  XML API and never commits — the operator owns the commit, so the result is a
+  reviewable candidate, the device-side analog of the offline rewritten file.
 """
 
 from __future__ import annotations
@@ -99,11 +99,12 @@ class OfflineSource:
 
 
 class LiveSource:
-    """Fetch the running config from Panorama over the XML API.
+    """Fetch the running config from Panorama over the XML API, and push plans
+    to its candidate config.
 
-    Reads are fully supported; writes raise until v0.2. The `pan-os-python`
-    import is deferred so the offline path has no hard dependency on a
-    reachable device at import time.
+    Reads and writes are both supported; `apply` pushes the plan but never
+    commits. The `pan-os-python` import is deferred so the offline path has no
+    hard dependency on a reachable device at import time.
     """
 
     read_only = True
@@ -221,8 +222,47 @@ class LiveSource:
         return parse_config(self.raw_xml())
 
     def apply(self, cs: ChangeSet, *, out_path: str | Path | None) -> ApplyResult:
-        raise PscError(
-            "live apply lands in v0.2 — for now apply the rendered `set` script "
-            "(`-o set`) or plan offline with --config and --apply --out",
-            ErrorType.CONFIG,
+        """Push `cs` to Panorama's candidate config over the XML API.
+
+        The plan is lowered to xpath set/edit/delete/rename ops and replayed in
+        order (repoint before delete). The `blockers` gate and name-addressing
+        check run *before* any device contact, so a refused plan never writes.
+        We deliberately **never commit** — the operator owns that step; this
+        leaves a reviewable candidate exactly as the offline path leaves a file.
+
+        A failure mid-replay surfaces as a transport error; because nothing is
+        committed, the partial candidate stays on the device for the operator to
+        inspect or revert (`load config` / `revert config`).
+        """
+        from psc.core.apply_live import plan_xapi_ops  # noqa: PLC0415 — keep core import light
+
+        # Raises CONFLICT (blocked) or INPUT (unaddressable name) before we touch
+        # the device.
+        ops = plan_xapi_ops(cs)
+
+        from panos.errors import (  # noqa: PLC0415
+            PanConnectionTimeout,
+            PanDeviceError,
+            PanURLError,
         )
+
+        pano = self._device()
+        xapi = pano.xapi  # type: ignore[attr-defined]
+        try:
+            for op in ops:
+                if op.action == "edit":
+                    xapi.edit(xpath=op.xpath, element=op.element)
+                elif op.action == "set":
+                    xapi.set(xpath=op.xpath, element=op.element)
+                elif op.action == "delete":
+                    xapi.delete(xpath=op.xpath)
+                elif op.action == "rename":
+                    xapi.rename(xpath=op.xpath, newname=op.newname)
+        except (PanConnectionTimeout, PanURLError) as exc:
+            raise PscError(f"cannot reach {self.hostname}: {exc}", ErrorType.TRANSPORT) from exc
+        except PanDeviceError as exc:
+            raise PscError(
+                f"apply failed on {self.hostname} (uncommitted candidate left for review): {exc}",
+                ErrorType.TRANSPORT,
+            ) from exc
+        return ApplyResult(applied=True, ops=cs.op_count, out_path=None)
