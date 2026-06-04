@@ -21,6 +21,7 @@ from psc.core.changeset import (
     ObjectRename,
     ReferenceEdit,
     gate_unmappable_reference_edits,
+    member_field_leaf,
     reference_edit_is_mappable,
 )
 from psc.core.models import Snapshot
@@ -38,6 +39,16 @@ def _edit(**kw: object) -> ReferenceEdit:
     }
     base.update(kw)
     return ReferenceEdit(**base)  # type: ignore[arg-type]
+
+
+def test_member_field_leaf_picks_static_only_for_address_group() -> None:
+    assert member_field_leaf(ObjectKind.ADDRESS_GROUP) == "static"
+    assert member_field_leaf(ObjectKind.SERVICE_GROUP) == "members"
+    # Non-group kinds never carry a member list, but the leaf must stay "members"
+    # so the helper reproduces each call site's old `== address-group` else branch.
+    assert member_field_leaf(ObjectKind.ADDRESS) == "members"
+    assert member_field_leaf(ObjectKind.SERVICE) == "members"
+    assert member_field_leaf(ObjectKind.TAG) == "members"
 
 
 def test_flat_member_fields_are_mappable() -> None:
