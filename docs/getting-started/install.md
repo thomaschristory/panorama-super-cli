@@ -24,9 +24,12 @@ command.
 Verify:
 
 ```console
-$ psc --version
+$ psc version
 psc 0.1.0
 ```
+
+(`psc --version` works too. `psc version check` reports whether a newer release
+is available on PyPI.)
 
 `psc` requires Python 3.12+. It has no external service dependencies for the
 offline path; the live path talks to Panorama via

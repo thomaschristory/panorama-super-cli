@@ -699,6 +699,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "defusedxml" },
+    { name = "packaging" },
     { name = "pan-os-python" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -727,6 +728,7 @@ docs = [
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "defusedxml", specifier = ">=0.7" },
+    { name = "packaging", specifier = ">=23.0" },
     { name = "pan-os-python", specifier = ">=1.12" },
     { name = "platformdirs", specifier = ">=4.2" },
     { name = "pydantic", specifier = ">=2.7" },
