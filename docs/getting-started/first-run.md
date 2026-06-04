@@ -53,6 +53,14 @@ $ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary \
 Load `fixed.xml` into Panorama (`load config partial` or the GUI), review the
 candidate, and commit.
 
+Against a live profile, `--apply` (no `--out`) pushes the plan straight to
+Panorama's candidate config — `psc` never commits, so you still review and
+commit yourself:
+
+```console
+$ psc -p prod dedup merge --keep h-web1 --remove web-primary --apply
+```
+
 ## 5. Audit hygiene
 
 ```console
