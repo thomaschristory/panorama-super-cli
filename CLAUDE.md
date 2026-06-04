@@ -19,9 +19,22 @@ UI would import `psc.core` directly and never touch `psc.cli`.
 - `psc/core/refs.py` — the reference graph: where-used, unused (recursive),
   dangling. Models PAN-OS name resolution (DG-local shadows shared).
 - `psc/core/resolve.py` — `find` engine (IP/value/name → objects).
-- `psc/core/dedup.py` — duplicate detection + safe merge planning.
+- `psc/core/dedup.py` — duplicate detection + safe merge planning (objects and
+  address-groups, the latter bucketed by effective leaf-address set).
+- `psc/core/audit.py` — overlap/containment audit over address ranges (pure
+  read; ip-netmask/ip-range only).
+- `psc/core/crud.py` — single-object create/update validation + `ObjectUpsert`
+  planning (name/desc/value-kind/port/color rules; cross-kind + type/mode-change
+  blockers).
+- `psc/core/rule_edit.py` — idempotent rule-field member edits (removal lowers to
+  delete-field + re-set because PAN-OS `set` appends).
+- `psc/core/decommission.py` — reference-safe cascading teardown of address
+  objects (scrub groups → scrub rules → orphan-rule delete → emptied-group delete
+  → object delete, to a fixpoint).
 - `psc/core/naming.py` — opt-in naming templates + reference-aware rename.
-- `psc/core/changeset.py` — the inspectable mutation plan every write produces.
+- `psc/core/changeset.py` — the inspectable mutation plan every write produces
+  (`ObjectUpsert` / `ReferenceEdit` / `ObjectRename` / `ObjectDelete` /
+  `RuleDelete`, plus `blockers`/`warnings`).
 - `psc/core/setcmd.py` — render objects/changesets as PAN-OS `set` commands.
 - `psc/core/apply_xml.py` — apply a `ChangeSet` to config XML (offline `--apply`).
 - `psc/core/apply_live.py` — lower a `ChangeSet` to XML-API xpath ops (live
@@ -37,8 +50,9 @@ framework.** Engines return models; the CLI formats them. If you reach for
 `typer`/`rich` inside `core/`, you're in the wrong layer.
 
 Features are deliberately independent: `find_cmds`, `dedup_cmds`, `refs_cmds`,
-`name_cmds` each map to one `core` engine and can be deleted without touching
-the others. Reuse lives in `core` (models, refs, changeset, setcmd).
+`name_cmds`, `audit_cmds`, `set_cmds`, `rule_cmds`, `decommission_cmds` each map
+to one `core` engine and can be deleted without touching the others. Reuse lives
+in `core` (models, refs, changeset, setcmd).
 
 ## Common commands
 

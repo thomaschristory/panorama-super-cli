@@ -48,13 +48,31 @@ object by exact name. See [Finding objects](../guides/finding-objects.md).
 ```
 psc dedup addresses [--not-strict]
 psc dedup services
+psc dedup groups [--location LOC]
 psc dedup merge --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
                [--allow-value-change] [--apply] [--out PATH] [-of xml|set]
+psc dedup merge-group --keep NAME --remove NAME [--location LOC]
+               [--keep-location LOC] [--remove-location LOC]
+               [--apply] [--out PATH] [-of xml|set]
 ```
 
-Find duplicates; merge one object into another, repointing all references. See
+Find duplicate objects (`addresses`/`services`) or address-groups with identical
+effective member sets (`groups`); merge one object (`merge`) or address-group
+(`merge-group`) into another, repointing all references. `merge-group` has **no**
+value-change override — it refuses unless the groups expand to the same set. See
 [Duplicates and merging](../guides/duplicates-and-merging.md).
+
+### audit
+
+```
+psc audit overlaps
+```
+
+Report address objects whose IP ranges contain or overlap one another
+(`ip-netmask`/`ip-range` only). Pure read; honours the global `-d/--device-group`
+scope and `--strict` (exit `5` when nothing overlaps). See
+[References and audit](../guides/references-and-audit.md#overlapping-and-contained-ranges).
 
 ### refs
 
@@ -77,6 +95,60 @@ psc name apply  --object NAME            [--location LOC] [--apply] [--out PATH]
 
 Opt-in naming-template lint and reference-aware rename. See
 [Naming templates](../guides/naming.md).
+
+### set
+
+```
+psc set address       --name N --type ip-netmask|ip-range|ip-wildcard|fqdn --value V
+                      [--description D] [--tag T]... [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc set address-group --name N (--member M... | --filter EXPR)
+                      [--description D] [--tag T]... [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc set service       --name N --protocol tcp|udp --dest-port P [--source-port P]
+                      [--description D] [--tag T]... [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc set service-group --name N --member M... [--tag T]... [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc set tag           --name N [--color color1..color42] [--comments C]
+                      [--location LOC] [--apply] [--out PATH] [-of xml|set]
+```
+
+Create or update a single object with PAN-OS validation. `address` needs exactly
+one `--type`/`--value`; `address-group` needs exactly one of `--member`/`--filter`;
+`service` requires `--dest-port` (PAN-OS mandates a destination port); `--source-port` is optional. Validation errors
+exit `4`; a cross-kind name collision or an in-place type/mode change on update is
+a blocker (exit `6`). Live `--apply` only **creates** — updating an existing
+object live is refused; use offline `--apply --out`. See
+[Editing objects](../guides/editing-objects.md#create-or-update-an-object).
+
+### rule
+
+```
+psc rule edit-member --rule R --field source|destination|service|application
+                     (--add M | --remove M) [--rulebase pre|post] [--location LOC]
+                     [--apply] [--out PATH] [-of xml|set]
+```
+
+Idempotently add or remove one member of a rule field (`--rulebase` default
+`pre`). Removal renders a delete-of-field plus a re-set of the remaining list
+(PAN-OS `set` on a member field appends). NAT `service` is scalar and is blocked;
+`application` on a non-security rule is a validation error. An unknown rule exits
+`5`, an ambiguous rule exits `4`. See
+[Editing objects](../guides/editing-objects.md#edit-one-rule-field-member).
+
+### decommission
+
+```
+psc decommission <ip|cidr|range>... [--target T]... [-f FILE] [--scope DG]
+                 [--keep-groups] [--keep-rules] [--apply] [--out PATH] [-of xml|set]
+```
+
+Reference-safe, cascading teardown of the address objects matching an
+IP/CIDR/range (or a `-f/--file` list): scrub from groups → scrub from rules →
+delete orphaned rules (empty `source`/`destination`; `any` survives) → delete
+emptied groups → delete the objects, repeating to a fixpoint. Only exact and
+within matches are torn down (a broader containing object is left in place).
+`--keep-groups`/`--keep-rules` stop short of deleting those. Blocks on
+NAT-translation/PBF-next-hop references and DAG-filter-tag matches; orphan-rule
+deletions are warnings. See
+[Editing objects](../guides/editing-objects.md#decommission-an-address).
 
 ### init
 

@@ -48,10 +48,14 @@ pip install panorama-super-cli
 
 ## What it does
 
-| Area | Commands (v0.1) |
+| Area | Commands |
 | --- | --- |
 | **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip -f ips.txt`, `find object <name>` |
-| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup merge` |
+| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup merge`, `dedup merge-group` |
+| **Audit** | `psc audit overlaps` (overlapping/contained CIDR ranges) |
+| **Object CRUD** | `psc set address\|address-group\|service\|service-group\|tag ...` (create/update with PAN-OS validation) |
+| **Rule edits** | `psc rule edit-member --rule R --field F --add/--remove M` (idempotent) |
+| **Decommission** | `psc decommission <ip\|cidr>...` (reference-safe cascading teardown) |
 | **Naming** | `psc name suggest`, `name lint`, `name apply` (opt-in templates) |
 | **References** | `psc refs <object>` (where-used), `refs unused` |
 | **Output** | `--output json|set|table|yaml|csv|jsonl` |
