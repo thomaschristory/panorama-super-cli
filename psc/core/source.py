@@ -18,6 +18,7 @@ Writes are deliberately conservative:
 from __future__ import annotations
 
 import ssl
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
@@ -86,6 +87,35 @@ def _write_artifact(out: Path, data: str) -> None:
         raise PscError(f"cannot write artifact to {out}: {exc}", ErrorType.INPUT) from exc
 
 
+def _render_artifact(
+    cs: ChangeSet,
+    out: Path,
+    out_format: ConfigFormat,
+    source_xml: Callable[[], str],
+) -> ApplyResult:
+    """Shared `--out` artifact rendering for both sources.
+
+    The blocker gate is enforced here for *every* format — the XML path relies
+    on `apply_changeset`, but the `set` path renders the plan without it, so
+    refuse before writing rather than emit a misleading `# BLOCKED` file. Only
+    the source of the XML differs between sources (`source_xml`); the safety
+    gate, format dispatch, and `ApplyResult` shape are identical.
+    """
+    if cs.is_blocked:
+        raise PscError(
+            "refusing to write a blocked plan",
+            ErrorType.CONFLICT,
+            details={"blockers": cs.blockers},
+        )
+    if out_format is ConfigFormat.SET:
+        script = render_changeset(cs)
+        _write_artifact(out, "\n".join(script) + "\n")
+        return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out), set_script=script)
+    new_xml = apply_changeset(source_xml(), cs)
+    _write_artifact(out, new_xml)
+    return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out))
+
+
 class OfflineSource:
     """Read + rewrite an exported Panorama config XML on disk."""
 
@@ -132,23 +162,7 @@ class OfflineSource:
         out = Path(out_path)
         if out.resolve() == self.path.resolve():
             raise PscError("--out must differ from the source config path", ErrorType.CONFIG)
-        # The blocker gate is enforced here for *every* format — the XML path
-        # relies on `apply_changeset`, but the set path renders the plan without
-        # it, so refuse before writing rather than emit a `# BLOCKED` file.
-        if cs.is_blocked:
-            raise PscError(
-                "refusing to write a blocked plan",
-                ErrorType.CONFLICT,
-                details={"blockers": cs.blockers},
-            )
-        # Both artifacts share the same safety guards above; only the bytes differ.
-        if out_format is ConfigFormat.SET:
-            script = render_changeset(cs)
-            _write_artifact(out, "\n".join(script) + "\n")
-            return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out), set_script=script)
-        new_xml = apply_changeset(self._xml, cs)
-        _write_artifact(out, new_xml)
-        return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out))
+        return _render_artifact(cs, out, out_format, lambda: self._xml)
 
     def apply(
         self,
@@ -312,21 +326,7 @@ class LiveSource:
         if out_path is None:
             raise PscError("--out needs a PATH", ErrorType.CONFIG)
         out = Path(out_path)
-        # Same blocker gate as every other write path: refuse before any bytes
-        # hit disk rather than leave a misleading artifact.
-        if cs.is_blocked:
-            raise PscError(
-                "refusing to write a blocked plan",
-                ErrorType.CONFLICT,
-                details={"blockers": cs.blockers},
-            )
-        if out_format is ConfigFormat.SET:
-            script = render_changeset(cs)
-            _write_artifact(out, "\n".join(script) + "\n")
-            return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out), set_script=script)
-        new_xml = apply_changeset(self.raw_xml(), cs)
-        _write_artifact(out, new_xml)
-        return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out))
+        return _render_artifact(cs, out, out_format, self.raw_xml)
 
     def apply(
         self,
