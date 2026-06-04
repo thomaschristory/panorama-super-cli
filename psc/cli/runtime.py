@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import structlog
 from rich.console import Console
 
+from psc.config.loader import config_path
 from psc.config.models import Config
 from psc.core.models import Location, Snapshot
 from psc.core.source import LiveSource, OfflineSource
@@ -44,6 +46,10 @@ class Runtime:
     device_group: str | None
     strict: bool
     _output: OutputFormat | None
+    # The resolved `config.yaml` path actually loaded from — so commands can show
+    # users where their profiles live (#48). Distinct from `config_file`, which
+    # is the offline `--config` XML export.
+    config_path: Path = field(default_factory=config_path)
     stdout: Console = field(default_factory=Console)
     stderr: Console = field(default_factory=lambda: Console(stderr=True))
     _source: OfflineSource | LiveSource | None = None

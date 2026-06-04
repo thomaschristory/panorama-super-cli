@@ -22,8 +22,10 @@ def config_path() -> Path:
     return Path(user_config_dir(_APP)) / "config.yaml"
 
 
-def load_config() -> Config:
-    path = config_path()
+def load_config(path: Path | None = None) -> Config:
+    # Callers may pass an already-resolved path so the value they display (e.g.
+    # `psc profile list`) is provably the same file we loaded (#48).
+    path = path if path is not None else config_path()
     if not path.exists():
         return Config()
     yaml = YAML(typ="safe")
