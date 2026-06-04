@@ -17,6 +17,7 @@ from psc.core.changeset import (
     ObjectUpsert,
     ReferenceEdit,
     RuleDelete,
+    member_field_leaf,
     reference_edit_is_mappable,
 )
 from psc.core.models import (
@@ -185,7 +186,7 @@ def upsert_lines(u: ObjectUpsert) -> list[str]:
         for leaf, val in u.fields.items()
     ]
     if u.members:
-        leaf = "static" if u.kind.value == "address-group" else "members"
+        leaf = member_field_leaf(u.kind)
         lines.append(f"{p} {leaf} {_members(u.members)}")
     if u.tags:
         lines.append(f"{p} tag {_members(u.tags)}")

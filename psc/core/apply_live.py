@@ -28,6 +28,7 @@ from psc.core.changeset import (
     ObjectUpsert,
     ReferenceEdit,
     RuleDelete,
+    member_field_leaf,
     reference_edit_is_mappable,
 )
 from psc.core.rulebases import rule_container
@@ -130,7 +131,7 @@ def _entry_xml(u: ObjectUpsert) -> str:
             cur = nxt
         cur.text = value
     if u.members:
-        leaf = "static" if u.kind.value == "address-group" else "members"
+        leaf = member_field_leaf(u.kind)
         field = ET.SubElement(entry, leaf)
         for m in u.members:
             ET.SubElement(field, "member").text = m

@@ -28,6 +28,16 @@ class ObjectKind(str, Enum):
     TAG = "tag"
 
 
+def member_field_leaf(kind: ObjectKind) -> str:
+    """The member-list leaf tag for an upserted group object.
+
+    An address-group nests its members under `<static>`; every other group
+    (service-group) uses `<members>`. The same leaf names the XML element, the
+    live-xpath segment, and the `set` keyword, so all three appliers share this.
+    """
+    return "static" if kind is ObjectKind.ADDRESS_GROUP else "members"
+
+
 class ReferenceEdit(BaseModel):
     """Rewrite the member list of one referrer field. `before`/`after` make the
     change auditable; the renderer uses `after` (PAN-OS `set` on a member field

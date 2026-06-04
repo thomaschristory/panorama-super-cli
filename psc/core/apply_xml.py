@@ -22,6 +22,7 @@ from psc.core.changeset import (
     ObjectUpsert,
     ReferenceEdit,
     RuleDelete,
+    member_field_leaf,
     reference_edit_is_mappable,
 )
 from psc.core.rulebases import rule_container
@@ -158,7 +159,7 @@ def _apply_upsert(root: ET.Element, u: ObjectUpsert) -> None:
     for leaf_path, value in u.fields.items():
         _set_leaf(entry, leaf_path, value)
     if u.members:
-        leaf = "static" if u.kind.value == "address-group" else "members"
+        leaf = member_field_leaf(u.kind)
         field_el = entry.find(leaf) or ET.SubElement(entry, leaf)
         _set_members(field_el, u.members)
     if u.tags:
