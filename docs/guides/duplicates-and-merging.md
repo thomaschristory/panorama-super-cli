@@ -12,6 +12,27 @@ Objects are grouped by **value**, not name. `h-web1`, `web-primary`, and
 `svc-https` (both TCP/443) in another. Each row tells you the value and every
 object name + location that defines it.
 
+### Strict by default
+
+Address matching is **strict**: only byte-identical values are duplicates. A
+host accidentally written with a subnet mask — `web-server = 10.1.1.50/24` —
+is **not** reported as a duplicate of the network `internal = 10.1.1.0/24`,
+even though both mask down to the same `/24`. (`10.0.0.10` and `10.0.0.10/32`
+*are* still the same host, so they group.)
+
+Pass `--not-strict` for the looser, fringe behaviour that masks host bits and
+collapses a host-with-mask onto its network:
+
+```console
+psc -c panorama.xml dedup addresses --not-strict
+```
+
+`--not-strict` only widens what's *listed* — it grants no merge power. A pair it
+surfaces (e.g. a host and its network) has different exact values, so
+[`dedup merge`](#the-safety-gate) still refuses it unless you pass
+`--allow-value-change`. Treat `--not-strict` as a discovery aid, then decide
+case by case whether the masked-equal objects really should be merged.
+
 ## Merge two objects
 
 `dedup merge` collapses one object (`--remove`) into another (`--keep`),

@@ -45,21 +45,30 @@ class DuplicateGroup(BaseModel):
         return len(self.members)
 
 
-def find_duplicate_addresses(snapshot: Snapshot) -> list[DuplicateGroup]:
-    """Address objects sharing an identical normalized value, 2+ per bucket."""
+def find_duplicate_addresses(snapshot: Snapshot, *, strict: bool = True) -> list[DuplicateGroup]:
+    """Address objects sharing the same value, 2+ per bucket.
+
+    `strict` (default) groups only byte-identical values, so a host written with
+    a subnet mask (`10.1.1.50/24`) is *not* a duplicate of its network
+    (`10.1.1.0/24`). `strict=False` groups by masked network — the looser,
+    fringe behaviour that collapses host-with-mask onto the network.
+    """
     buckets: dict[str, list[ObjectRef]] = {}
     display: dict[str, str] = {}
     for a in snapshot.addresses:
         nv = normalize_address(a)
         if nv is None:
             continue
-        key = nv.overlaps_key()
+        key = nv.exact_key() if strict else nv.overlaps_key()
         buckets.setdefault(key, []).append(ObjectRef(name=a.name, location=a.location.name))
-        display.setdefault(key, f"{a.type.value} {nv.key}")
+        label = (nv.exact or nv.key) if strict else nv.key
+        display.setdefault(key, f"{a.type.value} {label}")
     return _to_groups("address", buckets, display)
 
 
 def find_duplicate_services(snapshot: Snapshot) -> list[DuplicateGroup]:
+    # Service dedup is already exact (protocol + normalized port lists); there
+    # is no host-bit-masking analogue, so no strict/loose distinction applies.
     buckets: dict[str, list[ObjectRef]] = {}
     display: dict[str, str] = {}
     for s in snapshot.services:
@@ -93,10 +102,13 @@ def _rewrite_members(before: list[str], drop: str, keep: str) -> list[str]:
 
 
 def _addr_value_key(snapshot: Snapshot, ref: ObjectRef) -> str | None:
+    # Exact (host-bit-preserving) key: the merge gate must treat a /24-masked
+    # host and the /24 network as *different* values, so it blocks the merge
+    # unless --allow-value-change is passed.
     for a in snapshot.addresses:
         if a.name == ref.name and a.location == ref.loc:
             nv = normalize_address(a)
-            return nv.overlaps_key() if nv else None
+            return nv.exact_key() if nv else None
     return None
 
 
