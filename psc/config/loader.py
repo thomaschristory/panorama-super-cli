@@ -11,6 +11,7 @@ from ruamel.yaml import YAML
 
 from psc.config.models import Config
 from psc.output.errors import ErrorType, PscError
+from psc.output.format import make_yaml
 
 _APP = "psc"
 
@@ -42,10 +43,8 @@ def load_config(path: Path | None = None) -> Config:
 def save_config(config: Config) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    yaml = YAML()
-    yaml.default_flow_style = False
     buf = io.StringIO()
-    yaml.dump(config.model_dump(mode="json"), buf)
+    make_yaml().dump(config.model_dump(mode="json"), buf)
     path.write_text(buf.getvalue(), encoding="utf-8")
     path.chmod(0o600)  # contains API keys
     return path

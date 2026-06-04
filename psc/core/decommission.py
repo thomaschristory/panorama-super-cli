@@ -31,6 +31,8 @@ orphaned only when it is *truly empty* — no members at all, not even `'any'`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from psc.core.changeset import (
     ChangeSet,
     ObjectDelete,
@@ -40,7 +42,15 @@ from psc.core.changeset import (
     gate_unmappable_reference_edits,
 )
 from psc.core.dedup import field_members
-from psc.core.models import Address, AddressGroup, Location, Snapshot
+from psc.core.models import (
+    Address,
+    AddressGroup,
+    Location,
+    NatRule,
+    PolicyRule,
+    SecurityRule,
+    Snapshot,
+)
 from psc.core.refs import Reference, ReferenceGraph, dag_filter_tags
 
 # The two address-member rule fields decommission scrubs. `service`/`tag` are
@@ -330,21 +340,18 @@ def _locate_rule(
     `rulebase` from the edit may be None only for a degenerate rule with no
     rulebase; fall back to whatever the snapshot rule carries.
     """
-    if referrer_kind == "security-rule":
-        for r in snapshot.security_rules:
-            if r.name == name and (rulebase is None or r.rulebase.value == rulebase):
-                return r.location.name, r.rulebase.value
-    elif referrer_kind == "nat-rule":
-        for n in snapshot.nat_rules:
-            if n.name == name and (rulebase is None or n.rulebase.value == rulebase):
-                return n.location.name, n.rulebase.value
-    else:
-        for p in snapshot.policy_rules:
-            if (
-                p.referrer_kind == referrer_kind
-                and p.name == name
-                and (rulebase is None or p.rulebase.value == rulebase)
-            ):
-                return p.location.name, p.rulebase.value
+    # security/nat rules live in dedicated collections keyed by kind; everything
+    # else is a policy rule, which must additionally match on referrer_kind.
+    by_kind: dict[str, Sequence[SecurityRule | NatRule | PolicyRule]] = {
+        "security-rule": snapshot.security_rules,
+        "nat-rule": snapshot.nat_rules,
+    }
+    collection = by_kind.get(referrer_kind, snapshot.policy_rules)
+    for rule in collection:
+        if rule.name != name or (rulebase is not None and rule.rulebase.value != rulebase):
+            continue
+        if isinstance(rule, PolicyRule) and rule.referrer_kind != referrer_kind:
+            continue
+        return rule.location.name, rule.rulebase.value
     # Should not happen (the rule was found via where_used); default safely.
     return "shared", rulebase or "pre"
