@@ -10,9 +10,12 @@ from psc.core.dedup import (
     DuplicateGroup,
     ObjectRef,
     find_duplicate_addresses,
+    find_duplicate_groups,
     find_duplicate_services,
     plan_merge,
+    plan_merge_group,
 )
+from psc.core.models import Location
 from psc.core.refs import ReferenceGraph
 from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
@@ -70,6 +73,52 @@ def services(ctx: typer.Context) -> None:
     )
 
 
+@app.command("groups")
+def groups(
+    ctx: typer.Context,
+    location: str | None = typer.Option(
+        None,
+        "--location",
+        help="Only compare address-groups at this location (default: --device-group "
+        "if set, else compare across all locations).",
+    ),
+) -> None:
+    """Audit address-groups that resolve to the SAME effective member set.
+
+    Groups are bucketed by the canonical set of leaf addresses they expand to
+    (nested groups are flattened), so two groups with different names — or even
+    different members that resolve to the same hosts — are flagged as redundant.
+    Dynamic groups (runtime-only) and unresolvable groups (dangling/malformed
+    members) are excluded and reported on stderr: the audit is not exhaustive.
+    """
+    rt: Runtime = ctx.obj
+    snap = rt.snapshot()
+    graph = ReferenceGraph.build(snap)
+    loc_name = location or rt.device_group
+    loc = (
+        None
+        if loc_name is None
+        else (Location.shared() if loc_name == "shared" else Location.dg(loc_name))
+    )
+    result = find_duplicate_groups(snap, graph, loc)
+    if result.dynamic_skipped or result.unresolvable_skipped:
+        rt.stderr.print(
+            f"[yellow]note[/yellow] audit is not exhaustive: skipped "
+            f"{len(result.dynamic_skipped)} dynamic and "
+            f"{len(result.unresolvable_skipped)} unresolvable (dangling/malformed) "
+            "group(s)"
+        )
+    if rt.strict and not result.buckets:
+        raise PscError("no duplicate address-groups", ErrorType.NOT_FOUND)
+    render(
+        rt.stdout,
+        rt.output,
+        model=result.buckets,
+        rows=_dup_rows(result.buckets),
+        table_title="duplicate address-groups",
+    )
+
+
 @app.command("merge")
 def merge(
     ctx: typer.Context,
@@ -108,5 +157,46 @@ def merge(
         keep=ObjectRef(name=keep, location=keep_location or default_loc),
         drop=ObjectRef(name=remove, location=remove_location or default_loc),
         allow_value_change=allow_value_change,
+    )
+    complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
+
+
+@app.command("merge-group")
+def merge_group(
+    ctx: typer.Context,
+    keep: str = typer.Option(..., "--keep", help="Survivor address-group name."),
+    remove: str = typer.Option(
+        ..., "--remove", help="Address-group to collapse into --keep and delete."
+    ),
+    location: str | None = typer.Option(
+        None, "--location", help="Location of both groups (default: --device-group or shared)."
+    ),
+    keep_location: str | None = typer.Option(None, "--keep-location"),
+    remove_location: str | None = typer.Option(None, "--remove-location"),
+    apply: bool = typer.Option(False, "--apply", help="Execute the merge (default: dry-run)."),
+    out: str | None = typer.Option(
+        None,
+        "--out",
+        help="Write the plan artifact (set script or rewritten config) to this "
+        "file; honoured even in a dry-run (see --output-format).",
+    ),
+    output_format: ConfigFormat = OUT_FORMAT_OPTION,
+) -> None:
+    """Collapse one address-group into an equivalent one, repointing references.
+
+    Dry-run by default. Refuses unless the two groups expand to the *same*
+    effective set of leaf addresses — there is no value-change override, because
+    merging groups that mean different things would silently change rule
+    matching. Repoints every referrer *before* deleting the dropped group.
+    """
+    rt: Runtime = ctx.obj
+    default_loc = location or rt.device_group or "shared"
+    snap = rt.snapshot()
+    graph = ReferenceGraph.build(snap)
+    cs = plan_merge_group(
+        snap,
+        graph,
+        keep=ObjectRef(name=keep, location=keep_location or default_loc),
+        drop=ObjectRef(name=remove, location=remove_location or default_loc),
     )
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)

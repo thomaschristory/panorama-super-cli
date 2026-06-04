@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="h1">
+        <ip-netmask>10.0.0.1/32</ip-netmask>
+      </entry>
+      <entry name="h2">
+        <ip-netmask>10.0.0.2/32</ip-netmask>
+      </entry>
+      <entry name="h3">
+        <ip-netmask>10.0.0.3/32</ip-netmask>
+      </entry>
+    </address>
+    <address-group>
+      <!-- grp-a lists h1 + h2 directly. -->
+      <entry name="grp-a">
+        <static>
+          <member>h1</member>
+          <member>h2</member>
+        </static>
+      </entry>
+      <!-- grp-b lists h1 + a nested group that expands to {h2}; same leaf set. -->
+      <entry name="grp-b">
+        <static>
+          <member>h1</member>
+          <member>grp-nested</member>
+        </static>
+      </entry>
+      <entry name="grp-nested">
+        <static>
+          <member>h2</member>
+        </static>
+      </entry>
+      <!-- grp-c is distinct ({h1, h3}). -->
+      <entry name="grp-c">
+        <static>
+          <member>h1</member>
+          <member>h3</member>
+        </static>
+      </entry>
+      <!-- a dynamic group: runtime-only, excluded from the audit. -->
+      <entry name="grp-dyn">
+        <dynamic><filter>'t-prod'</filter></dynamic>
+      </entry>
+      <!-- a parent group that uses grp-b (plus h3, so its own set is distinct
+           {h1,h2,h3}); repointed on a grp-b merge but never a bucket member. -->
+      <entry name="grp-parent">
+        <static>
+          <member>grp-b</member>
+          <member>h3</member>
+        </static>
+      </entry>
+    </address-group>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="rule-uses-b">
+            <from><member>any</member></from>
+            <to><member>any</member></to>
+            <source><member>any</member></source>
+            <destination><member>grp-b</member></destination>
+            <service><member>any</member></service>
+            <action>allow</action>
+          </entry>
+        </rules>
+      </security>
+    </pre-rulebase>
+  </shared>
+</config>
