@@ -27,8 +27,13 @@ from psc.core.models import Address, AddressType, Location, Service, Snapshot
 from psc.core.refs import ReferenceGraph
 
 # PAN-OS object names: <=63 chars, start alphanumeric, then [0-9a-zA-Z._-] (+space).
-_NAME_MAX = 63
-_INVALID = re.compile(r"[^0-9A-Za-z._\- ]")
+# Public so the CRUD validators consume the *same* rule rather than re-declaring
+# the limit and pattern (a divergence a reviewer would rightly flag). The
+# underscore-prefixed aliases keep this module's internal call sites unchanged.
+NAME_MAX = 63
+INVALID_NAME_CHARS = re.compile(r"[^0-9A-Za-z._\- ]")
+_NAME_MAX = NAME_MAX
+_INVALID = INVALID_NAME_CHARS
 
 
 def sanitize_name(raw: str) -> str:
