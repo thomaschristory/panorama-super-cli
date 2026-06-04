@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<!-- Decommission scenario: host h-dead (10.1.0.5/32) lives in several groups and
+     security rules. Coverage:
+       - r-sole-source / r-sole-dest: orphaned (sole source / sole destination).
+       - r-mixed: survives (keeps h-keep).
+       - g-dead-only: emptied by the scrub → deleted. It is named by r-group-only
+         (sole source → orphaned) and by g-parent (a parent group that survives,
+         keeping h-keep), proving the CASCADE repoints/orphans referrers of a
+         deleted group, not just of the matched address.
+       - net-supernet (10.1.0.0/24) CONTAINS 10.1.0.5 but is broader than what
+         the operator named, so a /32 decommission must NEVER delete or scrub it.
+       - nat-host: named only in a NAT source-translation field (unmappable) →
+         blocks a teardown that includes it (a separate target, 10.9.9.9). -->
+<config>
+  <shared>
+    <address>
+      <entry name="h-dead"><ip-netmask>10.1.0.5/32</ip-netmask></entry>
+      <entry name="h-keep"><ip-netmask>10.1.0.6/32</ip-netmask></entry>
+      <entry name="net-supernet"><ip-netmask>10.1.0.0/24</ip-netmask></entry>
+      <entry name="nat-host"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="g-dead-only">
+        <static><member>h-dead</member></static>
+      </entry>
+      <entry name="g-mixed">
+        <static>
+          <member>h-dead</member>
+          <member>h-keep</member>
+        </static>
+      </entry>
+      <entry name="g-parent">
+        <static>
+          <member>g-dead-only</member>
+          <member>h-keep</member>
+        </static>
+      </entry>
+    </address-group>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="r-sole-source">
+            <source><member>h-dead</member></source>
+            <destination><member>any</member></destination>
+            <action>allow</action>
+          </entry>
+          <entry name="r-sole-dest">
+            <source><member>any</member></source>
+            <destination><member>h-dead</member></destination>
+            <action>allow</action>
+          </entry>
+          <entry name="r-mixed">
+            <source>
+              <member>h-dead</member>
+              <member>h-keep</member>
+            </source>
+            <destination><member>h-keep</member></destination>
+            <action>allow</action>
+          </entry>
+          <entry name="r-group-only">
+            <source><member>g-dead-only</member></source>
+            <destination><member>any</member></destination>
+            <action>allow</action>
+          </entry>
+        </rules>
+      </security>
+      <nat>
+        <rules>
+          <entry name="nat-snat">
+            <source><member>any</member></source>
+            <destination><member>any</member></destination>
+            <source-translation>
+              <dynamic-ip-and-port>
+                <translated-address>
+                  <member>nat-host</member>
+                </translated-address>
+              </dynamic-ip-and-port>
+            </source-translation>
+          </entry>
+        </rules>
+      </nat>
+    </pre-rulebase>
+  </shared>
+</config>

@@ -23,7 +23,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from psc.core.changeset import ChangeSet, ObjectUpsert, ReferenceEdit, reference_edit_is_mappable
+from psc.core.changeset import (
+    ChangeSet,
+    ObjectUpsert,
+    ReferenceEdit,
+    RuleDelete,
+    reference_edit_is_mappable,
+)
 from psc.core.rulebases import rule_container
 from psc.output.errors import ErrorType, PscError
 
@@ -71,6 +77,14 @@ def _container_xpath(location: str, kind: str) -> str:
 def _entry_xpath(location: str, kind: str, name: str) -> str:
     # `_base` already quote-checks the location; this guards the entry name.
     return f"{_container_xpath(location, kind)}/entry[@name='{_safe_name(name)}']"
+
+
+def _rule_delete_xpath(d: RuleDelete) -> str:
+    container = rule_container(d.referrer_kind)
+    return (
+        f"{_base(d.location)}/{d.rulebase}-rulebase/{container}"
+        f"/rules/entry[@name='{_safe_name(d.name)}']"
+    )
 
 
 def _referrer_field_xpath(edit: ReferenceEdit) -> tuple[str, str] | None:
@@ -172,6 +186,8 @@ def plan_xapi_ops(cs: ChangeSet) -> list[XapiOp]:
             ops.append(XapiOp(action="edit", xpath=xpath, element=_member_field_xml(leaf, e.after)))
         else:
             ops.append(XapiOp(action="delete", xpath=xpath))
+    for rd in cs.rule_deletes:
+        ops.append(XapiOp(action="delete", xpath=_rule_delete_xpath(rd)))
     for r in cs.renames:
         ops.append(
             XapiOp(
