@@ -59,16 +59,11 @@ def _jsonl(model: Any) -> str:
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in items)
 
 
-def make_yaml() -> YAML:
-    """A block-style (non-flow) ruamel YAML emitter, shared with config save."""
-    yaml = YAML()
-    yaml.default_flow_style = False
-    return yaml
-
-
 def _yaml(data: Any) -> str:
     buf = io.StringIO()
-    make_yaml().dump(to_jsonable(data), buf)
+    yaml = YAML()
+    yaml.default_flow_style = False
+    yaml.dump(to_jsonable(data), buf)
     return buf.getvalue().rstrip("\n")
 
 
