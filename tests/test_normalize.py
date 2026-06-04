@@ -15,6 +15,24 @@ def test_host_and_slash32_normalize_equal() -> None:
     assert a.overlaps_key() == b.overlaps_key()
 
 
+def test_exact_key_preserves_host_bits() -> None:
+    # Same masked network, different host bits: the loose key collapses them,
+    # the strict (exact) key keeps them apart.
+    host = normalize_address(_addr("10.1.1.50/24"))
+    net = normalize_address(_addr("10.1.1.0/24"))
+    assert host is not None and net is not None
+    assert host.overlaps_key() == net.overlaps_key()
+    assert host.exact_key() != net.exact_key()
+
+
+def test_exact_key_unifies_host_and_slash32() -> None:
+    # A bare host and its /32 are genuinely identical under the strict key too.
+    a = normalize_address(_addr("10.0.0.10"))
+    b = normalize_address(_addr("10.0.0.10/32"))
+    assert a is not None and b is not None
+    assert a.exact_key() == b.exact_key()
+
+
 def test_exact_contains_within() -> None:
     host = normalize_address(_addr("10.0.0.10/32"))
     net = normalize_address(_addr("10.0.0.0/24"))

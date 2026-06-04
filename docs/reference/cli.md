@@ -40,7 +40,7 @@ object by exact name. See [Finding objects](../guides/finding-objects.md).
 ### dedup
 
 ```
-psc dedup addresses
+psc dedup addresses [--not-strict]
 psc dedup services
 psc dedup merge --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]

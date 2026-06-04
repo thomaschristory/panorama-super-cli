@@ -41,15 +41,33 @@ class AddrValue:
     range: tuple[int, int] | None = None
     family: int | None = None
     fqdn: str | None = None
+    exact: str | None = None
+    """Host-bit-preserving canonical string for ip-netmask (e.g. `10.1.1.50/24`
+    stays distinct from `10.1.1.0/24`); `None` means `key` is already exact."""
 
     def overlaps_key(self) -> str:
-        """Kind-qualified key for grouping exact duplicates."""
+        """Kind-qualified key grouping by *masked network* — loose: a host
+        written with a subnet mask collapses onto its network."""
         return f"{self.kind.value}:{self.key}"
+
+    def exact_key(self) -> str:
+        """Kind-qualified key grouping only *byte-identical* values — strict:
+        host bits are preserved, so `10.1.1.50/24` != `10.1.1.0/24`."""
+        return f"{self.kind.value}:{self.exact or self.key}"
 
 
 def _as_network(value: str) -> IPNetwork | None:
     try:
         return ipaddress.ip_network(value.strip(), strict=False)
+    except ValueError:
+        return None
+
+
+def _as_interface_key(value: str) -> str | None:
+    """Host-preserving canonical form: `10.1.1.50/24` -> `10.1.1.50/24`,
+    `10.0.0.10` -> `10.0.0.10/32`. `None` if unparseable."""
+    try:
+        return str(ipaddress.ip_interface(value.strip()))
     except ValueError:
         return None
 
@@ -78,7 +96,13 @@ def normalize_address(addr: Address) -> AddrValue | None:
         net = _as_network(v)
         if net is None:
             return None
-        return AddrValue(kind=addr.type, key=str(net), network=net, family=net.version)
+        return AddrValue(
+            kind=addr.type,
+            key=str(net),
+            network=net,
+            family=net.version,
+            exact=_as_interface_key(v),
+        )
     if addr.type is AddressType.IP_RANGE:
         bounds = _range_bounds(v)
         if bounds is None:
