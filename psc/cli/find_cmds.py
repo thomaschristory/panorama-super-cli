@@ -78,7 +78,9 @@ def ip(
         raise PscError("no matching objects", ErrorType.NOT_FOUND)
 
     model = results if len(results) != 1 else results[0]
-    render(rt.stdout, rt.output, model=model, rows=rows, table_title="find ip")
+    # Group the table by query so multi-target output (e.g. --file) draws a rule
+    # between each target's matches instead of one undifferentiated block.
+    render(rt.stdout, rt.output, model=model, rows=rows, table_title="find ip", group_by="query")
 
 
 @app.command("object")
