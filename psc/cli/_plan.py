@@ -2,7 +2,9 @@
 
 Centralising this is what guarantees the safety contract is identical across
 `dedup merge`, `name rename`, and any future write command: blocked plans are
-refused, dry-run is the default, and `--apply` is the only path to a write.
+refused, dry-run is the default, and `--apply` is the only path to mutating the
+managed config (the live candidate; offline, the rewritten `--out` file). A
+bare `--out` only ever writes a reviewable artifact file — never the device.
 """
 
 from __future__ import annotations

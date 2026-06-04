@@ -40,7 +40,10 @@ psc -c panorama.xml name rename --object h-web1 --to H-10.0.0.10
 psc -c panorama.xml name apply  --object h-web1   # rename to the scheme name
 ```
 
-Both are dry-run by default; add `--apply --out fixed.xml` (offline) to execute.
+Both are dry-run by default. Offline, `--out fixed.xml` writes the rewritten
+config (add `--apply` to execute; the file is written either way). Add
+`-of set` for a PAN-OS `set` script instead. Live, `--apply` pushes the
+candidate; add `--out` to also save the artifact.
 
 ## The shadow guard
 
