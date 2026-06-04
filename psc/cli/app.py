@@ -12,7 +12,7 @@ from rich.console import Console
 from psc import __version__
 from psc.cli import auth_cmds, dedup_cmds, find_cmds, name_cmds, profile_cmds, refs_cmds
 from psc.cli.runtime import Runtime, configure_logging
-from psc.config.loader import load_config
+from psc.config.loader import config_path, load_config
 from psc.output.errors import PscError
 from psc.output.format import OutputFormat
 
@@ -109,14 +109,16 @@ def root(
 ) -> None:
     global _ACTIVE  # noqa: PLW0603 — single process-wide handle for the error printer
     configure_logging(debug)
+    cfg_path = config_path()  # resolve once so the loaded and displayed paths match
     rt = Runtime(
-        config=load_config(),
+        config=load_config(cfg_path),
         config_file=config,
         profile=profile,
         debug=debug,
         device_group=device_group,
         strict=strict,
         _output=output,
+        config_path=cfg_path,
     )
     ctx.obj = rt
     _ACTIVE = rt
