@@ -7,6 +7,8 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.4 — 2026-06-04
+
 ### Changed
 
 - **`psc dedup addresses` is now strict by default** (#38). Addresses are
