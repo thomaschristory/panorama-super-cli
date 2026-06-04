@@ -110,3 +110,58 @@ $ echo $?
 
 By default both objects are taken from `--device-group` (or `shared`). Override
 per object with `--keep-location` / `--remove-location`.
+
+## Duplicate address-groups
+
+`dedup addresses`/`services` finds duplicate *objects*; `dedup groups` finds
+duplicate **address-groups** — two groups that resolve to the *same effective
+set of leaf addresses*:
+
+```console
+psc -c panorama.xml dedup groups
+```
+
+Groups are bucketed by the canonical set of hosts they expand to (nested groups
+are flattened first), so two groups land in the same bucket even if their names
+and direct members differ, as long as they ultimately reach the same addresses.
+
+```json
+{
+  "kind": "address-group",
+  "value": "{ip-netmask:10.0.0.1/32, ip-netmask:10.0.0.2/32}",
+  "members": [
+    {"name": "grp-a", "location": "shared"},
+    {"name": "grp-b", "location": "shared"}
+  ]
+}
+```
+
+The audit is **not exhaustive**: dynamic (filter-based) groups are runtime-only,
+and groups with dangling/malformed members can't be resolved — both are excluded
+and counted on stderr (`note audit is not exhaustive: skipped N dynamic and M
+unresolvable group(s)`). Scope the comparison with `--location` (default: the
+global `-d/--device-group` if set, else compare across all locations).
+
+## Merge two address-groups
+
+`dedup merge-group` collapses one group into another, reusing the same
+repoint-before-delete engine as object merge:
+
+```console
+psc -c panorama.xml dedup merge-group --keep grp-a --remove grp-b
+psc -c panorama.xml dedup merge-group --keep grp-a --remove grp-b --apply --out fixed.xml
+```
+
+- `--keep` (required): the survivor group.
+- `--remove` (required): the group collapsed into `--keep` and deleted.
+- `--location` sets both; `--keep-location`/`--remove-location` override per
+  group (default: the global `-d/--device-group`, else `shared`).
+- plus `--apply`, `--out`, `-of/--output-format`.
+
+Every referrer of `--remove` is repointed onto `--keep` *before* the dropped
+group is deleted. Unlike object merge, there is **no value-change override** —
+the merge is **refused** (exit `6`) unless the two groups expand to the *same*
+effective member set, because collapsing groups that mean different things would
+silently change rule matching. It also blocks on a **nested or cyclic** pair
+(one group already contains the other) and when the **survivor isn't visible**
+where a reference lives.

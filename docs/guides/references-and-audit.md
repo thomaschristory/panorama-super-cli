@@ -62,6 +62,42 @@ Lists references that point at a name no object defines (and that isn't a
 predefined name like `any`). These are latent config errors — a rule referencing
 a deleted object, a typo in a group member.
 
+## Overlapping and contained ranges
+
+`refs` answers "who points at this name?"; `audit overlaps` answers a different
+question — "do my address *values* step on each other?":
+
+```console
+psc -c panorama.xml audit overlaps
+```
+
+It reports each pair of address objects whose IP ranges **contain** or
+**overlap** one another, once per pair. A `relationship` of `contains` means one
+object is broader (the narrower one is redundant inside it); `overlaps` means two
+ranges intersect without one fully enclosing the other. Only `ip-netmask` and
+`ip-range` objects participate — FQDN and `ip-wildcard` have no comparable
+numeric range.
+
+```json
+{
+  "left_name": "h-web1", "left_location": "shared", "left_value": "10.0.0.10/32",
+  "right_name": "h-web1-slash", "right_location": "shared", "right_value": "10.0.0.10",
+  "relationship": "contains"
+}
+```
+
+It's a **pure read** — no plan, no `--apply`. Scope it with the global
+`-d/--device-group` (it only compares objects visible in that scope), and use
+the global `--strict` to exit `5` when nothing overlaps (handy in CI):
+
+```console
+psc -c panorama.xml --strict audit overlaps || echo "address ranges overlap"
+```
+
+Overlaps are not automatically wrong — a host inside its subnet is normal — but
+the report surfaces accidental duplicates and shadowed objects worth folding
+together with [`dedup`](duplicates-and-merging.md).
+
 ## Scope and scripting
 
 All three accept `-d/--device-group` to scope, `-o json` for machine output, and
