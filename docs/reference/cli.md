@@ -67,6 +67,30 @@ psc name apply  --object NAME            [--location LOC] [--apply] [--out PATH]
 Opt-in naming-template lint and reference-aware rename. See
 [Naming templates](../guides/naming.md).
 
+### init
+
+```
+psc init [--name N] [--host H] [--port P] [--device-group DG] \
+         [--user U | --api-key K] [--no-verify] [--default/--no-default]
+```
+
+Interactively bootstrap the first live profile. With `--user` (or an
+interactive prompt) it exchanges a username/password for an API key via the
+PAN-OS keygen API, runs a pre-flight probe, and writes a `0600` config. Pass
+`--api-key` to store a key you already have instead of generating one. The
+password is read from `$PSC_PASSWORD` or a hidden prompt — never a flag.
+
+### login
+
+```
+psc login [--name N] [--user U]
+```
+
+Verify a stored profile's API key with a `show system info` probe (selects the
+profile from `--name`, then `--profile`, then the default). With `--user` it
+re-generates (rotates) the key first and only persists it once the probe
+succeeds. Auth failures exit `8`, unreachable/transport failures exit `7`.
+
 ### profile
 
 ```
@@ -75,4 +99,6 @@ psc profile add --name N --host H [--api-key K] [--port P] [--device-group DG] [
 psc profile remove <name>
 ```
 
-Manage live connection profiles. See [Configuration](config.md).
+Manage live connection profiles. `init`/`login` are the friendlier front door;
+`profile add` is the scriptable, non-interactive form. See
+[Configuration](config.md).

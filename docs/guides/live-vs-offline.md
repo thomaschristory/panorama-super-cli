@@ -20,12 +20,15 @@ XXE / billion-laughs attacks.
 
 ## Live (`--profile name`)
 
-Configure a profile once:
+Configure a profile once — `psc init` fetches the API key from your
+username/password and verifies it before saving:
 
 ```console
-psc profile add --name prod --host panorama.example.com --api-key "$PANOS_KEY" --default
+psc init --name prod --host panorama.example.com --user admin   # prompts for the password
 psc profile list
 ```
+
+(Already hold a key? `psc profile add --name prod --host … --api-key "$PANOS_KEY" --default`.)
 
 Then run any read command:
 

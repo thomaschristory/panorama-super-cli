@@ -35,6 +35,15 @@ class ApplyResult(BaseModel):
     set_script: list[str] = Field(default_factory=list)
 
 
+class SystemInfo(BaseModel):
+    """Result of the live pre-flight probe (`show system info`)."""
+
+    hostname: str
+    version: str
+    model: str
+    serial: str
+
+
 class OfflineSource:
     """Read + rewrite an exported Panorama config XML on disk."""
 
@@ -90,6 +99,71 @@ class LiveSource:
         self._api_key = api_key
         self._port = port
         self._verify = verify
+
+    @staticmethod
+    def fetch_api_key(hostname: str, username: str, password: str, *, port: int = 443) -> str:
+        """Exchange a username/password for an API key via the PAN-OS keygen API.
+
+        The credentials are never stored — only the returned key is. Maps the
+        SDK's typed failures onto our exit-code contract: bad credentials are an
+        auth failure, anything that smells like a network/SSL problem is
+        transport.
+        """
+        # Deferred so the offline path keeps no hard dependency on the SDK.
+        from panos.errors import (  # noqa: PLC0415
+            PanConnectionTimeout,
+            PanDeviceError,
+            PanInvalidCredentials,
+            PanURLError,
+        )
+        from panos.panorama import Panorama  # noqa: PLC0415
+
+        pano = Panorama(hostname, api_username=username, api_password=password, port=port)
+        try:
+            # `_retrieve_api_key` is the SDK's documented keygen path: it issues
+            # the request, returns the key, and stores neither the password nor
+            # the key on the device object.
+            key = str(pano._retrieve_api_key())
+        except PanInvalidCredentials as exc:
+            raise PscError(
+                f"authentication failed for {username}@{hostname}: {exc}", ErrorType.AUTH
+            ) from exc
+        except (PanConnectionTimeout, PanURLError) as exc:
+            raise PscError(f"cannot reach {hostname}: {exc}", ErrorType.TRANSPORT) from exc
+        except PanDeviceError as exc:
+            raise PscError(f"keygen failed on {hostname}: {exc}", ErrorType.TRANSPORT) from exc
+        if not key:
+            raise PscError(f"keygen on {hostname} returned an empty key", ErrorType.TRANSPORT)
+        return key
+
+    def verify(self) -> SystemInfo:
+        """Pre-flight probe: confirm the key authenticates and the host answers.
+
+        Runs `show system info`; an auth rejection maps to an auth failure, a
+        connection/SSL problem to transport.
+        """
+        from panos.errors import (  # noqa: PLC0415
+            PanConnectionTimeout,
+            PanDeviceError,
+            PanInvalidCredentials,
+            PanURLError,
+        )
+
+        pano = self._device()
+        try:
+            info = pano.refresh_system_info()  # type: ignore[attr-defined]
+        except PanInvalidCredentials as exc:
+            raise PscError(f"API key rejected by {self.hostname}: {exc}", ErrorType.AUTH) from exc
+        except (PanConnectionTimeout, PanURLError) as exc:
+            raise PscError(f"cannot reach {self.hostname}: {exc}", ErrorType.TRANSPORT) from exc
+        except PanDeviceError as exc:
+            raise PscError(f"probe failed on {self.hostname}: {exc}", ErrorType.TRANSPORT) from exc
+        return SystemInfo(
+            hostname=self.hostname,
+            version=str(info.version),
+            model=str(info.platform),
+            serial=str(info.serial),
+        )
 
     def _device(self) -> object:
         from panos.panorama import Panorama  # noqa: PLC0415 — defer heavy SDK import to live use
