@@ -317,6 +317,48 @@ def test_plan_security_rule_reference_edit_traverses_rulebase() -> None:
     assert op.element == "<destination><member>web-srv</member></destination>"
 
 
+def test_plan_new_rulebase_reference_edit_traverses_container() -> None:
+    cs = ChangeSet(
+        title="npb",
+        reference_edits=[
+            ReferenceEdit(
+                referrer_kind="network-packet-broker-rule",
+                referrer_name="npb-1",
+                referrer_location="dg1",
+                field="destination",
+                rulebase="pre",
+                after=["a2"],
+            )
+        ],
+    )
+    (op,) = plan_xapi_ops(cs)
+    assert op.action == "edit"
+    assert op.xpath == (
+        "/config/devices/entry[@name='localhost.localdomain']"
+        "/device-group/entry[@name='dg1']"
+        "/pre-rulebase/network-packet-broker/rules/entry[@name='npb-1']/destination"
+    )
+
+
+def test_plan_skips_pbf_nexthop_field() -> None:
+    # A PBF nexthop is nested (no flat member list); the planner emits no op,
+    # exactly like a NAT translation field.
+    cs = ChangeSet(
+        title="pbf",
+        reference_edits=[
+            ReferenceEdit(
+                referrer_kind="pbf-rule",
+                referrer_name="pbf-1",
+                referrer_location="shared",
+                field="nexthop",
+                rulebase="pre",
+                after=["nh-dup"],
+            )
+        ],
+    )
+    assert plan_xapi_ops(cs) == []
+
+
 def test_plan_orders_set_edit_rename_delete() -> None:
     """The full safety ordering on the wire: create/repoint before rename
     before delete (never delete a still-referenced object).

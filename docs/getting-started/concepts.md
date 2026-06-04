@@ -5,9 +5,11 @@ A small mental model goes a long way.
 ## Snapshot
 
 `psc` reads a config into an immutable **snapshot**: every address, address
-group, service, service group, tag, security rule, and NAT rule it understands,
-across `shared` and every device-group. Read commands query the snapshot; they
-never mutate it.
+group, service, service group, tag, and rule it understands — security, NAT,
+and the nine other rulebases that reference objects (PBF, decryption,
+authentication, QoS, application-override, DoS, SD-WAN, tunnel-inspect,
+network-packet-broker) — across `shared` and every device-group. Read commands
+query the snapshot; they never mutate it.
 
 ## Locations and inheritance
 
@@ -38,9 +40,11 @@ it. A change-set with **blockers** is unsafe and is refused — even with
 
 ## Reference graph
 
-The **reference graph** answers "who points at this object?" across groups,
-security rules, and NAT (match *and* translation fields). It powers where-used,
-unused detection, and the safe repointing that merge and rename rely on.
+The **reference graph** answers "who points at this object?" across groups and
+every object-referencing rulebase — security, NAT (match *and* translation
+fields), and PBF, decryption, authentication, QoS, application-override, DoS,
+SD-WAN, tunnel-inspect, and network-packet-broker. It powers where-used, unused
+detection, and the safe repointing that merge and rename rely on.
 
 ## Sources
 

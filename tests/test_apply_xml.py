@@ -47,6 +47,22 @@ def test_apply_blocked_plan_raises(fixture_path) -> None:
         raise AssertionError("expected PscError")
 
 
+def test_merge_apply_roundtrip_repoints_new_rulebase(all_rb_path) -> None:
+    xml = all_rb_path.read_text(encoding="utf-8")
+    snap = parse_config(xml)
+    graph = ReferenceGraph.build(snap)
+    cs = plan_merge(
+        snap,
+        graph,
+        keep=ObjectRef(name="a2", location="shared"),
+        drop=ObjectRef(name="a2-dup", location="shared"),
+    )
+    new_snap = parse_config(apply_changeset(xml, cs))
+    assert all(a.name != "a2-dup" for a in new_snap.addresses)
+    sdwan = next(r for r in new_snap.policy_rules if r.name == "sdwan-1")
+    assert sdwan.destination == ["a2"]
+
+
 def test_apply_dg_local_merge(fixture_path) -> None:
     xml = fixture_path.read_text(encoding="utf-8")
     snap = parse_config(xml)

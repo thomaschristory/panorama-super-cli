@@ -2,8 +2,11 @@
 
 Every safe edit hinges on this. Before merging or renaming an object you must
 know *every* place it is referenced — across `shared` and every device-group,
-in address-groups, service-groups, security rules, and NAT rules (match *and*
-translation fields). This module builds that graph once and answers:
+in address-groups, service-groups, and every object-referencing rulebase:
+security, NAT (match *and* translation fields), and PBF, decryption,
+authentication, QoS, application-override, DoS, SD-WAN, tunnel-inspect, and
+network-packet-broker (plus a PBF forwarding next-hop object). This module
+builds that graph once and answers:
 
 - `where_used(...)` — every reference that resolves to a given object.
 - `unused(...)` — objects no rule reaches, directly or through groups.
@@ -24,6 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from psc.core.models import Location, Rulebase, Snapshot
+from psc.core.rulebases import rule_container
 
 # Built-in names that are not user objects; references to them never dangle.
 PREDEFINED = frozenset(
@@ -276,6 +280,52 @@ class ReferenceGraph:
                 field_name="service",
                 rulebase=n.rulebase,
             )
+        for p in snap.policy_rules:
+            kind = p.referrer_kind
+            for fname, members in (("source", p.source), ("destination", p.destination)):
+                for m in members:
+                    self._emit(
+                        target_name=m,
+                        namespace="address",
+                        referrer_kind=kind,
+                        referrer_name=p.name,
+                        referrer_location=p.location,
+                        field_name=fname,
+                        rulebase=p.rulebase,
+                    )
+            for m in p.service:
+                self._emit(
+                    target_name=m,
+                    namespace="service",
+                    referrer_kind=kind,
+                    referrer_name=p.name,
+                    referrer_location=p.location,
+                    field_name="service",
+                    rulebase=p.rulebase,
+                )
+            for t in p.tags:
+                self._emit(
+                    target_name=t,
+                    namespace="tag",
+                    referrer_kind=kind,
+                    referrer_name=p.name,
+                    referrer_location=p.location,
+                    field_name="tag",
+                    rulebase=p.rulebase,
+                )
+            if p.nexthop is not None:
+                # A PBF forwarding next-hop that names an address object. Nested
+                # (no flat member list), so it is review-gated on merge/rename
+                # like a NAT translation field — see `reference_edit_is_mappable`.
+                self._emit(
+                    target_name=p.nexthop,
+                    namespace="address",
+                    referrer_kind=kind,
+                    referrer_name=p.name,
+                    referrer_location=p.location,
+                    field_name="nexthop",
+                    rulebase=p.rulebase,
+                )
 
     # -- queries ---------------------------------------------------------
 
@@ -293,13 +343,22 @@ class ReferenceGraph:
         return list(self._by_target.get(Target(kind, name, location), []))
 
     def dangling(self) -> list[Reference]:
-        """References whose name resolves to no object (and isn't predefined)."""
-        return [r for r in self.references if not r.is_resolved]
+        """References whose name resolves to no object (and isn't predefined).
+
+        An unresolved PBF `nexthop` is excluded: it is just as often a literal
+        IP/FQDN as an address-object name, so flagging it would be noise. A
+        nexthop that *does* resolve still appears in `where_used` and is gated
+        on merge/rename.
+        """
+        return [r for r in self.references if not r.is_resolved and r.field != "nexthop"]
 
     def _rule_seeded_targets(self) -> set[Target]:
+        # Seed reachability from *every* rulebase, not just security/nat — an
+        # object referenced only by e.g. a QoS or PBF rule is still in use, and
+        # reporting it unused would invite an unsafe delete.
         seeds: set[Target] = set()
         for r in self.references:
-            if r.referrer_kind in ("security-rule", "nat-rule") and r.resolved is not None:
+            if rule_container(r.referrer_kind) is not None and r.resolved is not None:
                 seeds.add(r.resolved)
         return seeds
 

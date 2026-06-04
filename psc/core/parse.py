@@ -24,7 +24,9 @@ from psc.core.models import (
     AddressType,
     Location,
     NatRule,
+    PolicyRule,
     Rulebase,
+    RuleType,
     SecurityRule,
     Service,
     ServiceGroup,
@@ -224,6 +226,40 @@ def _parse_nat_rules(parent: ET.Element, loc: Location, rb: Rulebase) -> list[Na
     return out
 
 
+def _parse_policy_rules(parent: ET.Element, loc: Location, rb: Rulebase) -> list[PolicyRule]:
+    """Parse every "security-shaped" rulebase under one `<*-rulebase>` element.
+
+    Drives off `RuleType` (whose values are the container tags), so a new
+    rulebase needs only a new enum member. Reads the shared reference surface
+    (source/destination/service/tag); `service` stays empty when the rulebase
+    omits it (application-override). PBF additionally captures an object-named
+    forwarding next-hop (`action/forward/nexthop/fqdn`); a literal `ip-address`
+    next-hop names no object and is skipped.
+    """
+    out: list[PolicyRule] = []
+    for rt in RuleType:
+        for entry in parent.findall(f"./{rt.value}/rules/entry"):
+            name = entry.get("name")
+            if not name:
+                continue
+            nexthop = _text(entry, "action/forward/nexthop/fqdn") if rt is RuleType.PBF else None
+            out.append(
+                PolicyRule(
+                    name=name,
+                    location=loc,
+                    rulebase=rb,
+                    rule_type=rt,
+                    source=_member_list_or_any(entry, "source"),
+                    destination=_member_list_or_any(entry, "destination"),
+                    service=_members(entry, "service"),
+                    nexthop=nexthop,
+                    disabled=_text(entry, "disabled") == "yes",
+                    tags=_members(entry, "tag"),
+                )
+            )
+    return out
+
+
 def _collect(snap: Snapshot, parent: ET.Element, loc: Location) -> None:
     snap.addresses.extend(_parse_addresses(parent, loc))
     snap.address_groups.extend(_parse_address_groups(parent, loc))
@@ -235,6 +271,7 @@ def _collect(snap: Snapshot, parent: ET.Element, loc: Location) -> None:
         if rb_el is not None:
             snap.security_rules.extend(_parse_security_rules(rb_el, loc, rb))
             snap.nat_rules.extend(_parse_nat_rules(rb_el, loc, rb))
+            snap.policy_rules.extend(_parse_policy_rules(rb_el, loc, rb))
 
 
 def _find_config_root(root: ET.Element) -> ET.Element:

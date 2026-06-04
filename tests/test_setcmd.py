@@ -2,7 +2,42 @@ from __future__ import annotations
 
 from psc.core.changeset import ChangeSet, ObjectDelete, ObjectKind, ReferenceEdit
 from psc.core.models import SHARED, Address, AddressType
-from psc.core.setcmd import address_lines, render_changeset, scope_prefix
+from psc.core.setcmd import (
+    address_lines,
+    reference_edit_lines,
+    render_changeset,
+    scope_prefix,
+)
+
+
+def test_new_rulebase_reference_edit_set_lines() -> None:
+    edit = ReferenceEdit(
+        referrer_kind="sdwan-rule",
+        referrer_name="sdwan-1",
+        referrer_location="shared",
+        field="destination",
+        rulebase="pre",
+        before=["a2-dup", "a1"],
+        after=["a2", "a1"],
+    )
+    lines = reference_edit_lines(edit)
+    assert "delete shared pre-rulebase sdwan rules sdwan-1 destination" in lines
+    assert "set shared pre-rulebase sdwan rules sdwan-1 destination [ a2 a1 ]" in lines
+
+
+def test_pbf_nexthop_edit_renders_review_comment() -> None:
+    edit = ReferenceEdit(
+        referrer_kind="pbf-rule",
+        referrer_name="pbf-1",
+        referrer_location="shared",
+        field="nexthop",
+        rulebase="pre",
+        before=["nh-host"],
+        after=["nh-dup"],
+    )
+    (line,) = reference_edit_lines(edit)
+    assert line.startswith("# REVIEW")
+    assert "pbf-1" in line and "nexthop" in line
 
 
 def test_scope_prefix() -> None:

@@ -102,7 +102,12 @@ psc -c cfg.xml -o json refs unused --kind address # recursive: nothing a rule re
 psc -c cfg.xml -o json refs dangling              # references to missing objects
 ```
 
-`refs used` may need `--kind` and `--location` if a name is ambiguous.
+`refs used` may need `--kind` and `--location` if a name is ambiguous. Coverage
+spans groups and **every** object-referencing rulebase — security, NAT, PBF,
+decryption, authentication, QoS, application-override, DoS, SD-WAN,
+tunnel-inspect, network-packet-broker — so `unused` never reports an object that
+only a non-security rule reaches. A `referrer_kind` like `qos-rule` or
+`pbf-rule` in the output tells you exactly which rulebase points at the object.
 
 ### name — opt-in naming templates
 

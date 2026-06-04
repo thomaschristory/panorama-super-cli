@@ -24,6 +24,7 @@ from psc.core.changeset import (
 from psc.core.models import Location, Snapshot
 from psc.core.normalize import normalize_address, service_key
 from psc.core.refs import Reference, ReferenceGraph
+from psc.core.rulebases import rule_container
 
 
 class ObjectRef(BaseModel):
@@ -188,6 +189,23 @@ def plan_merge(
     return cs
 
 
+def _field_attr(field: str) -> str:
+    """The model attribute holding a reference field's member list.
+
+    The reference `field` is the PAN-OS *element* name (`tag`, `source`,
+    `destination-translation`); the model attribute is its Python form. The one
+    irregular case is `tag` → `tags` — getting this wrong returns an empty list,
+    so a tag rename/merge would wipe the field instead of rewriting one member.
+    """
+    return "tags" if field == "tag" else field.replace("-", "_")
+
+
+def _attr_as_members(obj: object, field: str) -> list[str]:
+    """Read a rule's reference field as a member list (a scalar wraps to one)."""
+    val = getattr(obj, _field_attr(field), [])
+    return list(val) if isinstance(val, list) else [val]
+
+
 def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
     """Current member list of the field a reference points at."""
     loc = ref.referrer_location
@@ -202,7 +220,7 @@ def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
                 and r.location == loc
                 and (ref.rulebase is None or r.rulebase == ref.rulebase)
             ):
-                return list(getattr(r, ref.field.replace("-", "_"), []))
+                return _attr_as_members(r, ref.field)
     elif ref.referrer_kind == "nat-rule":
         for n in snapshot.nat_rules:
             if (
@@ -210,7 +228,14 @@ def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
                 and n.location == loc
                 and (ref.rulebase is None or n.rulebase == ref.rulebase)
             ):
-                attr = ref.field.replace("-", "_")
-                val = getattr(n, attr, [])
-                return list(val) if isinstance(val, list) else [val]
+                return _attr_as_members(n, ref.field)
+    elif rule_container(ref.referrer_kind) is not None:
+        for p in snapshot.policy_rules:
+            if (
+                p.referrer_kind == ref.referrer_kind
+                and p.name == ref.referrer_name
+                and p.location == loc
+                and (ref.rulebase is None or p.rulebase == ref.rulebase)
+            ):
+                return _attr_as_members(p, ref.field)
     return [ref.target_name]
