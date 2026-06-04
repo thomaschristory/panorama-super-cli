@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from psc.cli._options import OUT_OPTION, optional_location
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core.dedup import (
@@ -15,7 +16,6 @@ from psc.core.dedup import (
     plan_merge,
     plan_merge_group,
 )
-from psc.core.models import Location
 from psc.core.refs import ReferenceGraph
 from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
@@ -94,12 +94,7 @@ def groups(
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
     graph = ReferenceGraph.build(snap)
-    loc_name = location or rt.device_group
-    loc = (
-        None
-        if loc_name is None
-        else (Location.shared() if loc_name == "shared" else Location.dg(loc_name))
-    )
+    loc = optional_location(location or rt.device_group)
     result = find_duplicate_groups(snap, graph, loc)
     if result.dynamic_skipped or result.unresolvable_skipped:
         rt.stderr.print(
@@ -133,12 +128,7 @@ def merge(
         False, "--allow-value-change", help="Permit merging objects with different values."
     ),
     apply: bool = typer.Option(False, "--apply", help="Execute the merge (default: dry-run)."),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="Write the plan artifact (set script or rewritten config) to this "
-        "file; honoured even in a dry-run (see --output-format).",
-    ),
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Collapse one address object into another, repointing every reference.
@@ -174,12 +164,7 @@ def merge_group(
     keep_location: str | None = typer.Option(None, "--keep-location"),
     remove_location: str | None = typer.Option(None, "--remove-location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the merge (default: dry-run)."),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="Write the plan artifact (set script or rewritten config) to this "
-        "file; honoured even in a dry-run (see --output-format).",
-    ),
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Collapse one address-group into an equivalent one, repointing references.

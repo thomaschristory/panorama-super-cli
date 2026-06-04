@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import typer
 
+from psc.cli._options import OUT_OPTION, location_from_name
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
-from psc.core.models import Location, Rulebase
+from psc.core.models import Rulebase
 from psc.core.rule_edit import plan_rule_member_edit
 from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
@@ -32,12 +33,7 @@ def edit_member(
     add: str | None = typer.Option(None, "--add", help="Member to add (idempotent)."),
     remove: str | None = typer.Option(None, "--remove", help="Member to remove (idempotent)."),
     apply: bool = typer.Option(False, "--apply", help="Execute the edit (default: dry-run)."),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="Write the plan artifact (set script or rewritten config) to this "
-        "file; honoured even in a dry-run (see --output-format).",
-    ),
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Add or remove one member of a rule field, idempotently.
@@ -58,8 +54,7 @@ def edit_member(
             f"invalid --rulebase '{rulebase}' (choose pre or post)", ErrorType.VALIDATION
         ) from exc
 
-    loc_name = location or rt.device_group or "shared"
-    loc = Location.shared() if loc_name == "shared" else Location.dg(loc_name)
+    loc = location_from_name(location or rt.device_group or "shared")
 
     cs = plan_rule_member_edit(rt.snapshot(), rule, loc, rb, field, add=add, remove=remove)
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)

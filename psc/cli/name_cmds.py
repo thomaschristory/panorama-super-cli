@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from psc.cli._options import OUT_OPTION
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core.changeset import ObjectKind
@@ -50,12 +51,7 @@ def rename(
     kind: ObjectKind = typer.Option(ObjectKind.ADDRESS, "--kind"),
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="Write the plan artifact (set script or rewritten config) to this "
-        "file; honoured even in a dry-run (see --output-format).",
-    ),
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Rename one object, repointing every reference (refuses on shadow collisions)."""
@@ -73,12 +69,7 @@ def apply_scheme(
     object_name: str = typer.Option(..., "--object", help="Object to rename to its scheme name."),
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        help="Write the plan artifact (set script or rewritten config) to this "
-        "file; honoured even in a dry-run (see --output-format).",
-    ),
+    out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Rename one object to the name the configured scheme implies for its value."""

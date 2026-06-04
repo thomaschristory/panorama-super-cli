@@ -12,10 +12,11 @@ from pathlib import Path
 
 import typer
 
+from psc.cli._options import location_from_name
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core.decommission import plan_decommission
-from psc.core.models import Address, Location
+from psc.core.models import Address
 from psc.core.normalize import MatchKind
 from psc.core.refs import ReferenceGraph
 from psc.core.resolve import find_ips
@@ -86,7 +87,7 @@ def decommission(
         raise PscError("provide one or more IP/CIDR/range targets, or --file", ErrorType.VALIDATION)
 
     snap = rt.snapshot()
-    loc = _resolve_scope(scope) if scope is not None else rt.scope()
+    loc = location_from_name(scope) if scope is not None else rt.scope()
 
     results = find_ips(snap, items, loc)
     index = snap.address_index()
@@ -109,7 +110,3 @@ def decommission(
         snap, graph, matched, scope=loc, keep_groups=keep_groups, keep_rules=keep_rules
     )
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
-
-
-def _resolve_scope(name: str) -> Location:
-    return Location.shared() if name == "shared" else Location.dg(name)
