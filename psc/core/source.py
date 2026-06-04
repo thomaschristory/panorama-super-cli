@@ -107,7 +107,7 @@ class LiveSource:
     hard dependency on a reachable device at import time.
     """
 
-    read_only = True
+    read_only = False
 
     def __init__(
         self, hostname: str, api_key: str, *, port: int = 443, verify: bool = True
@@ -234,35 +234,48 @@ class LiveSource:
         committed, the partial candidate stays on the device for the operator to
         inspect or revert (`load config` / `revert config`).
         """
-        from psc.core.apply_live import plan_xapi_ops  # noqa: PLC0415 — keep core import light
 
-        # Raises CONFLICT (blocked) or INPUT (unaddressable name) before we touch
-        # the device.
+        from psc.core.apply_live import XapiOp, plan_xapi_ops  # noqa: PLC0415
+
+        # Raises CONFLICT (blocked) or INPUT (unaddressable name / unsupported
+        # live update) before we touch the device.
         ops = plan_xapi_ops(cs)
 
-        from panos.errors import (  # noqa: PLC0415
-            PanConnectionTimeout,
-            PanDeviceError,
-            PanURLError,
-        )
+        from panos.errors import PanConnectionTimeout, PanURLError  # noqa: PLC0415
 
         pano = self._device()
         xapi = pano.xapi  # type: ignore[attr-defined]
+        sent = 0
+        op: XapiOp | None = None
         try:
             for op in ops:
-                if op.action == "edit":
-                    xapi.edit(xpath=op.xpath, element=op.element)
-                elif op.action == "set":
+                if op.action == "set":
                     xapi.set(xpath=op.xpath, element=op.element)
+                elif op.action == "edit":
+                    xapi.edit(xpath=op.xpath, element=op.element)
                 elif op.action == "delete":
                     xapi.delete(xpath=op.xpath)
-                elif op.action == "rename":
+                else:  # "rename"
                     xapi.rename(xpath=op.xpath, newname=op.newname)
+                sent += 1
         except (PanConnectionTimeout, PanURLError) as exc:
-            raise PscError(f"cannot reach {self.hostname}: {exc}", ErrorType.TRANSPORT) from exc
-        except PanDeviceError as exc:
             raise PscError(
-                f"apply failed on {self.hostname} (uncommitted candidate left for review): {exc}",
+                f"cannot reach {self.hostname} after {sent}/{len(ops)} op(s) "
+                f"(uncommitted candidate left for review): {exc}",
                 ErrorType.TRANSPORT,
             ) from exc
-        return ApplyResult(applied=True, ops=cs.op_count, out_path=None)
+        except Exception as exc:
+            # Any other XML-API failure must not escape the PscError contract or
+            # leak a traceback into machine output. Notably `pan.xapi.PanXapiError`
+            # (bad xpath, HTTP error) is NOT a `panos.errors.PanDeviceError`, so a
+            # typed catch would miss it. Report *where* we stopped: ops before
+            # `sent` are on the candidate, the rest are not — the operator needs
+            # that to reason about the partial state before they commit/revert.
+            where = f" at op {sent + 1}/{len(ops)} ({op.action} {op.xpath})" if op else ""
+            raise PscError(
+                f"apply failed on {self.hostname}{where}; {sent} op(s) already on "
+                f"the uncommitted candidate — inspect or revert on the device: {exc}",
+                ErrorType.TRANSPORT,
+                details={"sent": sent, "planned": len(ops)},
+            ) from exc
+        return ApplyResult(applied=True, ops=len(ops), out_path=None)

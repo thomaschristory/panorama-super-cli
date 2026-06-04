@@ -11,8 +11,7 @@ if it was ever invoked. These pin the safety-critical contract:
 
 from __future__ import annotations
 
-import functools
-
+import pan.xapi
 import panos.panorama
 import pytest
 
@@ -22,6 +21,7 @@ from psc.core.changeset import (
     ObjectDelete,
     ObjectKind,
     ObjectRename,
+    ObjectUpsert,
     ReferenceEdit,
 )
 from psc.core.source import LiveSource
@@ -62,7 +62,7 @@ class _FakePano:
 @pytest.fixture
 def fake_pano(monkeypatch: pytest.MonkeyPatch) -> _FakePano:
     pano = _FakePano()
-    monkeypatch.setattr(panos.panorama, "Panorama", functools.partial(lambda *a, **k: pano))
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
     return pano
 
 
@@ -229,3 +229,140 @@ def test_plan_skips_nat_translation_field() -> None:
         ],
     )
     assert plan_xapi_ops(cs) == []
+
+
+def test_plan_security_rule_reference_edit_traverses_rulebase() -> None:
+    cs = ChangeSet(
+        title="rule",
+        reference_edits=[
+            ReferenceEdit(
+                referrer_kind="security-rule",
+                referrer_name="allow-web",
+                referrer_location="dg1",
+                field="destination",
+                rulebase="pre",
+                after=["web-srv"],
+            )
+        ],
+    )
+    (op,) = plan_xapi_ops(cs)
+    assert op.action == "edit"
+    assert op.xpath == (
+        "/config/devices/entry[@name='localhost.localdomain']"
+        "/device-group/entry[@name='dg1']"
+        "/pre-rulebase/security/rules/entry[@name='allow-web']/destination"
+    )
+    assert op.element == "<destination><member>web-srv</member></destination>"
+
+
+def test_plan_orders_set_edit_rename_delete() -> None:
+    """The full safety ordering on the wire: create/repoint before rename
+    before delete (never delete a still-referenced object).
+    """
+    cs = ChangeSet(
+        title="all",
+        upserts=[
+            ObjectUpsert(
+                kind=ObjectKind.ADDRESS,
+                name="new",
+                location="shared",
+                fields={"ip-netmask": "1.2.3.4"},
+            )
+        ],
+        reference_edits=[
+            ReferenceEdit(
+                referrer_kind="address-group",
+                referrer_name="g",
+                referrer_location="shared",
+                field="static",
+                after=["a"],
+            )
+        ],
+        renames=[
+            ObjectRename(kind=ObjectKind.ADDRESS, location="shared", old_name="o", new_name="n")
+        ],
+        deletes=[ObjectDelete(kind=ObjectKind.ADDRESS, name="d", location="shared")],
+    )
+    assert [op.action for op in plan_xapi_ops(cs)] == ["set", "edit", "rename", "delete"]
+
+
+def test_plan_upsert_create_sets_entry_into_container() -> None:
+    """A create `set`s the `<entry>` into its *container* xpath (not the entry
+    xpath), so a missing parent container is vivified.
+    """
+    cs = ChangeSet(
+        title="c",
+        upserts=[
+            ObjectUpsert(
+                kind=ObjectKind.ADDRESS,
+                name="h",
+                location="shared",
+                fields={"ip-netmask": "10.0.0.1"},
+            )
+        ],
+    )
+    (op,) = plan_xapi_ops(cs)
+    assert op.action == "set"
+    assert op.xpath == "/config/shared/address"
+    assert op.element == '<entry name="h"><ip-netmask>10.0.0.1</ip-netmask></entry>'
+
+
+def test_live_apply_refuses_update_upsert(fake_pano: _FakePano) -> None:
+    """A live *update* would silently drop fields the plan didn't mention; it is
+    refused (apply offline instead) rather than corrupting a production object.
+    """
+    cs = ChangeSet(
+        title="u",
+        upserts=[
+            ObjectUpsert(
+                kind=ObjectKind.ADDRESS,
+                name="h",
+                location="shared",
+                fields={"ip-netmask": "10.0.0.1"},
+                exists=True,
+            )
+        ],
+    )
+    with pytest.raises(PscError) as ei:
+        _live().apply(cs, out_path=None)
+    assert ei.value.error_type is ErrorType.CONFIG
+    assert fake_pano.xapi.calls == []
+
+
+def test_live_apply_wraps_xapi_error_as_transport(fake_pano: _FakePano) -> None:
+    """A `pan.xapi.PanXapiError` (NOT a `panos.errors.PanDeviceError`) must be
+    wrapped in the PscError contract, never leaked raw — and never committed.
+    """
+
+    def boom(**kwargs: object) -> None:
+        raise pan.xapi.PanXapiError("edit failed: bad xpath")
+
+    fake_pano.xapi.edit = boom  # type: ignore[method-assign]
+    with pytest.raises(PscError) as ei:
+        _live().apply(_clean_changeset(), out_path=None)
+    assert ei.value.error_type is ErrorType.TRANSPORT
+    assert fake_pano.committed is False
+
+
+def test_live_apply_reports_only_ops_actually_sent(fake_pano: _FakePano) -> None:
+    """A skipped (unmappable) reference edit must not be counted as applied:
+    `result.ops` reflects what reached the wire, not the plan's op_count.
+    """
+    cs = ChangeSet(
+        title="mix",
+        reference_edits=[
+            ReferenceEdit(
+                referrer_kind="nat-rule",
+                referrer_name="n",
+                referrer_location="dg1",
+                field="source-translation",
+                rulebase="pre",
+                after=["x"],
+            )
+        ],
+        deletes=[ObjectDelete(kind=ObjectKind.ADDRESS, name="h", location="shared")],
+    )
+    result = _live().apply(cs, out_path=None)
+    assert cs.op_count == 2  # the plan counts both ops
+    assert result.ops == 1  # ...but only the delete reached the device
+    assert len(fake_pano.xapi.calls) == 1

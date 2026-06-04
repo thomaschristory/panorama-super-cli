@@ -19,6 +19,7 @@ sent as a malformed (or, worse, silently mis-resolving) xpath.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -32,10 +33,11 @@ _DEVICE = "localhost.localdomain"
 
 class XapiOp(BaseModel):
     """One XML-API mutation. `element` carries the XML for set/edit; `newname`
-    the target for rename; deletes need neither.
+    the target for rename; deletes need neither. The `Literal` makes a typo a
+    type error and keeps the executor's dispatch exhaustive.
     """
 
-    action: str  # "set" | "edit" | "delete" | "rename"
+    action: Literal["set", "edit", "delete", "rename"]
     xpath: str
     element: str | None = None
     newname: str | None = None
@@ -61,8 +63,13 @@ def _base(location: str) -> str:
     )
 
 
+def _container_xpath(location: str, kind: str) -> str:
+    return f"{_base(location)}/{kind}"
+
+
 def _entry_xpath(location: str, kind: str, name: str) -> str:
-    return f"{_base(location)}/{kind}/entry[@name='{_safe_name(name)}']"
+    # `_base` already quote-checks the location; this guards the entry name.
+    return f"{_container_xpath(location, kind)}/entry[@name='{_safe_name(name)}']"
 
 
 def _referrer_field_xpath(edit: ReferenceEdit) -> tuple[str, str] | None:
@@ -95,8 +102,9 @@ def _member_field_xml(leaf: str, members: list[str]) -> str:
 
 def _entry_xml(u: ObjectUpsert) -> str:
     """The full `<entry>` element for an upsert — scalar leaves, members, tags.
-    Built once and `edit`-ed in wholesale (create-or-replace), so a partial
-    member append can't happen the way a `set` on a member field would.
+    `set` into the object's *container* creates the entry (and any missing
+    `<address>`/`<service>` parent), so a create needs no pre-existing node;
+    member lists are fresh, so `set` can't append to a stale list.
     """
     entry = ET.Element("entry", {"name": u.name})
     for path, value in u.fields.items():
@@ -134,10 +142,24 @@ def plan_xapi_ops(cs: ChangeSet) -> list[XapiOp]:
 
     ops: list[XapiOp] = []
     for u in cs.upserts:
+        if u.exists:
+            # A live *update* would have to merge into the existing object;
+            # replacing it wholesale (or appending member lists) silently drops
+            # or duplicates fields the plan didn't mention. Until live
+            # read-modify-write lands, refuse rather than corrupt a production
+            # object — the offline applier (which merges) handles updates.
+            raise PscError(
+                f"live update of existing {u.kind.value} '{u.name}' is not "
+                "supported yet (would drop unlisted fields) — apply this plan "
+                "offline (--config … --apply --out)",
+                ErrorType.CONFIG,
+            )
+        # Create: `set` the new entry into its container, which also vivifies a
+        # missing parent container — `edit` would require it to exist already.
         ops.append(
             XapiOp(
-                action="edit",
-                xpath=_entry_xpath(u.location, u.kind.value, u.name),
+                action="set",
+                xpath=_container_xpath(u.location, u.kind.value),
                 element=_entry_xml(u),
             )
         )
