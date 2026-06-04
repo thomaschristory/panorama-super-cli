@@ -64,6 +64,14 @@ def test_strict_not_found_exit_5() -> None:
     assert json.loads(cp.stdout)["type"] == "not_found"
 
 
+def test_find_ip_table_separates_multiple_targets() -> None:
+    # Issue #43: multi-target table output must draw a rule between each
+    # target's matches. The interior divider uses box-drawing '├'.
+    cp = run("-c", str(FIXTURE), "-o", "table", "find", "ip", "10.0.0.10", "10.0.0.99")
+    assert cp.returncode == 0
+    assert "├" in cp.stdout
+
+
 _HOST_AND_NET_CONFIG = """<?xml version="1.0"?>
 <config version="11.0.0">
   <shared>
