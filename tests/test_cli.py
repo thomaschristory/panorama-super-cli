@@ -205,6 +205,75 @@ def test_merge_apply_out_xml_is_default(tmp_path: Path) -> None:
     assert "web-primary" not in out.read_text(encoding="utf-8")  # rewritten XML, object gone
 
 
+def test_merge_out_set_dry_run_writes_file(tmp_path: Path) -> None:
+    """#47: `--out` is an artifact request, honored even without `--apply`.
+
+    Writing a user-named file never touches the source export, so a dry-run
+    must still produce it — the silent no-op was the bug.
+    """
+    out = tmp_path / "plan.set"
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "dedup",
+        "merge",
+        "--keep",
+        "h-web1",
+        "--remove",
+        "web-primary",
+        "-of",
+        "set",
+        "--out",
+        str(out),
+    )
+    assert cp.returncode == 0
+    assert out.exists(), "--out must write a file even in dry-run"
+    text = out.read_text(encoding="utf-8")
+    assert "delete shared address web-primary" in text
+    assert "<entry" not in text  # set script, not XML
+    # The source export is never touched by a dry-run artifact write.
+    assert "web-primary" in FIXTURE.read_text(encoding="utf-8")
+
+
+def test_merge_out_xml_dry_run_writes_file(tmp_path: Path) -> None:
+    out = tmp_path / "rewritten.xml"
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "dedup",
+        "merge",
+        "--keep",
+        "h-web1",
+        "--remove",
+        "web-primary",
+        "--out",
+        str(out),
+    )
+    assert cp.returncode == 0
+    assert out.exists()
+    assert "web-primary" not in out.read_text(encoding="utf-8")  # rewritten XML, object gone
+
+
+def test_merge_no_out_no_apply_still_dry_run(tmp_path: Path) -> None:
+    """Without `--out` and without `--apply`, nothing is written anywhere."""
+    out = tmp_path / "x.set"
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "-o",
+        "set",
+        "dedup",
+        "merge",
+        "--keep",
+        "h-web1",
+        "--remove",
+        "web-primary",
+    )
+    assert cp.returncode == 0
+    assert "re-run with --apply" in cp.stderr
+    assert not out.exists()
+
+
 def test_no_source_errors_config() -> None:
     cp = run("-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 9

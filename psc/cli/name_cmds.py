@@ -51,7 +51,10 @@ def rename(
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
     out: str | None = typer.Option(
-        None, "--out", help="Offline: write rewritten config here (see --output-format)."
+        None,
+        "--out",
+        help="Write the plan artifact (set script or rewritten config) to this "
+        "file; honoured even in a dry-run (see --output-format).",
     ),
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
@@ -71,7 +74,10 @@ def apply_scheme(
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
     out: str | None = typer.Option(
-        None, "--out", help="Offline: write rewritten config here (see --output-format)."
+        None,
+        "--out",
+        help="Write the plan artifact (set script or rewritten config) to this "
+        "file; honoured even in a dry-run (see --output-format).",
     ),
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:

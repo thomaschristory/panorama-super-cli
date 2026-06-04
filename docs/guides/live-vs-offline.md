@@ -58,3 +58,8 @@ gate and repoint-before-delete ordering apply on the wire. See
 | Reads | ✅ | ✅ |
 | Writes | new file via `--out` | candidate config (you commit) |
 | Best for | audits, CI, safe edits | lookups and edits against prod |
+
+`--out` works on either source — it saves a reviewable `set`/`xml` artifact
+without touching the export or the candidate, even in a dry-run. On live it's
+independent of `--apply`: use `--apply` to push the candidate, add `--out` if
+you also want the script on disk.

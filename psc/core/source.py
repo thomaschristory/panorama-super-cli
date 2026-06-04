@@ -75,6 +75,17 @@ def _ssl_context(verify: bool) -> ssl.SSLContext:
     return ctx
 
 
+def _write_artifact(out: Path, data: str) -> None:
+    """Write an `--out` artifact, mapping filesystem errors onto the error
+    contract. A bad `--out` (missing parent dir, a directory, unwritable) is an
+    *expected* failure — surface it as `INPUT` rather than leaking a raw
+    `OSError` traceback (which would also corrupt machine output)."""
+    try:
+        out.write_text(data, encoding="utf-8")
+    except OSError as exc:
+        raise PscError(f"cannot write artifact to {out}: {exc}", ErrorType.INPUT) from exc
+
+
 class OfflineSource:
     """Read + rewrite an exported Panorama config XML on disk."""
 
@@ -98,16 +109,23 @@ class OfflineSource:
         except Exception as exc:
             raise PscError(f"failed to parse {self.path}: {exc}", ErrorType.INPUT) from exc
 
-    def apply(
+    def write_out(
         self,
         cs: ChangeSet,
         *,
         out_path: str | Path | None,
         out_format: ConfigFormat = ConfigFormat.XML,
     ) -> ApplyResult:
+        """Render `cs` to the `--out` artifact file (set script or rewritten XML).
+
+        This is the *artifact* path: it only ever writes the separate `--out`
+        file and never the source export, so it is safe in a dry-run. For the
+        offline source the artifact *is* the whole point — `apply` is just this
+        with an `applied=True` flag (there is no separate device to push to).
+        """
         if out_path is None:
             raise PscError(
-                "offline apply needs --out PATH (the rewritten config is never "
+                "offline --out needs a PATH (the rewritten config is never "
                 "written back over the source export)",
                 ErrorType.CONFIG,
             )
@@ -119,18 +137,30 @@ class OfflineSource:
         # it, so refuse before writing rather than emit a `# BLOCKED` file.
         if cs.is_blocked:
             raise PscError(
-                "refusing to apply a blocked plan",
+                "refusing to write a blocked plan",
                 ErrorType.CONFLICT,
                 details={"blockers": cs.blockers},
             )
         # Both artifacts share the same safety guards above; only the bytes differ.
         if out_format is ConfigFormat.SET:
             script = render_changeset(cs)
-            out.write_text("\n".join(script) + "\n", encoding="utf-8")
-            return ApplyResult(applied=True, ops=cs.op_count, out_path=str(out), set_script=script)
+            _write_artifact(out, "\n".join(script) + "\n")
+            return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out), set_script=script)
         new_xml = apply_changeset(self._xml, cs)
-        out.write_text(new_xml, encoding="utf-8")
-        return ApplyResult(applied=True, ops=cs.op_count, out_path=str(out))
+        _write_artifact(out, new_xml)
+        return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out))
+
+    def apply(
+        self,
+        cs: ChangeSet,
+        *,
+        out_path: str | Path | None,
+        out_format: ConfigFormat = ConfigFormat.XML,
+    ) -> ApplyResult:
+        # Offline has no live device: applying *is* producing the `--out`
+        # artifact. Reuse the artifact path and only flip the `applied` flag.
+        res = self.write_out(cs, out_path=out_path, out_format=out_format)
+        return res.model_copy(update={"applied": True})
 
 
 class LiveSource:
@@ -151,6 +181,7 @@ class LiveSource:
         self._api_key = api_key
         self._port = port
         self._verify = verify
+        self._raw: str | None = None
 
     @staticmethod
     def fetch_api_key(
@@ -242,10 +273,17 @@ class LiveSource:
         return pano
 
     def raw_xml(self) -> str:
+        # Memoised for the lifetime of this source: one CLI invocation reads the
+        # running config once and reuses it for the snapshot *and* any `--out`
+        # XML artifact, so the artifact is rewritten from the exact config the
+        # plan was computed against (no divergence, no second round-trip).
+        if self._raw is not None:
+            return self._raw
         try:
             pano = self._device()
             pano.xapi.show(xpath="/config")  # type: ignore[attr-defined]
-            return str(pano.xapi.xml_result())  # type: ignore[attr-defined]
+            self._raw = str(pano.xapi.xml_result())  # type: ignore[attr-defined]
+            return self._raw
         except PscError:
             raise
         except Exception as exc:
@@ -256,6 +294,40 @@ class LiveSource:
     def snapshot(self) -> Snapshot:
         return parse_config(self.raw_xml())
 
+    def write_out(
+        self,
+        cs: ChangeSet,
+        *,
+        out_path: str | Path | None,
+        out_format: ConfigFormat = ConfigFormat.XML,
+    ) -> ApplyResult:
+        """Render `cs` to the `--out` artifact file from the live config.
+
+        This never touches the device's candidate config — it only writes a
+        local file the operator can review or paste. A `set` script is pure
+        rendering of the plan; an `xml` artifact is the *running* config (read
+        over the API) rewritten by the same offline applier. Honoured in a
+        dry-run because emitting a file is not a device mutation.
+        """
+        if out_path is None:
+            raise PscError("--out needs a PATH", ErrorType.CONFIG)
+        out = Path(out_path)
+        # Same blocker gate as every other write path: refuse before any bytes
+        # hit disk rather than leave a misleading artifact.
+        if cs.is_blocked:
+            raise PscError(
+                "refusing to write a blocked plan",
+                ErrorType.CONFLICT,
+                details={"blockers": cs.blockers},
+            )
+        if out_format is ConfigFormat.SET:
+            script = render_changeset(cs)
+            _write_artifact(out, "\n".join(script) + "\n")
+            return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out), set_script=script)
+        new_xml = apply_changeset(self.raw_xml(), cs)
+        _write_artifact(out, new_xml)
+        return ApplyResult(applied=False, ops=cs.op_count, out_path=str(out))
+
     def apply(
         self,
         cs: ChangeSet,
@@ -265,9 +337,9 @@ class LiveSource:
     ) -> ApplyResult:
         """Push `cs` to Panorama's candidate config over the XML API.
 
-        `out_path`/`out_format` are accepted for interface parity with the
-        offline source but ignored — a live apply leaves a candidate on the
-        device, not a file, so there is no artifact to format.
+        When `out_path` is given, the `--out` artifact is written *first* (so a
+        reviewable file survives even if the device push later fails midway),
+        then the plan is pushed to the candidate.
 
         The plan is lowered to xpath set/edit/delete/rename ops and replayed in
         order (repoint before delete). The `blockers` gate and name-addressing
@@ -285,6 +357,13 @@ class LiveSource:
         # Raises CONFLICT (blocked) or INPUT (unaddressable name / unsupported
         # live update) before we touch the device.
         ops = plan_xapi_ops(cs)
+
+        # Write the reviewable artifact first so it survives a failed push.
+        artifact = (
+            self.write_out(cs, out_path=out_path, out_format=out_format)
+            if out_path is not None
+            else None
+        )
 
         from panos.errors import PanConnectionTimeout, PanURLError  # noqa: PLC0415
 
@@ -323,4 +402,9 @@ class LiveSource:
                 ErrorType.TRANSPORT,
                 details={"sent": sent, "planned": len(ops)},
             ) from exc
-        return ApplyResult(applied=True, ops=len(ops), out_path=None)
+        return ApplyResult(
+            applied=True,
+            ops=len(ops),
+            out_path=artifact.out_path if artifact else None,
+            set_script=artifact.set_script if artifact else [],
+        )

@@ -11,6 +11,8 @@ if it was ever invoked. These pin the safety-critical contract:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pan.xapi
 import panos.panorama
 import pytest
@@ -24,7 +26,7 @@ from psc.core.changeset import (
     ObjectUpsert,
     ReferenceEdit,
 )
-from psc.core.source import LiveSource
+from psc.core.source import ConfigFormat, LiveSource
 from psc.output.errors import ErrorType, PscError
 
 
@@ -155,6 +157,66 @@ def test_live_apply_rejects_quote_in_name_before_writing(fake_pano: _FakePano) -
         _live().apply(cs, out_path=None)
     assert ei.value.error_type is ErrorType.INPUT
     assert fake_pano.xapi.calls == []
+
+
+# -- #47: live `write_out` exports an artifact without touching the device ----
+
+
+def test_live_write_out_set_renders_without_device(fake_pano: _FakePano, tmp_path: Path) -> None:
+    out = tmp_path / "plan.set"
+    res = _live().write_out(_clean_changeset(), out_path=out, out_format=ConfigFormat.SET)
+    assert res.applied is False
+    assert res.out_path == str(out)
+    assert "delete shared address dup-host" in out.read_text(encoding="utf-8")
+    # A set artifact is pure rendering: no device contact at all.
+    assert fake_pano.xapi.calls == []
+    assert fake_pano.committed is False
+
+
+def test_live_write_out_refuses_blocked_plan(fake_pano: _FakePano, tmp_path: Path) -> None:
+    out = tmp_path / "plan.set"
+    cs = _clean_changeset()
+    cs.blockers.append("unsafe")
+    with pytest.raises(PscError) as ei:
+        _live().write_out(cs, out_path=out, out_format=ConfigFormat.SET)
+    assert ei.value.error_type is ErrorType.CONFLICT
+    assert not out.exists()
+
+
+def test_live_apply_with_out_also_writes_artifact(fake_pano: _FakePano, tmp_path: Path) -> None:
+    """`--apply --out` on live: push the candidate *and* leave a set artifact."""
+    out = tmp_path / "applied.set"
+    res = _live().apply(_clean_changeset(), out_path=out, out_format=ConfigFormat.SET)
+    assert res.applied is True
+    assert res.out_path == str(out)
+    assert fake_pano.xapi.calls, "expected the candidate push to reach the device"
+    assert fake_pano.committed is False
+    assert "delete shared address dup-host" in out.read_text(encoding="utf-8")
+
+
+def test_live_raw_xml_is_memoised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One invocation fetches the running config once: the snapshot and any
+    `--out` XML artifact must share that fetch, not diverge across re-reads."""
+    calls = {"n": 0}
+
+    class _ReadXapi:
+        ssl_context = None
+
+        def show(self, xpath: str, **kwargs: object) -> None:
+            calls["n"] += 1
+
+        def xml_result(self) -> str:
+            return "<config/>"
+
+    class _ReadPano:
+        def __init__(self, *a: object, **k: object) -> None:
+            self.xapi = _ReadXapi()
+
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: _ReadPano())
+    src = _live()
+    assert src.raw_xml() == "<config/>"
+    assert src.raw_xml() == "<config/>"
+    assert calls["n"] == 1
 
 
 # -- the pure planner: xpath construction, device-free -------------------

@@ -40,8 +40,8 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
 ## Pick a source
 
 - **Offline:** `-c panorama.xml` — an exported config. Read-only against the
-  device; `--apply` writes a *new* file via `--out` (it never overwrites the
-  source export). Choose what that file holds with `-of/--output-format`:
+  device; `--out PATH` writes a *new* file (it never overwrites the source
+  export). Choose what that file holds with `-of/--output-format`:
   - `xml` (default) — the whole config rewritten, loadable with `load config`.
   - `set` — just the equivalent PAN-OS `set` script (the creates/deletes/
     repoints that achieve the change). Easier to read and to paste into a
@@ -50,13 +50,16 @@ psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out
     full, directly-loadable replacement config.
 
   ```bash
-  psc -c cfg.xml dedup merge --keep a --remove b --apply --out plan.set -of set
+  psc -c cfg.xml dedup merge --keep a --remove b --out plan.set -of set
   ```
-  (`-of` only shapes the `--out` file; for the script on stdout in a dry-run,
-  use `-o set` instead.)
+  `--out` is an *artifact* request, not a mutation: it's honoured even in a
+  dry-run (writing a file never touches the source export). `-of` shapes that
+  file; for the script on stdout instead, use `-o set`.
 - **Live:** `-p prod` — fetches the running config over the XML API. `--apply`
-  (no `--out`) pushes the plan to Panorama's **candidate** config and never
-  commits; you review and commit yourself.
+  pushes the plan to Panorama's **candidate** config and never commits; you
+  review and commit yourself. `--out` still works on a live profile to save a
+  reviewable `set`/`xml` artifact (with or without `--apply`) without touching
+  the device — handy for capturing the script before you push.
 
 ## The commands
 
@@ -165,8 +168,9 @@ psc -c cfg.xml dedup merge --keep a --remove b --apply --out fixed.xml
 - DO NOT add `--apply` to a read command by reflex (ignored on reads, dangerous habit).
 - DO NOT parse the `table` format — use `json`/`jsonl`.
 - DO NOT apply a plan whose `blockers` is non-empty — fix the cause.
-- DO NOT pass `--out` with a live profile — it's offline-only; live `--apply`
-  targets the candidate config. And remember `psc` never commits — you do.
+- REMEMBER `--out` only ever writes a file; it never pushes. On a live profile
+  use `--apply` to push the candidate (add `--out` too if you also want the
+  artifact saved). And `psc` never commits — you do.
 - DO NOT put `--apply`/`--out` before the subcommand, or `-c`/`-o` after it.
 
 ## When something fails
