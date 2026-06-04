@@ -64,6 +64,18 @@ def test_malformed_response_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc.value.error_type is ErrorType.TRANSPORT
 
 
+def test_non_json_body_is_typed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # PyPI serving an HTML error page → json.load raises JSONDecodeError, a
+    # ValueError subclass — must still surface as a typed TRANSPORT error.
+    def _html(url: str, timeout: float) -> str:
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    monkeypatch.setattr(version_check, "_fetch_latest", _html)
+    with pytest.raises(PscError) as exc:
+        version_check.check_for_update()
+    assert exc.value.error_type is ErrorType.TRANSPORT
+
+
 def test_unparseable_remote_version_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_latest(monkeypatch, "not-a-version")
     info = version_check.check_for_update()
