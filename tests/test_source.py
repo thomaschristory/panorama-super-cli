@@ -48,6 +48,42 @@ def test_apply_set_format_still_requires_out_path() -> None:
         OfflineSource(FIXTURE).apply(_delete_cs(), out_path=None, out_format=ConfigFormat.SET)
 
 
+def test_write_out_set_writes_without_apply(tmp_path: Path) -> None:
+    """#47: `write_out` is the dry-run artifact path — same file, applied=False."""
+    out = tmp_path / "plan.set"
+    res = OfflineSource(FIXTURE).write_out(_delete_cs(), out_path=out, out_format=ConfigFormat.SET)
+    assert out.read_text(encoding="utf-8").count("delete shared address web-primary") == 1
+    assert res.applied is False
+    assert res.out_path == str(out)
+    assert res.set_script
+
+
+def test_write_out_still_refuses_overwriting_source() -> None:
+    with pytest.raises(PscError):
+        OfflineSource(FIXTURE).write_out(_delete_cs(), out_path=FIXTURE)
+
+
+def test_write_out_refuses_blocked_plan(tmp_path: Path) -> None:
+    out = tmp_path / "plan.set"
+    blocked = ChangeSet(
+        title="t",
+        blockers=["unsafe"],
+        deletes=[ObjectDelete(kind=ObjectKind.ADDRESS, name="web-primary", location="shared")],
+    )
+    with pytest.raises(PscError):
+        OfflineSource(FIXTURE).write_out(blocked, out_path=out)
+    assert not out.exists()
+
+
+def test_write_out_bad_path_raises_pscerror_not_oserror(tmp_path: Path) -> None:
+    """A bad --out (here: a directory) is an expected failure on the contract,
+    not a raw OSError traceback."""
+    out = tmp_path / "subdir"
+    out.mkdir()
+    with pytest.raises(PscError):
+        OfflineSource(FIXTURE).write_out(_delete_cs(), out_path=out, out_format=ConfigFormat.SET)
+
+
 def test_apply_set_format_refuses_blocked_plan_and_writes_nothing(tmp_path: Path) -> None:
     # The blocker gate is enforced at the applier level for every format, not
     # only in the CLI — a blocked plan must never reach a written artifact.

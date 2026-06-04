@@ -56,18 +56,19 @@ These are two different knobs and it's worth keeping them straight:
 
 - **`-o set`** controls what a command prints to **stdout** — use it to read or
   pipe the plan during a dry-run.
-- **`-of` / `--output-format`** (offline mutating commands only) controls the
-  format of the **`--apply --out` file artifact**: `xml` (default) rewrites the
-  whole config to load with `load config`, while `set` writes the same PAN-OS
-  `set` script shown above to that file — easier to read and to paste into a
-  config session or `load config partial`.
+- **`-of` / `--output-format`** (mutating commands only) controls the format of
+  the **`--out` file artifact**: `xml` (default) rewrites the whole config to
+  load with `load config`, while `set` writes the same PAN-OS `set` script shown
+  above to that file — easier to read and to paste into a config session or
+  `load config partial`.
 
 ```console
-psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out plan.set -of set
+psc -c panorama.xml dedup merge --keep h-web1 --remove web-primary --out plan.set -of set
 ```
 
-`-of` only shapes the file and is ignored without `--apply`; on a live profile
-there is no file artifact, so it has no effect there.
+`-of` only shapes the `--out` file. `--out` writes that file whenever it's
+given — including in a dry-run, and on a live profile — because writing a file
+never touches the source export or the device candidate.
 
 ## Errors
 

@@ -18,12 +18,18 @@ These are **context** options — pass them *before* the subcommand:
 | `--version` | Print version and exit. |
 
 Write-execution options (`--apply`, `--out`, `-of/--output-format`) belong to
-the individual mutating commands and are passed *after* the command. `--apply`
-is the only path to a write; offline it requires `--out PATH` (a new file) and
-`-of xml|set` chooses what that file holds (default `xml`), while live it pushes
-to
-Panorama's candidate config and never commits. See
-[Writes and safety](../guides/safety.md).
+the individual mutating commands and are passed *after* the command.
+
+- `--out PATH` writes a reviewable artifact file; `-of xml|set` chooses what it
+  holds (default `xml`). It's an artifact request, not a mutation, so it's
+  honoured even in a dry-run and on a live profile — writing a file never
+  touches the source export or the device candidate.
+- `--apply` executes the change against the managed config: **live** pushes the
+  plan to Panorama's candidate config and never commits; **offline** requires
+  `--out PATH` (the rewritten file *is* the execution, and never overwrites the
+  source export).
+
+See [Writes and safety](../guides/safety.md).
 
 ## Commands
 

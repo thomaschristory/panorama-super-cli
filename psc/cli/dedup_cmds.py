@@ -85,7 +85,10 @@ def merge(
     ),
     apply: bool = typer.Option(False, "--apply", help="Execute the merge (default: dry-run)."),
     out: str | None = typer.Option(
-        None, "--out", help="Offline: write the rewritten config here (see --output-format)."
+        None,
+        "--out",
+        help="Write the plan artifact (set script or rewritten config) to this "
+        "file; honoured even in a dry-run (see --output-format).",
     ),
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:

@@ -37,9 +37,11 @@ don't block.
 
 ## Offline apply never overwrites your export
 
-Offline, `--apply` requires `--out PATH` and writes the rewritten config there —
-it will refuse to write back over the source file. Your export stays pristine and
-the change is reviewable as a diff.
+Offline, `--out PATH` writes the rewritten config there — it will refuse to
+write back over the source file. Your export stays pristine and the change is
+reviewable as a diff. `--out` is an artifact request, so it is honoured even in
+a dry-run (writing a file is not a mutation); `--apply` alone still requires
+`--out`.
 
 ```console
 psc -c panorama.xml dedup merge --keep a --remove b --apply --out fixed.xml
@@ -74,8 +76,9 @@ rejected up front (`input`, exit `2`) rather than sent malformed — rename it o
 apply that plan offline. If a write fails mid-plan, `psc` reports how far it got
 and leaves the uncommitted candidate for you to inspect or revert.
 
-Prefer to stage the change as a file instead? Plan with `-o set` (paste / `load
-config partial`) or plan offline with `--apply --out`.
+Prefer to stage the change as a file instead? Add `--out plan.set -of set` (it
+writes the artifact without pushing, even on a live profile), or print the
+script to stdout with `-o set` (paste / `load config partial`).
 
 ## Debugging
 

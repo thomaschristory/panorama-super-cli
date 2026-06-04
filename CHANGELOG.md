@@ -7,6 +7,19 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--out` now writes the artifact even in a dry-run, and on a live profile**
+  (#47). Previously `dedup merge`/`name` silently ignored `--out` unless
+  `--apply` was passed, and ignored it entirely on a live profile — so
+  `dedup merge … -of set --out out.txt` against a live Panorama printed the plan
+  but wrote no file. `--out` is now treated as an artifact request (a `set`
+  script or rewritten `xml`): writing a user-named file never touches the source
+  export or the live candidate, so it is honoured regardless of `--apply` or
+  source. `--apply` still governs the live candidate push; combining
+  `--apply --out` on a live profile both pushes and saves the artifact. Offline
+  `--apply` still requires `--out`. The blocker gate holds on every path.
+
 ## v0.2.5 — 2026-06-04
 
 ### Fixed
