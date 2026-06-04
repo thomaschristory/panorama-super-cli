@@ -119,3 +119,15 @@ Manage live connection profiles. `init`/`login` are the friendlier front door;
 `profile add` is the scriptable, non-interactive form. `profile list` also
 prints the config file's location (on stderr, so machine output stays clean) —
 handy because the path is platform-dependent. See [Configuration](config.md).
+
+### version
+
+```
+psc version
+psc version check
+```
+
+`psc version` prints the installed version (the format-aware equivalent of the
+`--version` flag). `psc version check` queries PyPI and reports whether a newer
+release is available; it exits 0 either way and emits a typed `transport` error
+if PyPI is unreachable.

@@ -28,6 +28,7 @@ dependencies = [
     "platformdirs>=4.2",
     "pan-os-python>=1.12",
     "defusedxml>=0.7",
+    "packaging>=23.0",
 ]
 
 [project.scripts]
