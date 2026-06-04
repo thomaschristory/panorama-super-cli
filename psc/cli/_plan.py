@@ -27,7 +27,7 @@ OUT_FORMAT_OPTION = typer.Option(
         "Format of the offline --out artifact. 'xml' (default) rewrites the whole "
         "config to load with `load config`; 'set' writes the equivalent PAN-OS set "
         "script (the creates/deletes/repoints) — easier to read and to paste into a "
-        "config session. Only affects --out; ignored without --apply."
+        "config session. Only affects the --out file."
     ),
 )
 
@@ -64,7 +64,10 @@ def complete(
         _print_human_plan(rt, cs)
 
     if cs.is_empty:
-        rt.stderr.print("[dim]nothing to do[/dim]")
+        # An empty plan has no artifact to write — say so explicitly when `--out`
+        # was asked for, rather than silently leaving the file absent.
+        note = " — no artifact written" if out_path is not None else ""
+        rt.stderr.print(f"[dim]nothing to do{note}[/dim]")
         return
 
     if apply:
@@ -72,6 +75,15 @@ def complete(
         rt.stderr.print(
             f"[green]applied[/green] {result.ops} operation(s)"
             + (f" → {result.out_path}" if result.out_path else "")
+        )
+    elif out_path is not None:
+        # `--out` is an artifact request, not a mutation: writing a user-named
+        # file never touches the source export or the live candidate, so honour
+        # it even in a dry-run. This is the whole fix for #47.
+        result = rt.source().write_out(cs, out_path=out_path, out_format=out_format)
+        rt.stderr.print(
+            f"[green]wrote[/green] {out_format.value} artifact → {result.out_path} "
+            "[dim](dry-run — re-run with --apply to push)[/dim]"
         )
     else:
         rt.stderr.print("[yellow]dry-run[/yellow] — re-run with --apply to execute")
