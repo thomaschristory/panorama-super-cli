@@ -46,6 +46,16 @@ psc -c panorama.xml dedup merge --keep a --remove b --apply --out fixed.xml
 diff <(xmllint --format panorama.xml) <(xmllint --format fixed.xml)
 ```
 
+By default the `--out` file is the rewritten config XML. Pass
+`-of/--output-format set` to instead write the equivalent PAN-OS `set` script
+(the creates/deletes/repoints that achieve the same change) — easier to read and
+to paste into a config session. The blocker gate and repoint-before-delete
+ordering apply to both formats identically; a blocked plan writes no file.
+
+```console
+psc -c panorama.xml dedup merge --keep a --remove b --apply --out plan.set -of set
+```
+
 ## Live writes
 
 Live `--apply` pushes the plan to Panorama's **candidate** config over the XML
