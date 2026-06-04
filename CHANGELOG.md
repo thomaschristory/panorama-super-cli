@@ -7,8 +7,23 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.2.6 — 2026-06-04
+
+### Added
+
+- **`psc version` and `psc version check`** (#33). `psc version` prints the
+  installed version (the format-aware equivalent of the `--version` flag, which
+  is kept); `psc version check` queries PyPI and reports whether a newer release
+  is available, exiting 0 either way. An unreachable PyPI surfaces as a typed
+  `transport` error rather than a stack trace.
+
 ### Fixed
 
+- **`psc profile list` now prints the config file's location** (#48). The path
+  is platform-dependent (notably different on Windows), so it was hard to find
+  where psc reads/writes profiles. The path is written to stderr — keeping the
+  machine-readable rows on stdout clean — and flagged `(not created yet)` when
+  the file is absent.
 - **`--out` now writes the artifact even in a dry-run, and on a live profile**
   (#47). Previously `dedup merge`/`name` silently ignored `--out` unless
   `--apply` was passed, and ignored it entirely on a live profile — so
