@@ -45,15 +45,18 @@ class AddrValue:
     """Host-bit-preserving canonical string for ip-netmask (e.g. `10.1.1.50/24`
     stays distinct from `10.1.1.0/24`); `None` means `key` is already exact."""
 
+    def _qualified_key(self, value: str) -> str:
+        return f"{self.kind.value}:{value}"
+
     def overlaps_key(self) -> str:
         """Kind-qualified key grouping by *masked network* — loose: a host
         written with a subnet mask collapses onto its network."""
-        return f"{self.kind.value}:{self.key}"
+        return self._qualified_key(self.key)
 
     def exact_key(self) -> str:
         """Kind-qualified key grouping only *byte-identical* values — strict:
         host bits are preserved, so `10.1.1.50/24` != `10.1.1.0/24`."""
-        return f"{self.kind.value}:{self.exact or self.key}"
+        return self._qualified_key(self.exact or self.key)
 
 
 def _as_network(value: str) -> IPNetwork | None:
@@ -148,10 +151,16 @@ def parse_query(raw: str) -> Query:
     return Query(raw=raw, fqdn=s.rstrip(".").lower())
 
 
+def _interval_bounds(
+    network: IPNetwork | None, rng: tuple[int, int] | None
+) -> tuple[int, int] | None:
+    if network is not None:
+        return (int(network.network_address), int(network.broadcast_address))
+    return rng
+
+
 def _query_bounds(q: Query) -> tuple[int, int] | None:
-    if q.network is not None:
-        return (int(q.network.network_address), int(q.network.broadcast_address))
-    return q.range
+    return _interval_bounds(q.network, q.range)
 
 
 def value_bounds(a: AddrValue) -> tuple[int, int] | None:
@@ -160,9 +169,7 @@ def value_bounds(a: AddrValue) -> tuple[int, int] | None:
 
     The numeric basis shared by `match` (find), and `audit` overlap detection.
     """
-    if a.network is not None:
-        return (int(a.network.network_address), int(a.network.broadcast_address))
-    return a.range
+    return _interval_bounds(a.network, a.range)
 
 
 # Back-compat alias: `match` predates the public name and still calls `_value_bounds`.

@@ -467,10 +467,6 @@ def attr_as_members(obj: object, field: str) -> list[str]:
     return list(val) if isinstance(val, list) else [val]
 
 
-# Back-compat alias for the prior private name.
-_attr_as_members = attr_as_members
-
-
 def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
     """Current member list of the field a reference points at."""
     loc = ref.referrer_location

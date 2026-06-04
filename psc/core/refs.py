@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from psc.core.models import Location, Rulebase, Snapshot
+from psc.core.models import Location, Rulebase, Snapshot, _Named
 from psc.core.rulebases import rule_container
 
 # Built-in names that are not user objects; references to them never dangle.
@@ -39,10 +40,6 @@ PREDEFINED = frozenset(
         "service-dns",
     }
 )
-
-# Object kinds, grouped by the two PAN-OS namespaces plus tags.
-ADDRESS_KINDS = ("address", "address-group")
-SERVICE_KINDS = ("service", "service-group")
 
 
 def dag_filter_tags(filter_str: str) -> set[str]:
@@ -431,15 +428,14 @@ class ReferenceGraph:
 
     def _defined_targets(self, kind: str) -> list[Target]:
         snap = self.snapshot
-        if kind == "address":
-            return [Target(kind, o.name, o.location) for o in snap.addresses]
-        if kind == "address-group":
-            return [Target(kind, o.name, o.location) for o in snap.address_groups]
-        if kind == "service":
-            return [Target(kind, o.name, o.location) for o in snap.services]
-        if kind == "service-group":
-            return [Target(kind, o.name, o.location) for o in snap.service_groups]
-        return []
+        # kind -> the defining objects; tag/unknown have no entry and yield [].
+        collections: dict[str, Sequence[_Named]] = {
+            "address": snap.addresses,
+            "address-group": snap.address_groups,
+            "service": snap.services,
+            "service-group": snap.service_groups,
+        }
+        return [Target(kind, o.name, o.location) for o in collections.get(kind, [])]
 
     def _unused_tags(self) -> list[Target]:
         used: set[tuple[str, str]] = set()  # (location_name, tag_name) of the *referrer* context

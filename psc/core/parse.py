@@ -42,12 +42,17 @@ _ADDR_TAGS: dict[str, AddressType] = {
 }
 
 
+def _extract_members(el: ET.Element) -> list[str]:
+    """`<member>x</member><member>y</member>` under an already-found `el` -> ['x', 'y']."""
+    return [m.text.strip() for m in el.findall("member") if m.text]
+
+
 def _members(entry: ET.Element, tag: str) -> list[str]:
     """`<tag><member>x</member><member>y</member></tag>` -> ['x', 'y']."""
     parent = entry.find(tag)
     if parent is None:
         return []
-    return [m.text.strip() for m in parent.findall("member") if m.text]
+    return _extract_members(parent)
 
 
 def _text(entry: ET.Element, tag: str) -> str | None:
@@ -102,11 +107,7 @@ def _parse_address_groups(parent: ET.Element, loc: Location) -> list[AddressGrou
             AddressGroup(
                 name=name,
                 location=loc,
-                static_members=(
-                    [m.text.strip() for m in static.findall("member") if m.text]
-                    if static is not None
-                    else None
-                ),
+                static_members=(_extract_members(static) if static is not None else None),
                 dynamic_filter=(_text(entry, "dynamic/filter") if dynamic is not None else None),
                 description=_text(entry, "description"),
                 tags=_members(entry, "tag"),
@@ -205,7 +206,7 @@ def _parse_nat_rules(parent: ET.Element, loc: Location, rb: Rulebase) -> list[Na
         if st is not None:
             for ta in st.iter("translated-address"):
                 # Either a single text value or a list of <member>s.
-                src_xlate.extend(m.text.strip() for m in ta.findall("member") if m.text)
+                src_xlate.extend(_extract_members(ta))
                 if ta.text and ta.text.strip():
                     src_xlate.append(ta.text.strip())
         dst_xlate = _text(entry, "destination-translation/translated-address")
