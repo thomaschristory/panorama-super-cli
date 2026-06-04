@@ -18,7 +18,10 @@ These are **context** options — pass them *before* the subcommand:
 | `--version` | Print version and exit. |
 
 Write-execution options (`--apply`, `--out`) belong to the individual mutating
-commands and are passed *after* the command.
+commands and are passed *after* the command. `--apply` is the only path to a
+write; offline it requires `--out PATH` (a new file), while live it pushes to
+Panorama's candidate config and never commits. See
+[Writes and safety](../guides/safety.md).
 
 ## Commands
 
