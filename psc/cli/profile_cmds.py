@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from psc.cli.runtime import Runtime
-from psc.config.loader import config_path, save_config
+from psc.config.loader import save_config
 from psc.config.models import Profile
 from psc.output.errors import ErrorType, PscError
 from psc.output.format import render
@@ -22,7 +22,7 @@ def list_profiles(ctx: typer.Context) -> None:
     # never pollutes the machine-readable rows on stdout, and prints even when
     # no profiles are configured yet — the empty case is exactly when "where do
     # I put them?" matters most.
-    path = config_path()
+    path = rt.config_path
     suffix = "" if path.exists() else " (not created yet)"
     # soft_wrap + markup=False: never wrap a long path onto two lines, and never
     # let a path with `[...]` be parsed as rich markup.
