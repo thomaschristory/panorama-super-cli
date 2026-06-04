@@ -32,6 +32,18 @@ def test_version() -> None:
     assert "psc" in cp.stdout
 
 
+def test_unused_prints_scope_caveat_to_stderr() -> None:
+    # `unused` is a candidate list, not a kill list — the scan-scope blind spot
+    # must be surfaced at point of use, on stderr so machine rows stay clean.
+    cp = run("-c", str(FIXTURE), "-o", "json", "refs", "unused", "--kind", "address")
+    assert cp.returncode == 0
+    json.loads(cp.stdout)  # stdout stays pure machine output
+    assert "caveat" not in cp.stdout.lower()
+    low = cp.stderr.lower()
+    assert "not scanned" in low or "candidate" in low
+    assert "template" in low  # names the most dangerous blind spot
+
+
 def test_find_ip_json_contract() -> None:
     cp = run("-c", str(FIXTURE), "-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 0

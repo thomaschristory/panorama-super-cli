@@ -280,6 +280,16 @@ class ReferenceGraph:
                 field_name="service",
                 rulebase=n.rulebase,
             )
+            for t in n.tags:
+                self._emit(
+                    target_name=t,
+                    namespace="tag",
+                    referrer_kind="nat-rule",
+                    referrer_name=n.name,
+                    referrer_location=n.location,
+                    field_name="tag",
+                    rulebase=n.rulebase,
+                )
         for p in snap.policy_rules:
             kind = p.referrer_kind
             for fname, members in (("source", p.source), ("destination", p.destination)):
