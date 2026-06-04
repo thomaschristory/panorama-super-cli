@@ -7,6 +7,28 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.3.1 — 2026-06-04
+
+### Added
+
+- **Coverage & blind-spots documentation** plus a point-of-use caveat (#56). A
+  new "Coverage and blind spots" guide maps exactly what the reference graph
+  scans and — critically — what it does not (templates and network/device
+  config, dynamic-address-group membership, profiles/schedules/EDLs/regions/
+  applications, and the single-snapshot scope). `refs unused` now prints a
+  one-line caveat to **stderr** restating these gaps so the list isn't mistaken
+  for a kill-list; stdout stays pure machine output. The core message: `unused`
+  means *unreferenced by policy*, **not** *safe to delete* — `merge`/`rename`
+  are protected (they block when they can't repoint), deletion is not.
+
+### Fixed
+
+- **NAT rule tags are now scanned** (#55). The reference graph walked NAT rules'
+  address and service fields but skipped their tags — the only rulebase whose
+  tags were missed. A tag used only on a NAT rule was reported `unused` (and so
+  deletable) and was not repointed on rename. NAT rule tags now behave like
+  every other rulebase's.
+
 ## v0.3.0 — 2026-06-04
 
 ### Added
