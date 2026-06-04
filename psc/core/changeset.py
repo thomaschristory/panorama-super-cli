@@ -17,6 +17,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from psc.core.rulebases import FLAT_RULE_FIELDS, rule_container
+
 
 class ObjectKind(str, Enum):
     ADDRESS = "address"
@@ -132,20 +134,25 @@ def reference_edit_is_mappable(edit: ReferenceEdit) -> bool:
 
     The single source of truth behind `apply_xml._referrer_field_element` and
     `apply_live._referrer_field_xpath`: a member field they know how to address
-    (a group's `static`/`members`, a security-rule field, a NAT src/dst list).
-    A NAT *translation* field is nested with no flat list, and a rule edit with
-    no `rulebase` can't be located — both are unmappable, and an applier silently
-    skips them. The planner uses this to refuse such a skip when the same plan
-    tears the target down, instead of leaving a dangling reference (#28).
+    (a group's `static`/`members`, a security-rule field, a NAT src/dst list, or
+    any other rulebase's source/destination/service/tag — see
+    `psc.core.rulebases`). A NAT *translation* field and a PBF `nexthop` are
+    nested with no flat list, and a rule edit with no `rulebase` can't be
+    located — all unmappable, and an applier silently skips them. The planner
+    uses this to refuse such a skip when the same plan tears the target down,
+    instead of leaving a dangling reference (#28).
     """
     kind = edit.referrer_kind
     if kind in ("address-group", "service-group"):
         return True
-    if kind == "security-rule":
-        return edit.rulebase is not None
-    if kind == "nat-rule":
-        return edit.rulebase is not None and edit.field in ("source", "destination")
-    return False
+    container = rule_container(kind)
+    if container is None or edit.rulebase is None:
+        return False
+    if container == "nat":
+        # NAT keeps only flat match fields; its translation fields are nested.
+        return edit.field in ("source", "destination")
+    # security + every policy rulebase: the shared flat member fields.
+    return edit.field in FLAT_RULE_FIELDS
 
 
 def gate_unmappable_reference_edits(cs: ChangeSet) -> None:

@@ -51,6 +51,39 @@ def test_rename_repoints_references(snapshot: Snapshot) -> None:
     assert cs.renames[0].new_name == "H-10.0.0.10"
 
 
+def test_rename_repoints_across_new_rulebases(all_rb_snapshot: Snapshot) -> None:
+    # a1 is a source in every new rulebase; a rename must repoint them all.
+    graph = ReferenceGraph.build(all_rb_snapshot)
+    cs = plan_rename(
+        all_rb_snapshot,
+        graph,
+        kind=ObjectKind.ADDRESS,
+        location_name="shared",
+        old_name="a1",
+        new_name="H-10.1.0.1",
+    )
+    assert not cs.is_blocked
+    by_kind = {(e.referrer_kind, e.referrer_name): e.after for e in cs.reference_edits}
+    assert "H-10.1.0.1" in by_kind[("tunnel-inspect-rule", "ti-1")]
+    assert "H-10.1.0.1" in by_kind[("dos-rule", "dos-1")]
+
+
+def test_rename_blocks_when_repoint_hits_pbf_nexthop(all_rb_snapshot: Snapshot) -> None:
+    # Renaming a PBF next-hop object can't be repointed (nested field) → block.
+    graph = ReferenceGraph.build(all_rb_snapshot)
+    cs = plan_rename(
+        all_rb_snapshot,
+        graph,
+        kind=ObjectKind.ADDRESS,
+        location_name="shared",
+        old_name="nh-host",
+        new_name="GW-1",
+    )
+    assert cs.is_blocked
+    assert any("nh-host" in b and "pbf-1" in b for b in cs.blockers)
+    assert cs.op_count == 0
+
+
 def test_rename_blocks_on_existing_name(snapshot: Snapshot) -> None:
     graph = ReferenceGraph.build(snapshot)
     cs = plan_rename(

@@ -24,6 +24,7 @@ from psc.core.changeset import (
 from psc.core.models import Location, Snapshot
 from psc.core.normalize import normalize_address, service_key
 from psc.core.refs import Reference, ReferenceGraph
+from psc.core.rulebases import rule_container
 
 
 class ObjectRef(BaseModel):
@@ -212,5 +213,18 @@ def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
             ):
                 attr = ref.field.replace("-", "_")
                 val = getattr(n, attr, [])
+                return list(val) if isinstance(val, list) else [val]
+    elif rule_container(ref.referrer_kind) is not None:
+        for p in snapshot.policy_rules:
+            if (
+                p.referrer_kind == ref.referrer_kind
+                and p.name == ref.referrer_name
+                and p.location == loc
+                and (ref.rulebase is None or p.rulebase == ref.rulebase)
+            ):
+                # The `tag` reference field maps to the model's `tags` list; a
+                # `nexthop` is a scalar wrapped to a one-element list for display.
+                attr = "tags" if ref.field == "tag" else ref.field.replace("-", "_")
+                val = getattr(p, attr, [])
                 return list(val) if isinstance(val, list) else [val]
     return [ref.target_name]

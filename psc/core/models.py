@@ -32,6 +32,24 @@ class Rulebase(str, Enum):
     POST = "post"
 
 
+class RuleType(str, Enum):
+    """The "security-shaped" rulebases beyond `security`/`nat` that carry object
+    references. Each value is also the PAN-OS XML container tag / `set` keyword
+    (see `psc.core.rulebases`), so the reference graph and the appliers stay
+    table-driven rather than hard-coding one branch per rulebase.
+    """
+
+    PBF = "pbf"
+    DECRYPTION = "decryption"
+    AUTHENTICATION = "authentication"
+    QOS = "qos"
+    APPLICATION_OVERRIDE = "application-override"
+    DOS = "dos"
+    SDWAN = "sdwan"
+    TUNNEL_INSPECT = "tunnel-inspect"
+    NETWORK_PACKET_BROKER = "network-packet-broker"
+
+
 class Location(BaseModel):
     """Where an object lives: Panorama `shared`, or a named device-group.
 
@@ -184,6 +202,46 @@ class NatRule(BaseModel):
         return (self.location.name, self.rulebase.value, self.name)
 
 
+class PolicyRule(BaseModel):
+    """The object-reference surface of one "security-shaped" rulebase rule.
+
+    A single model spans the nine rulebases in `RuleType` (PBF, decryption,
+    authentication, QoS, application-override, DoS, SD-WAN, tunnel-inspect,
+    network-packet-broker): they all reference addresses in `source`/
+    `destination`, an optional `service` list, and carry rule `tags`. PBF adds a
+    forwarding `nexthop` that can name an address object. Like `SecurityRule`,
+    this models only the reference surface — `application`/`source-user` are
+    omitted because they name no psc-managed object.
+
+    `SecurityRule`/`NatRule` predate this model and stay separate (NAT's nested
+    translation fields don't fit); `rule_type` is what distinguishes the rest.
+    """
+
+    name: str
+    location: Location = SHARED
+    rulebase: Rulebase = Rulebase.PRE
+    rule_type: RuleType
+    source: list[str] = Field(default_factory=lambda: ["any"])
+    destination: list[str] = Field(default_factory=lambda: ["any"])
+    service: list[str] = Field(default_factory=list)
+    """Empty when the rulebase has no service field (e.g. application-override)."""
+    nexthop: str | None = None
+    """PBF forwarding next-hop address object, if the rule names one."""
+    disabled: bool = False
+    tags: list[str] = Field(default_factory=list)
+
+    @property
+    def referrer_kind(self) -> str:
+        """`"qos-rule"`, `"pbf-rule"`, … — the edge label in the reference graph
+        and the key the appliers resolve back to a container via
+        `rulebases.rule_container`."""
+        return f"{self.rule_type.value}-rule"
+
+    @property
+    def key(self) -> tuple[str, str, str, str]:
+        return (self.location.name, self.rule_type.value, self.rulebase.value, self.name)
+
+
 class Snapshot(BaseModel):
     """An immutable point-in-time view of the parts of a Panorama config
     `psc` understands. Built by the XML parser or the live client; consumed
@@ -198,6 +256,8 @@ class Snapshot(BaseModel):
     tags: list[Tag] = Field(default_factory=list)
     security_rules: list[SecurityRule] = Field(default_factory=list)
     nat_rules: list[NatRule] = Field(default_factory=list)
+    policy_rules: list[PolicyRule] = Field(default_factory=list)
+    """Rules from the nine non-security/nat rulebases (see `RuleType`)."""
     device_groups: list[str] = Field(default_factory=list)
     device_group_parents: dict[str, str] = Field(default_factory=dict)
     """Child device-group name → its parent device-group name. A device-group

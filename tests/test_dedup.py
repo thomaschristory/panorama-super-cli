@@ -10,6 +10,38 @@ from psc.core.models import Address, AddressType, Snapshot
 from psc.core.refs import ReferenceGraph
 
 
+def test_merge_repoints_across_new_rulebases(all_rb_snapshot: Snapshot) -> None:
+    # a2-dup is referenced only by the SD-WAN rule's destination; merging it into
+    # a2 must repoint that rule before deleting the duplicate.
+    graph = ReferenceGraph.build(all_rb_snapshot)
+    cs = plan_merge(
+        all_rb_snapshot,
+        graph,
+        keep=ObjectRef(name="a2", location="shared"),
+        drop=ObjectRef(name="a2-dup", location="shared"),
+    )
+    assert not cs.is_blocked
+    edits = {(e.referrer_kind, e.referrer_name, e.field): e for e in cs.reference_edits}
+    assert edits[("sdwan-rule", "sdwan-1", "destination")].after == ["a2"]
+    assert cs.deletes[0].name == "a2-dup"
+
+
+def test_merge_blocks_when_repoint_hits_pbf_nexthop(all_rb_snapshot: Snapshot) -> None:
+    # nh-host is a PBF forwarding next-hop — a nested field with no flat member
+    # list. Merging it away can't repoint that reference, so the plan must block
+    # rather than strand a dangling next-hop.
+    graph = ReferenceGraph.build(all_rb_snapshot)
+    cs = plan_merge(
+        all_rb_snapshot,
+        graph,
+        keep=ObjectRef(name="nh-dup", location="shared"),
+        drop=ObjectRef(name="nh-host", location="shared"),
+    )
+    assert cs.is_blocked
+    assert any("nh-host" in b and "pbf-1" in b for b in cs.blockers)
+    assert cs.op_count == 0
+
+
 def _host_and_network() -> Snapshot:
     """A host written with a subnet mask and a real network object: identical
     only after host-bit masking, so a strict dedup must keep them apart."""

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from psc.core.models import AddressType, Rulebase, Snapshot
+from psc.core.models import AddressType, Rulebase, RuleType, Snapshot
 from psc.core.parse import parse_config
 
 
@@ -38,6 +38,52 @@ def test_nat_translation_addresses_captured(snapshot: Snapshot) -> None:
     nat = {n.name: n for n in snapshot.nat_rules}
     assert nat["nat-web"].source == ["web-primary"]
     assert nat["nat-web"].source_translation == ["net-10"]
+
+
+def test_parses_every_policy_rulebase(all_rb_snapshot: Snapshot) -> None:
+    by_type: dict[RuleType, list[str]] = {}
+    for r in all_rb_snapshot.policy_rules:
+        by_type.setdefault(r.rule_type, []).append(r.name)
+    # Every new rulebase contributed at least its shared rule.
+    assert {t.value for t in by_type} == {
+        "pbf",
+        "decryption",
+        "authentication",
+        "qos",
+        "application-override",
+        "dos",
+        "sdwan",
+        "tunnel-inspect",
+        "network-packet-broker",
+    }
+    assert "pbf-1" in by_type[RuleType.PBF]
+    assert "pbf-2" in by_type[RuleType.PBF]
+
+
+def test_policy_rule_reference_fields(all_rb_snapshot: Snapshot) -> None:
+    by_name = {r.name: r for r in all_rb_snapshot.policy_rules}
+    qos = by_name["qos-1"]
+    assert qos.source == ["a1"]
+    assert qos.destination == ["qos-only"]
+    assert qos.service == ["s1"]
+    assert qos.tags == ["t1"]
+    assert qos.referrer_kind == "qos-rule"
+    # application-override is port-based: no service member list.
+    assert by_name["appov-1"].service == []
+
+
+def test_pbf_nexthop_object_captured_literal_ignored(all_rb_snapshot: Snapshot) -> None:
+    by_name = {r.name: r for r in all_rb_snapshot.policy_rules}
+    # An fqdn nexthop names an address object; a literal ip-address does not.
+    assert by_name["pbf-1"].nexthop == "nh-host"
+    assert by_name["pbf-2"].nexthop is None
+
+
+def test_policy_rule_location_and_rulebase(all_rb_snapshot: Snapshot) -> None:
+    dg_qos = next(r for r in all_rb_snapshot.policy_rules if r.name == "dg-qos")
+    assert dg_qos.location.name == "DG1"
+    assert dg_qos.rulebase is Rulebase.POST
+    assert dg_qos.rule_type is RuleType.QOS
 
 
 def test_api_envelope_unwrapped() -> None:
