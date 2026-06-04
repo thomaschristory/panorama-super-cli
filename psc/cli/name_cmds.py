@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import typer
 
-from psc.cli._plan import complete
+from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core.changeset import ObjectKind
 from psc.core.naming import lint as lint_engine
 from psc.core.naming import plan_rename
 from psc.core.refs import ReferenceGraph
+from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
 from psc.output.format import render
 
@@ -49,7 +50,10 @@ def rename(
     kind: ObjectKind = typer.Option(ObjectKind.ADDRESS, "--kind"),
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
-    out: str | None = typer.Option(None, "--out", help="Offline: write rewritten config XML here."),
+    out: str | None = typer.Option(
+        None, "--out", help="Offline: write rewritten config here (see --output-format)."
+    ),
+    output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Rename one object, repointing every reference (refuses on shadow collisions)."""
     rt: Runtime = ctx.obj
@@ -57,7 +61,7 @@ def rename(
     snap = rt.snapshot()
     graph = ReferenceGraph.build(snap)
     cs = plan_rename(snap, graph, kind=kind, location_name=loc, old_name=object_name, new_name=to)
-    complete(rt, cs, apply=apply, out_path=out)
+    complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
 
 
 @app.command("apply")
@@ -66,7 +70,10 @@ def apply_scheme(
     object_name: str = typer.Option(..., "--object", help="Object to rename to its scheme name."),
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
-    out: str | None = typer.Option(None, "--out", help="Offline: write rewritten config XML here."),
+    out: str | None = typer.Option(
+        None, "--out", help="Offline: write rewritten config here (see --output-format)."
+    ),
+    output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
     """Rename one object to the name the configured scheme implies for its value."""
     rt: Runtime = ctx.obj
@@ -98,4 +105,4 @@ def apply_scheme(
     cs = plan_rename(
         snap, graph, kind=kind, location_name=loc, old_name=object_name, new_name=suggested
     )
-    complete(rt, cs, apply=apply, out_path=out)
+    complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
