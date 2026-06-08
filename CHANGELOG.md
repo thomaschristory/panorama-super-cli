@@ -7,6 +7,22 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.4.2 — 2026-06-08
+
+### Added
+
+- **`psc move <kind> <name> --from <loc> --to <loc>`** (#74) — promote an
+  object (`address`/`address-group`/`service`/`service-group`/`tag`) from a
+  device-group toward `shared`. Restricted to the safe direction: `--to` must be
+  `shared` or an *ancestor* of `--from`, where references fall through to the
+  destination with no repoint. Blocks (exit `6`) on a sibling/child/unrelated
+  destination (would orphan references), an intermediate device-group that
+  already defines the name (a shadow), the object's own dependencies
+  (members/tags) not being visible at the destination, or a collision with a
+  different-valued object already there. A collision with an identical-valued
+  object simply drops the source copy. Dry-run by default; offline `--apply`
+  round-trips through the rewritten config.
+
 ## v0.4.1 — 2026-06-08
 
 ### Fixed

@@ -150,6 +150,23 @@ NAT-translation/PBF-next-hop references and DAG-filter-tag matches; orphan-rule
 deletions are warnings. See
 [Editing objects](../guides/editing-objects.md#decommission-an-address).
 
+### move
+
+```
+psc move <address|address-group|service|service-group|tag> <name>
+         --from <shared|DG> --to <shared|DG> [--apply] [--out PATH] [-of xml|set]
+```
+
+Promote one object from a device-group toward `shared` (create at the
+destination, delete at the source). `--to` must be `shared` or an *ancestor* of
+`--from` — the only direction in which references fall through to the
+destination with no repoint. Blocks (exit `6`) on a sibling/child/unrelated
+destination, an intermediate device-group that already defines the name (a
+shadow), the object's own dependencies (members/tags) not being visible at the
+destination, or a collision with a different-valued object already there. An
+identical-valued collision drops the source copy. Single object per run;
+dry-run by default.
+
 ### init
 
 ```
