@@ -7,6 +7,14 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.4.1 — 2026-06-08
+
+### Fixed
+
+- **`psc dedup addresses|services|groups`** (#72) — the table view now draws a
+  horizontal rule between each group of duplicates, so the blocks are easy to
+  tell apart at a glance. Machine formats (json/jsonl/yaml/csv) are unchanged.
+
 ## v0.4.0 — 2026-06-05
 
 ### Added
