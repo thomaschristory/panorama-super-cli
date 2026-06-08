@@ -22,11 +22,11 @@ shadowing is exactly why renames are dangerous, so it lives here, in one place
 
 from __future__ import annotations
 
-import re
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from psc.core.dagfilter import FilterParseError, filter_tags, parse_filter
 from psc.core.models import Location, Rulebase, Snapshot, _Named
 from psc.core.rulebases import rule_container
 
@@ -45,13 +45,11 @@ PREDEFINED = frozenset(
 def dag_filter_tags(filter_str: str) -> set[str]:
     """The tag names a dynamic address-group filter references.
 
-    A DAG filter references tags as quoted tokens, e.g. "'prod' and 'web'".
-    Extract the quoted names and match exactly — a bare substring test would
-    count tag `web` as used by a `webserver` filter (or as selected by it). The
-    one place this parse lives, shared by unused-tag analysis and decommission's
-    DAG-selection blocker.
+    Thin alias for :func:`psc.core.dagfilter.filter_tags`, kept here as the
+    historical import site for the unused-tag analysis, decommission's
+    DAG-selection blocker, and relocate's dependency walk.
     """
-    return set(re.findall(r"'([^']+)'", filter_str))
+    return filter_tags(filter_str)
 
 
 @dataclass(frozen=True)
@@ -110,16 +108,22 @@ class _NamespaceIndex:
 class ReferenceGraph:
     snapshot: Snapshot
     references: list[Reference] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    """Non-fatal coverage gaps found while building (e.g. an unparseable DAG
+    filter whose membership could not be resolved). The CLI surfaces these on
+    stderr so the operator knows which findings are unverified."""
     _addr_idx: _NamespaceIndex = field(default_factory=_NamespaceIndex)
     _svc_idx: _NamespaceIndex = field(default_factory=_NamespaceIndex)
     _tag_idx: _NamespaceIndex = field(default_factory=_NamespaceIndex)
     _by_target: dict[Target, list[Reference]] = field(default_factory=lambda: defaultdict(list))
+    _dag_members: dict[Target, list[Target]] = field(default_factory=lambda: defaultdict(list))
 
     @classmethod
     def build(cls, snapshot: Snapshot) -> ReferenceGraph:
         g = cls(snapshot=snapshot)
         g._index()
         g._walk()
+        g._resolve_dags()
         return g
 
     # -- indexing --------------------------------------------------------
@@ -346,6 +350,63 @@ class ReferenceGraph:
                     rulebase=p.rulebase,
                 )
 
+    def _resolve_dags(self) -> None:
+        """Resolve each dynamic address-group's membership from static tags.
+
+        A DAG selects addresses by a tag expression, not a static member list, so
+        it is invisible to `_members_of` unless we evaluate the filter. Here we
+        match each DAG's filter against the *config* tags psc already parses and
+        record the matched addresses, so an address used only via a
+        rule-referenced DAG counts as reachable (and shows the DAG→address edge
+        in where-used) instead of looking unused (#60).
+
+        Scope: a DAG matches only addresses visible from its own location (the
+        device-group, its ancestors, and shared) — the same chain `_members_of`
+        uses for static members. An unparseable filter is recorded as a warning
+        and contributes no members (match-nothing): psc never guesses membership,
+        but the operator is told that DAG's coverage is unverified (#60 Q2).
+
+        Caveat: this resolves only *config-tagged* membership. Addresses brought
+        into a DAG by externally registered IPs (XML-API / User-ID / VM-info) are
+        runtime state absent from the config and are still not covered — that is
+        the residual gap a live membership query would close.
+        """
+        addrs_by_loc = self.snapshot.addresses_by_location()
+        for ag in self.snapshot.address_groups:
+            if not ag.is_dynamic or ag.dynamic_filter is None:
+                continue
+            dag = Target("address-group", ag.name, ag.location)
+            try:
+                flt = parse_filter(ag.dynamic_filter)
+            except FilterParseError as exc:
+                self.warnings.append(
+                    f"dynamic address-group '{ag.name}'@{ag.location.name}: "
+                    f"unparseable filter ({exc}); membership not resolved — "
+                    "addresses matched only by it may be reported unused"
+                )
+                continue
+            scope = {loc.name for loc in self.snapshot.ancestors(ag.location)}
+            for loc_name in scope:
+                for a in addrs_by_loc.get(loc_name, []):
+                    if not flt.matches(set(a.tags)):
+                        continue
+                    member = Target("address", a.name, a.location)
+                    self._dag_members[dag].append(member)
+                    # Surface the DAG as an indirect referrer of the matched
+                    # address (resolved straight to the concrete object, not by
+                    # name — a shadowed same-name address must not steal it).
+                    ref = Reference(
+                        target_name=a.name,
+                        namespace="address",
+                        referrer_kind="address-group",
+                        referrer_name=ag.name,
+                        referrer_location=ag.location,
+                        field="dynamic",
+                        resolved=member,
+                    )
+                    self.references.append(ref)
+                    self._by_target[member].append(ref)
+
     # -- queries ---------------------------------------------------------
 
     def resolve(self, namespace: str, name: str, ref_location: Location) -> Target | None:
@@ -382,10 +443,16 @@ class ReferenceGraph:
         return seeds
 
     def _members_of(self, target: Target) -> list[Target]:
-        """Resolved members of a group target (empty for leaf objects)."""
+        """Resolved members of a group target (empty for leaf objects).
+
+        For a *dynamic* address-group the members are the tag-matched addresses
+        computed in `_resolve_dags`; for a static one they are the resolved
+        named members.
+        """
         out: list[Target] = []
         chain = self.snapshot.ancestors(target.location)
         if target.kind == "address-group":
+            out.extend(self._dag_members.get(target, []))
             for ag in self.snapshot.address_groups:
                 if ag.name == target.name and ag.location == target.location:
                     for m in ag.static_members or []:
