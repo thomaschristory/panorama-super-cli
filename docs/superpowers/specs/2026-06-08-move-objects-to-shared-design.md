@@ -25,14 +25,23 @@ which object a rule matches.
    A sibling / unrelated / child destination would orphan references in
    `--from`'s scope, so it is a hard **blocker**, not supported in v1.
 2. **Collision at destination → identical-value merges, different-value blocks.**
-   - address / address-group: delegate to the existing `dedup.plan_merge` /
-     `plan_merge_group` (`keep`=destination, `drop`=source). Those planners
-     already implement exactly "identical → repoint+delete, different → block",
-     so the policy is reused, not re-derived.
-   - service / service-group / tag: any name collision at the destination is a
-     **blocker** in v1 (no merge planner exists for these kinds yet) — message
-     points the user at removing/renaming one side first. *Limitation, not a
-     silent gap.*
+   Because the move only promotes *toward* shared, an identical-value collision
+   is just a **delete-source**: the destination object already holds the value,
+   so removing the source copy lets every reference in the source subtree fall
+   through (ordinary shadowing) onto the destination object — no repoint, no
+   second copy. This works uniformly for all five kinds, so v1 supports the
+   identical-value merge everywhere, not only addresses.
+   - "identical value" per kind: address → `AddressType` + normalized value;
+     service → protocol + normalized ports (`normalize.service_key`);
+     address-group → same static members (set) + same dynamic filter;
+     service-group → same members (set); tag → always mergeable (a tag carries
+     no match-affecting value; a differing colour/comment is a warning).
+   - different value → **blocker** (consolidate or rename first).
+
+   We deliberately do *not* delegate to `dedup.plan_merge`: there the source
+   object *shadows* the destination one in the source scope, so dedup's
+   "kept object visible here" check would wrongly block. The delete-source +
+   fall-through plan is both simpler and correct for the promote direction.
 3. **Dependencies must already be visible at the destination — no auto-cascade.**
    The moved object's own downward references (a group's `static` members, an
    object's `tags`, a service-group's members, a dynamic group's filter tags)
@@ -82,16 +91,16 @@ repo invariant):
    - destination has no same-kind `name` → **clean promote**: build the
      destination `ObjectUpsert` by calling the matching `crud.plan_*` with
      `location=dest` (reuses validation + the leaf-key contract + cross-kind
-     collision check), then append `ObjectDelete` at `source`. If destination is
-     `shared`, add a warning naming any currently-*dangling* references
-     elsewhere that will now newly resolve to the promoted object.
-   - destination has same-kind `name`:
-     - address → `dedup.plan_merge(keep@dest, drop@source)`
-     - address-group → `dedup.plan_merge_group(keep@dest, drop@source)`
-     - service / service-group / tag → blocker (v1 limitation).
-6. `gate_unmappable_reference_edits(cs)` (harmless on the clean path; the
-   delegated dedup planners already gate internally), then enforce the
-   zero-op-when-blocked invariant.
+     collision check), then append `ObjectDelete` at `source`.
+   - destination has same-kind `name`, identical value → **merge by
+     delete-source**: emit only `ObjectDelete` at `source` (no upsert), with a
+     warning that references now resolve to the destination object (and a second
+     warning if cosmetic metadata — tag colour/comment — differs).
+   - destination has same-kind `name`, different value → blocker.
+   In both non-blocked cases, if destination is `shared`, add a warning naming
+   any currently-*dangling* references elsewhere that will now newly resolve to
+   the promoted object.
+6. Enforce the zero-op-when-blocked invariant.
 
 The namespace per kind mirrors `naming.plan_rename` / `refs`: address &
 address-group → `address`, service & service-group → `service`, tag → `tag`.
@@ -131,5 +140,4 @@ CLI (`tests/test_cli_move.py`):
 - Moving *away* from shared / to a sibling or child (would require repointing or
   copying — deliberately blocked).
 - Auto-cascading dependencies.
-- service/service-group/tag identical-value merge on collision.
 - Bulk / filtered selection.
