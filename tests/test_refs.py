@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from psc.core.models import SHARED, Location, Snapshot
+from psc.core.models import (
+    SHARED,
+    Address,
+    AddressGroup,
+    AddressType,
+    Location,
+    SecurityRule,
+    Snapshot,
+)
 from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
 
@@ -117,3 +125,89 @@ def test_predefined_any_not_dangling() -> None:
     </shared></config>"""
     g = ReferenceGraph.build(parse_config(xml))
     assert g.dangling() == []
+
+
+# --- dynamic address-group (DAG) membership (#60) ---------------------------
+
+
+def _addr(name: str, tags: list[str], loc: Location = SHARED) -> Address:
+    return Address(
+        name=name, location=loc, type=AddressType.IP_NETMASK, value="10.0.0.1/32", tags=tags
+    )
+
+
+def test_address_matched_only_via_rule_referenced_dag_is_not_unused() -> None:
+    # h-prod's only "use" is being tag-matched into a DAG that a rule consumes.
+    # Before #60 this read as unused → deleting it silently drops a host.
+    snap = Snapshot(
+        addresses=[_addr("h-prod", ["prod", "web"]), _addr("h-other", ["dev"])],
+        address_groups=[AddressGroup(name="dag-prod-web", dynamic_filter="'prod' and 'web'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod-web"])],
+    )
+    g = ReferenceGraph.build(snap)
+    unused = {t.name for t in g.unused("address")}
+    assert "h-prod" not in unused
+    # h-other does not match the filter and nothing else uses it → still unused.
+    assert "h-other" in unused
+
+
+def test_where_used_surfaces_dag_and_rule_path() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-prod", ["prod"])],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+    )
+    g = ReferenceGraph.build(snap)
+    refs = g.where_used("address", "h-prod", SHARED)
+    # the DAG appears as an (indirect) referrer of the matched address...
+    dag = [r for r in refs if r.referrer_kind == "address-group" and r.field == "dynamic"]
+    assert dag and dag[0].referrer_name == "dag-prod"
+    # ...and the rule→DAG edge is reachable from where-used on the DAG itself.
+    dag_refs = {r.referrer_name for r in g.where_used("address-group", "dag-prod", SHARED)}
+    assert "r" in dag_refs
+
+
+def test_dag_membership_respects_scope() -> None:
+    # A DAG in DG-A may match addresses in DG-A and its ancestors (shared), but
+    # not a sibling device-group's objects.
+    snap = Snapshot(
+        addresses=[
+            _addr("a-prod", ["prod"], Location.dg("DG-A")),
+            _addr("b-prod", ["prod"], Location.dg("DG-B")),
+            _addr("shared-prod", ["prod"], SHARED),
+        ],
+        address_groups=[
+            AddressGroup(name="dag", location=Location.dg("DG-A"), dynamic_filter="'prod'")
+        ],
+        security_rules=[SecurityRule(name="r", location=Location.dg("DG-A"), destination=["dag"])],
+        device_groups=["DG-A", "DG-B"],
+    )
+    g = ReferenceGraph.build(snap)
+    unused = {(t.location.name, t.name) for t in g.unused("address")}
+    assert ("DG-A", "a-prod") not in unused  # in DAG's own scope
+    assert ("shared", "shared-prod") not in unused  # inherited ancestor scope
+    assert ("DG-B", "b-prod") in unused  # sibling DG, out of scope
+
+
+def test_address_in_unreferenced_dag_is_still_unused() -> None:
+    # The DAG matches h-prod, but no rule consumes the DAG → nothing reaches the
+    # address; it must still be reported unused.
+    snap = Snapshot(
+        addresses=[_addr("h-prod", ["prod"])],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "h-prod" in {t.name for t in g.unused("address")}
+
+
+def test_unparseable_dag_filter_warns_and_matches_nothing() -> None:
+    # A malformed filter must never crash the audit; psc declines to guess its
+    # membership (match-nothing) and records a warning naming the DAG (#60 Q2).
+    snap = Snapshot(
+        addresses=[_addr("h-prod", ["prod"])],
+        address_groups=[AddressGroup(name="dag-bad", dynamic_filter="'prod' and")],
+        security_rules=[SecurityRule(name="r", destination=["dag-bad"])],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "h-prod" in {t.name for t in g.unused("address")}
+    assert any("dag-bad" in w for w in g.warnings)

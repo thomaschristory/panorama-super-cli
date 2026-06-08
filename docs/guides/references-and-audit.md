@@ -40,8 +40,10 @@ are its members if nothing else reaches them.
 !!! danger "`unused` means *unused by policy* — not *safe to delete*"
     psc only scans device-group objects and policy rulebases. Objects referenced
     from **templates / network / device config** (IKE gateways, GlobalProtect,
-    service routes, log servers…) or matched into a **dynamic address group**
-    are reported `unused` even though they are in use.
+    service routes, log servers…) — or matched into a **dynamic address group**
+    by an *externally registered* IP rather than a config tag — are reported
+    `unused` even though they are in use. (Config-tag DAG membership *is* now
+    resolved, so an address tagged into a rule-referenced DAG is kept.)
     Treat this list as **candidates**, verify `shared` objects in Panorama, and
     read **[Coverage and blind spots](coverage-and-limitations.md)** before
     deleting. (Unlike delete, `merge`/`rename` are protected — they block when a

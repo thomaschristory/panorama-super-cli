@@ -7,6 +7,30 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.4.3 — 2026-06-08
+
+### Fixed
+
+- **`refs unused` / `refs used` now resolve dynamic address-group (DAG)
+  membership from config tags** (#60) — a new pure evaluator
+  (`psc/core/dagfilter.py`) parses a DAG's tag filter (`and`/`or`/`not`,
+  parentheses, single-quoted tags) and matches it against the static tags psc
+  already parses. An address whose only use is being tag-matched into a
+  rule-referenced DAG is no longer reported `unused` (deleting it would have
+  silently dropped a host from that rule), and `refs used <addr>` now surfaces
+  the DAG → rule path (as a `dynamic` referrer). A DAG matches only addresses
+  visible from its own scope (its device-group, ancestors, and `shared`). An
+  unparseable filter is matched-nothing and warned about on stderr (naming the
+  DAG) rather than crashing the audit or being guessed at.
+
+### Known limitation
+
+- DAG membership from **externally registered IPs** (XML-API / User-ID /
+  VM-info) is runtime state absent from the config export and is still not
+  covered; resolving it requires a live op-command query and is tracked as a
+  follow-up. The `refs unused` stderr caveat and the *Coverage and blind spots*
+  guide reflect this.
+
 ## v0.4.2 — 2026-06-08
 
 ### Added

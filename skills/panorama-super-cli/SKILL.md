@@ -122,7 +122,8 @@ only a non-security rule reaches. A `referrer_kind` like `qos-rule` or
 > **⚠️ `unused` = unused *by policy*, NOT *safe to delete*.** psc parses only
 > device-group objects + policy rulebases. It does **not** see: templates &
 > network/device config (IKE/IPSec, GlobalProtect, service routes, log servers,
-> static routes), dynamic-address-group membership, or
+> static routes), dynamic-address-group membership from **externally registered
+> IPs** (config-tag DAG membership *is* resolved), or
 > profiles/schedules/EDLs/regions/applications. Any object referenced only
 > there is falsely reported `unused`. **Never auto-delete on an `unused` result
 > — surface it as a candidate and have a human verify in Panorama**, especially
