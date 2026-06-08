@@ -16,6 +16,7 @@ from psc.cli import (
     decommission_cmds,
     dedup_cmds,
     find_cmds,
+    move_cmds,
     name_cmds,
     profile_cmds,
     refs_cmds,
@@ -153,6 +154,10 @@ app.command(
     "decommission",
     help="Reference-safe teardown of address objects matching an IP/CIDR.",
 )(decommission_cmds.decommission)
+app.command(
+    "move",
+    help="Promote an object toward shared (to shared or an ancestor device-group).",
+)(move_cmds.move)
 app.command(
     "init",
     help="Interactively bootstrap a live profile (fetches an API key from a username/password).",

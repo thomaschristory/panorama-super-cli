@@ -201,6 +201,26 @@ those. **Blocks** (exit `6`) on NAT-translation/PBF-next-hop references and
 DAG-filter-tag matches; orphan-rule deletions are warnings. This is the safe
 teardown path — prefer it over hand-scrubbing then `refs unused` + manual delete.
 
+### move — promote an object toward shared
+
+```bash
+psc -c cfg.xml -o json move address h-web1 --from DG-EDGE --to shared   # dry-run plan
+psc -c cfg.xml move address h-web1 --from DG-EDGE --to shared --apply --out promoted.xml
+psc -c cfg.xml move address-group grp-web --from DG-CHILD --to DG-PARENT   # to an ancestor DG
+```
+
+Relocates one object (`address`/`address-group`/`service`/`service-group`/`tag`)
+from a device-group toward `shared`. **Only promotes** — `--to` must be `shared`
+or an *ancestor* of `--from`; that is the direction where references fall through
+to the destination automatically, so **no repoint is ever needed**. **Blocks**
+(exit `6`) on: a sibling/child/unrelated destination (would orphan references); a
+device-group between source and destination that already defines the name (a
+shadow); the object's own dependencies (group members, tags) not being visible at
+the destination — move those first; or a collision with a *different-valued*
+object already at the destination. A collision with an *identical-valued* object
+simply drops the source copy (references resolve to the destination). Single
+object per run; dry-run by default.
+
 ### profile — live connections
 
 ```bash
