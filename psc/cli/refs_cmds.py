@@ -16,6 +16,14 @@ app = typer.Typer(no_args_is_help=True)
 _KINDS = ("address", "address-group", "service", "service-group", "tag")
 
 
+def _emit_graph_warnings(rt: Runtime, graph: ReferenceGraph) -> None:
+    """Surface non-fatal coverage gaps (e.g. an unparseable DAG filter whose
+    membership could not be resolved) on stderr, so stdout stays pure machine
+    output."""
+    for w in graph.warnings:
+        rt.stderr.print(f"[yellow]warning[/yellow]: {w}", soft_wrap=True, highlight=False)
+
+
 @app.command("used")
 def used(
     ctx: typer.Context,
@@ -43,6 +51,7 @@ def used(
 
     loc = location_from_name(location)
     refs = graph.where_used(kind, name, loc)
+    _emit_graph_warnings(rt, graph)
     rows = [
         {
             "referrer_kind": r.referrer_kind,
@@ -71,16 +80,20 @@ def unused(
     if rt.strict and not targets:
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
     render(rt.stdout, rt.output, model=rows, rows=rows, table_title=f"unused {kind}")
+    _emit_graph_warnings(rt, graph)
     if targets:
         # `unused` only sees device-group objects + policy rulebases. Objects
-        # referenced from templates/network config, NAT-rule tags, or matched
-        # into a dynamic address group are NOT scanned and look unused here. Warn
-        # on stderr so stdout stays pure machine output (#56).
+        # referenced from templates/network config are NOT scanned and look
+        # unused here. DAG membership is now resolved from config tags, but an
+        # address pulled into a DAG by an *externally registered* IP (XML-API /
+        # User-ID / VM-info) is runtime state absent from the config and is still
+        # not covered. Warn on stderr so stdout stays pure machine output (#56).
         rt.stderr.print(
             "[yellow]caveat[/yellow]: candidates only — these are unreferenced by the "
             "scanned objects/policy rulebases. NOT scanned: templates & network/device "
-            "config, dynamic-address-group membership. Verify before deleting (esp. "
-            "shared). See docs: Coverage and blind spots.",
+            "config, and DAG membership from externally registered IPs (config-tag DAG "
+            "membership is scanned). Verify before deleting (esp. shared). See docs: "
+            "Coverage and blind spots.",
             soft_wrap=True,
             highlight=False,
         )
@@ -92,6 +105,7 @@ def dangling(ctx: typer.Context) -> None:
     rt: Runtime = ctx.obj
     graph = ReferenceGraph.build(rt.snapshot())
     refs = graph.dangling()
+    _emit_graph_warnings(rt, graph)
     rows = [
         {
             "referrer_kind": r.referrer_kind,

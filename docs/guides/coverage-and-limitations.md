@@ -37,6 +37,7 @@ Within those rulebases it models exactly this **reference surface**:
 | NAT `source-translation` / `destination-translation` | address | ✅ where-used; **review-gated** for repoint |
 | PBF forwarding `nexthop` (`fqdn` variant) | address | ✅ where-used; **review-gated** for repoint |
 | static address-group / service-group members | address / service | ✅ |
+| dynamic address-group (DAG) membership | address | ✅ from **config tags**; registered IPs not covered (see below) |
 
 "Review-gated" means psc *sees* the reference and will **block** a
 merge/rename/delete that would strand it (it cannot rewrite a nested,
@@ -64,13 +65,25 @@ saw the reference. **This is the most dangerous gap.** Treat every `unused`
 result on a **shared** object as "unused by policy," and verify in Panorama
 before deleting.
 
-### 2. Dynamic address groups (DAGs) have no computed membership
+### 2. Dynamic address groups (DAGs): only config-tag membership is resolved
 
-A DAG includes addresses by a **tag expression**, not a static member list, so
-psc cannot walk "which addresses this DAG contains." An address whose only use
-is being matched into a DAG (via its tags) that a rule then consumes can be
-reported `unused`. (DAG *filters* are parsed for the unused-**tag** check, but
-DAG **membership** is not resolved for the unused-**address** check.)
+A DAG includes addresses by a **tag expression** (e.g. `'prod' and 'web'`), not
+a static member list. Since v0.4.3 psc **evaluates that filter against the
+static tags it already parses**, so an address whose only use is being matched
+into a rule-referenced DAG is treated as reachable — it is no longer reported
+`unused`, and `refs used <addr>` shows the DAG (as a `dynamic` referrer) on the
+path to the rule. DAG filters are also still parsed for the unused-**tag** check.
+
+The residual gap is **runtime, not config**: an address pulled into a DAG by an
+**externally registered IP** (XML-API / User-ID / VM-info / cloud plugin) carries
+no config tag, so the export psc reads cannot show that membership. Such an
+address can still be reported `unused`. Only a **live** membership query
+(`show object dynamic-address-group all`) sees registered IPs; resolving them is
+tracked as a follow-up enhancement on the live path.
+
+If a DAG's filter is **malformed/unparseable**, psc does not guess its
+membership (it matches nothing) and prints a `warning` on stderr naming that DAG,
+so you know its coverage is unverified.
 
 ### 3. Whole object categories psc does not model
 
@@ -119,8 +132,8 @@ config.
    block.
 2. `refs unused` is a **candidate list, not a kill list**, especially for
    `shared` objects. Before deleting, ask: could this live in a template, in
-   network/VPN/management config, on a NAT-rule tag, in a DAG, or on a firewall's
-   local config? If plausibly yes, confirm in Panorama first.
+   network/VPN/management config, in a DAG via an externally registered IP, or
+   on a firewall's local config? If plausibly yes, confirm in Panorama first.
 3. The safe operations are the ones psc can fully model and *block* when it
    can't (merge, rename). The risky operation is **deletion driven by
    `unused`**, because that is exactly where an unseen reference turns into an
@@ -130,6 +143,7 @@ config.
 
 `refs unused` prints a one-line caveat to **stderr** restating these blind spots
 at the point of use (stdout stays pure machine output). The remaining gaps —
-DAG-membership reachability, parsing template/network references, modelling more
-object kinds — are tracked in the issue tracker. See
+DAG membership from externally registered IPs (the live-path enhancement),
+parsing template/network references, modelling more object kinds — are tracked in
+the issue tracker. See
 [github.com/thomaschristory/panorama-super-cli/issues](https://github.com/thomaschristory/panorama-super-cli/issues).

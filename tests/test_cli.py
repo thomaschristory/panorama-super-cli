@@ -44,6 +44,28 @@ def test_unused_prints_scope_caveat_to_stderr() -> None:
     assert "template" in low  # names the most dangerous blind spot
 
 
+def test_unparseable_dag_filter_warns_on_stderr(tmp_path: Path) -> None:
+    # An unparseable DAG filter must not crash the audit; psc warns on stderr
+    # (naming the DAG) that its membership is unverified, and stdout stays clean.
+    cfg = tmp_path / "bad-dag.xml"
+    cfg.write_text(
+        """<config><shared>
+          <address><entry name="h"><ip-netmask>10.0.0.1/32</ip-netmask>
+            <tag><member>prod</member></tag></entry></address>
+          <address-group><entry name="dag-bad">
+            <dynamic><filter>'prod' and</filter></dynamic></entry></address-group>
+          <pre-rulebase><security><rules><entry name="r">
+            <source><member>any</member></source>
+            <destination><member>dag-bad</member></destination></entry>
+          </rules></security></pre-rulebase>
+        </shared></config>"""
+    )
+    cp = run("-c", str(cfg), "-o", "json", "refs", "unused", "--kind", "address")
+    assert cp.returncode == 0
+    json.loads(cp.stdout)  # stdout stays pure machine output
+    assert "dag-bad" in cp.stderr
+
+
 def test_find_ip_json_contract() -> None:
     cp = run("-c", str(FIXTURE), "-o", "json", "find", "ip", "10.0.0.10")
     assert cp.returncode == 0
