@@ -58,6 +58,7 @@ def addresses(
         model=groups,
         rows=_dup_rows(groups),
         table_title="duplicate addresses",
+        group_by="group",
     )
 
 
@@ -69,7 +70,12 @@ def services(ctx: typer.Context) -> None:
     if rt.strict and not groups:
         raise PscError("no duplicate services", ErrorType.NOT_FOUND)
     render(
-        rt.stdout, rt.output, model=groups, rows=_dup_rows(groups), table_title="duplicate services"
+        rt.stdout,
+        rt.output,
+        model=groups,
+        rows=_dup_rows(groups),
+        table_title="duplicate services",
+        group_by="group",
     )
 
 
@@ -111,6 +117,7 @@ def groups(
         model=result.buckets,
         rows=_dup_rows(result.buckets),
         table_title="duplicate address-groups",
+        group_by="group",
     )
 
 
