@@ -114,6 +114,30 @@ def test_dedup_addresses_not_strict_groups_host_with_network(tmp_path: Path) -> 
     assert {m["name"] for m in groups[0]["members"]} == {"host-with-mask", "real-network"}
 
 
+_TWO_DUP_GROUPS_CONFIG = """<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="a1"><ip-netmask>10.0.0.1</ip-netmask></entry>
+      <entry name="a2"><ip-netmask>10.0.0.1</ip-netmask></entry>
+      <entry name="b1"><ip-netmask>10.0.0.2</ip-netmask></entry>
+      <entry name="b2"><ip-netmask>10.0.0.2</ip-netmask></entry>
+    </address>
+  </shared>
+</config>
+"""
+
+
+def test_dedup_addresses_table_separates_each_group(tmp_path: Path) -> None:
+    # Issue #72: dedup table output must draw a rule between each group of
+    # duplicates so the blocks are easy to scan. Interior divider uses '├'.
+    cfg = tmp_path / "cfg.xml"
+    cfg.write_text(_TWO_DUP_GROUPS_CONFIG)
+    cp = run("-c", str(cfg), "-o", "table", "dedup", "addresses")
+    assert cp.returncode == 0
+    assert "├" in cp.stdout
+
+
 def test_merge_dry_run_exit_0_writes_nothing(tmp_path: Path) -> None:
     out = tmp_path / "x.xml"
     cp = run(
