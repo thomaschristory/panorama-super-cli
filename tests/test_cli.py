@@ -9,8 +9,10 @@ from pathlib import Path
 
 import click
 import pytest
+from typer.testing import CliRunner
 
-from psc.cli import app
+from psc.cli import app, find_cmds
+from psc.cli.app import app as cli_app
 
 FIXTURE = Path(__file__).parent / "fixtures" / "panorama-config.xml"
 
@@ -104,6 +106,33 @@ def test_find_ip_table_separates_multiple_targets() -> None:
     cp = run("-c", str(FIXTURE), "-o", "table", "find", "ip", "10.0.0.10", "10.0.0.99")
     assert cp.returncode == 0
     assert "├" in cp.stdout
+
+
+def test_find_ip_resolve_fqdn_flag_wires_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    # --resolve-fqdn must construct the default resolver and pass it through so
+    # an FQDN object resolving to the queried IP is surfaced. We stub the
+    # default resolver factory to stay off the network and deterministic.
+    monkeypatch.setattr(find_cmds, "default_resolver", lambda: lambda fqdn: {"93.184.216.34"})
+    runner = CliRunner()
+    res = runner.invoke(
+        cli_app,
+        ["-c", str(FIXTURE), "-o", "json", "find", "ip", "--resolve-fqdn", "93.184.216.34"],
+    )
+    assert res.exit_code == 0
+    data = json.loads(res.stdout)
+    assert "fqdn-example" in {m["name"] for m in data["matches"]}
+
+
+def test_find_ip_no_resolve_fqdn_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without the flag the resolver factory must never be called (offline safe).
+    def _boom() -> object:
+        raise AssertionError("resolver constructed without --resolve-fqdn")
+
+    monkeypatch.setattr(find_cmds, "default_resolver", _boom)
+    runner = CliRunner()
+    res = runner.invoke(cli_app, ["-c", str(FIXTURE), "-o", "json", "find", "ip", "93.184.216.34"])
+    assert res.exit_code == 0
+    assert "fqdn-example" not in {m["name"] for m in json.loads(res.stdout)["matches"]}
 
 
 _HOST_AND_NET_CONFIG = """<?xml version="1.0"?>
