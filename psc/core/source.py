@@ -18,6 +18,7 @@ Writes are deliberately conservative:
 from __future__ import annotations
 
 import ssl
+import warnings
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
@@ -61,18 +62,35 @@ class SystemInfo(BaseModel):
     serial: str
 
 
+class InsecureTLSWarning(UserWarning):
+    """Emitted when a live connection runs with TLS verification disabled.
+
+    A `UserWarning` subclass so it is on by default and surfaces on stderr; the
+    dedicated type lets callers/tests filter it precisely.
+    """
+
+
 def _ssl_context(verify: bool) -> ssl.SSLContext:
     """TLS context honouring a profile's `verify_ssl`.
 
     `pan-os-python` exposes no SSL knob and defaults to an *unverified* context,
     so we build our own and hand it to the underlying `xapi`. When `verify` is
     False (self-signed Panorama, common in labs) we explicitly disable checks —
-    the call site has opted in.
+    the call site has opted in — but warn loudly: an unverified channel is
+    MITM-able and any credentials it carries are exposed.
     """
     ctx = ssl.create_default_context()
     if not verify:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
+        warnings.warn(
+            "TLS verification is DISABLED (--insecure / verify_ssl=false): the "
+            "connection is not authenticated and any credentials it carries "
+            "(including the password during login) can be intercepted by a "
+            "man-in-the-middle. Never use --insecure against production.",
+            InsecureTLSWarning,
+            stacklevel=2,
+        )
     return ctx
 
 
