@@ -296,3 +296,38 @@ def test_set_no_source_exit9() -> None:
     )
     assert cp.returncode == 9
     assert json.loads(cp.stdout)["type"] == "config"
+
+
+def test_set_address_no_flags_is_validation_error() -> None:
+    # The `-f/--file` bulk-import option relaxed the required flags to None; a
+    # bare `set address` (no -f, no --name) must still be a validation error.
+    cp = run("-c", str(FIXTURE), "-o", "json", "set", "address")
+    assert cp.returncode == 4
+    assert json.loads(cp.stdout)["type"] == "validation"
+
+
+def test_set_address_missing_value_is_validation_error() -> None:
+    cp = run(
+        "-c", str(FIXTURE), "-o", "json", "set", "address", "--name", "x", "--type", "ip-netmask"
+    )
+    assert cp.returncode == 4
+
+
+def test_set_service_missing_dest_port_is_validation_error() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "set", "service", "--name", "x", "--protocol", "tcp")
+    assert cp.returncode == 4
+
+
+def test_set_address_group_no_member_or_filter_is_validation_error() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "set", "address-group", "--name", "x")
+    assert cp.returncode == 4
+
+
+def test_set_service_group_no_member_is_validation_error() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "set", "service-group", "--name", "x")
+    assert cp.returncode == 4
+
+
+def test_set_tag_no_name_is_validation_error() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "set", "tag")
+    assert cp.returncode == 4
