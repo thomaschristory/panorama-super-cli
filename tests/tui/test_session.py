@@ -192,3 +192,10 @@ def test_apply_batch_empty_staging_is_noop(workbench_xml):
     sess = _session(workbench_xml)
     out = sess.apply_batch(out_path=None)
     assert out.ops == 0
+
+
+def test_apply_batch_does_not_clear_staging(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    sess.apply_batch(out_path=None)
+    assert len(sess.staging) == 1  # intentional: operator decides when to clear

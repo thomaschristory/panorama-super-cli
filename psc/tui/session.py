@@ -129,7 +129,13 @@ class WorkbenchSession:
         return "\n".join(lines)
 
     def apply_batch(self, *, out_path: str | None) -> ApplyOutcome:
-        """Apply the staged batch per `output_mode`. Read-only until here."""
+        """Apply the staged batch per `output_mode`. Read-only until here.
+
+        Does not clear `self.staging` on success: the operator decides when to
+        clear (they may want to re-export the same batch in another mode).
+        """
+        # Number of staged *changes* applied (not raw XML op count — this is a
+        # TUI-facing tally, distinct from ApplyResult.ops).
         ops = len(self.staging)
         if ops == 0:
             return ApplyOutcome(
@@ -153,12 +159,19 @@ class WorkbenchSession:
                 and dest.resolve() == self.source.path.resolve()
             ):
                 raise PscError("output path must differ from the source config", ErrorType.CONFIG)
-            dest.write_text(self.working_xml, encoding="utf-8")
+            try:
+                dest.write_text(self.working_xml, encoding="utf-8")
+            except OSError as exc:
+                raise PscError(f"cannot write to {dest}: {exc}", ErrorType.INPUT) from exc
             return ApplyOutcome(
                 mode=self.output_mode, ops=ops, out_path=str(dest), detail=f"wrote {dest}"
             )
 
         # LIVE_APPLY: replay each staged changeset in order to the candidate.
+        # Each push is independent: a failure mid-loop leaves the preceding
+        # changesets in the candidate (uncommitted). Nothing is ever committed,
+        # so the operator can inspect or revert (`load config` / `revert
+        # config`). A transactional wrapper is a future concern.
         for staged in self.staging:
             self.source.apply(staged.changeset, out_path=None)
         return ApplyOutcome(
