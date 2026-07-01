@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="h-a"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+      <entry name="h-b"><ip-netmask>10.0.0.2/32</ip-netmask></entry>
+      <entry name="H-10.0.0.3"><ip-netmask>10.0.0.3/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="grp">
+        <static>
+          <member>h-a</member>
+          <member>h-b</member>
+          <member>H-10.0.0.3</member>
+        </static>
+      </entry>
+    </address-group>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="r">
+            <source><member>h-a</member></source>
+            <destination><member>h-b</member></destination>
+          </entry>
+        </rules>
+      </security>
+    </pre-rulebase>
+  </shared>
+</config>
