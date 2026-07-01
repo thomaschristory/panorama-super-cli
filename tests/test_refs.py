@@ -296,3 +296,70 @@ def test_mixed_reachability_disabled_and_enabled_groups() -> None:
     unused_flag = {t.name for t in g.unused("address", ignore_disabled=True)}
     assert "a-on" not in unused_flag
     assert "a-off" in unused_flag
+
+
+def test_unused_tags_shadowed_copy_bound_by_filter_is_used_shared_is_unused() -> None:
+    # A filter in DG-A referencing 'prod' binds to prod@DG-A (closest). prod@shared
+    # is shadowed and — if nothing else references it — must be reported UNUSED.
+    snap = Snapshot(
+        tags=[Tag(name="prod", location=SHARED), Tag(name="prod", location=Location.dg("DG-A"))],
+        address_groups=[
+            AddressGroup(name="dag", location=Location.dg("DG-A"), dynamic_filter="'prod'")
+        ],
+        device_groups=["DG-A"],
+    )
+    g = ReferenceGraph.build(snap)
+    unused = {(t.location.name, t.name) for t in g.unused("tag")}
+    assert ("DG-A", "prod") not in unused  # the copy the filter actually binds to
+    assert ("shared", "prod") in unused  # shadowed, referenced by nothing else
+
+
+def test_unused_tags_sibling_dg_same_name_is_unused() -> None:
+    # prod@DG-B exists, but the only filter referencing 'prod' is in DG-A, which
+    # cannot see DG-B. prod@DG-B is out of scope → UNUSED.
+    snap = Snapshot(
+        tags=[
+            Tag(name="prod", location=Location.dg("DG-A")),
+            Tag(name="prod", location=Location.dg("DG-B")),
+        ],
+        address_groups=[
+            AddressGroup(name="dag", location=Location.dg("DG-A"), dynamic_filter="'prod'")
+        ],
+        device_groups=["DG-A", "DG-B"],
+    )
+    g = ReferenceGraph.build(snap)
+    unused = {(t.location.name, t.name) for t in g.unused("tag")}
+    assert ("DG-A", "prod") not in unused  # the copy the filter binds to
+    assert ("DG-B", "prod") in unused  # sibling DG, out of scope
+
+
+def test_unused_tags_filter_binds_inherited_shared_tag() -> None:
+    # A filter in DG-A referencing 'prod' where only prod@shared exists; shared is
+    # visible via inheritance, so it is USED.
+    snap = Snapshot(
+        tags=[Tag(name="prod", location=SHARED)],
+        address_groups=[
+            AddressGroup(name="dag", location=Location.dg("DG-A"), dynamic_filter="'prod'")
+        ],
+        device_groups=["DG-A"],
+    )
+    g = ReferenceGraph.build(snap)
+    unused = {(t.location.name, t.name) for t in g.unused("tag")}
+    assert ("shared", "prod") not in unused
+
+
+def test_unused_tags_filter_token_resolving_to_nothing_marks_nothing() -> None:
+    # A filter referencing a tag that resolves to no visible tag marks nothing and
+    # must not crash; an unrelated shared tag is still visible/used.
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED)],
+        address_groups=[
+            AddressGroup(
+                name="dag", location=Location.dg("DG-A"), dynamic_filter="'web' and 'missing'"
+            )
+        ],
+        device_groups=["DG-A"],
+    )
+    g = ReferenceGraph.build(snap)
+    unused = {(t.location.name, t.name) for t in g.unused("tag")}
+    assert ("shared", "web") not in unused  # resolved via inheritance
