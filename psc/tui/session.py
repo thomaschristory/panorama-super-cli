@@ -48,6 +48,7 @@ class WorkbenchSession:
         self.working_snapshot: Snapshot = parse_config(self.working_xml)
         self.selection: list[SelectionItem] = []
         self.staging: list[StagedChange] = []
+        self.apply_out_path: str | None = None
 
     def search(self, query: str) -> list[SelectionItem]:
         """Search the working snapshot by name substring and by IP/value."""
