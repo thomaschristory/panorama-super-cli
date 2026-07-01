@@ -8,6 +8,7 @@ import typer
 
 from psc.cli.runtime import Runtime
 from psc.core.resolve import find_ips, find_object
+from psc.core.resolver import Resolver, default_resolver
 from psc.output.errors import ErrorType, PscError
 from psc.output.format import render
 
@@ -24,6 +25,11 @@ def ip(
     exact: bool = typer.Option(
         False, "--exact", "-e", help="Only exact matches (drop contains/within)."
     ),
+    resolve_fqdn: bool = typer.Option(
+        False,
+        "--resolve-fqdn/--no-resolve-fqdn",
+        help="DNS-resolve FQDN objects and match those whose A/AAAA include the IP.",
+    ),
 ) -> None:
     """Find which address objects/groups match an IP (or a whole list).
 
@@ -31,6 +37,9 @@ def ip(
     narrower objects *within* it, plus the address-groups that carry them.
     With --exact, only objects equal to the target are reported (netmask and
     bare-host forms still count as equal, e.g. 10.0.0.10 == 10.0.0.10/32).
+    With --resolve-fqdn, FQDN objects are DNS-resolved (cached, timeout-bounded)
+    and match when their addresses include the queried IP; the offline default
+    never touches DNS.
     """
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
@@ -48,7 +57,19 @@ def ip(
             "provide one or more IP/CIDR/range/FQDN targets, or --file", ErrorType.VALIDATION
         )
 
-    results = find_ips(snap, items, rt.scope(), exact=exact)
+    # The CLI owns construction of the real resolver; core stays UI-free and
+    # only gets a resolver when the flag is on, so the offline path is untouched.
+    resolver: Resolver | None = default_resolver() if resolve_fqdn else None
+    results = find_ips(
+        snap, items, rt.scope(), exact=exact, resolve_fqdn=resolve_fqdn, resolver=resolver
+    )
+
+    failures = sum(r.fqdn_resolution_failures for r in results)
+    if failures:
+        rt.stderr.print(
+            f"warning: {failures} FQDN object(s) skipped — DNS resolution failed", style="yellow"
+        )
+
     rows: list[dict[str, object]] = []
     for res in results:
         if not res.matches:

@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from psc.core.models import Address, Location, Snapshot
+from psc.core.models import Address, AddressType, Location, Snapshot
 from psc.core.normalize import MatchKind, Query, match, normalize_address, parse_query
+from psc.core.resolver import Resolver
 
 
 class AddressMatch(BaseModel):
@@ -34,6 +35,9 @@ class FindResult(BaseModel):
     exists: bool  # at least one EXACT match
     matches: list[AddressMatch] = Field(default_factory=list)
     groups: list[GroupMatch] = Field(default_factory=list)
+    fqdn_resolution_failures: int = 0
+    """Count of FQDN objects skipped because DNS resolution failed (only ever
+    non-zero when `--resolve-fqdn` is on); surfaced as a warning, never fatal."""
 
     @property
     def count(self) -> int:
@@ -50,8 +54,35 @@ def _query_kind(q: Query) -> str:
     return "cidr"
 
 
+def _fqdn_match(query: Query, resolved: set[str]) -> MatchKind | None:
+    """Best relation between an IP `query` and an FQDN's `resolved` IP set.
+
+    Each resolved IP is reused through the same canonicalization as every other
+    address (a synthetic ip-netmask object), so textual variants like `::1` and
+    its expanded form compare equal. The strongest relation across the set wins,
+    with EXACT preferred so a single-host query surfaces as an exact hit.
+    """
+    best: MatchKind | None = None
+    for ip in resolved:
+        nv = normalize_address(Address(name="", type=AddressType.IP_NETMASK, value=ip))
+        if nv is None:
+            continue
+        mk = match(query, nv)
+        if mk is MatchKind.EXACT:
+            return MatchKind.EXACT
+        if mk is not None and best is None:
+            best = mk
+    return best
+
+
 def find_ip(
-    snapshot: Snapshot, raw: str, scope: Location | None = None, *, exact: bool = False
+    snapshot: Snapshot,
+    raw: str,
+    scope: Location | None = None,
+    *,
+    exact: bool = False,
+    resolve_fqdn: bool = False,
+    resolver: Resolver | None = None,
 ) -> FindResult:
     """Find every address object/group matching `raw` within `scope` (which
     includes the scoped device-group's ancestors and `shared`).
@@ -60,15 +91,40 @@ def find_ip(
     kept — broader (`CONTAINS`) and narrower (`WITHIN`) matches are dropped.
     Netmask and bare-host forms still canonicalize equal (`10.0.0.10` ==
     `10.0.0.10/32`), so those remain exact.
+
+    With `resolve_fqdn=True` and an IP query, FQDN objects are DNS-resolved via
+    `resolver` and match when their resolved A/AAAA set includes the query.
+    Resolution is opt-in (offline default never touches DNS); a lookup that
+    fails is skipped and tallied in `fqdn_resolution_failures`, never fatal.
     """
+    if resolve_fqdn and resolver is None:
+        # A silent no-op here would count every FQDN object as a resolution
+        # failure and return wrong results; fail loudly instead. The CLI always
+        # constructs a resolver when the flag is on.
+        raise ValueError("resolver must be provided when resolve_fqdn=True")
     query = parse_query(raw)
     visible = snapshot.visible_location_names(scope)
+    # Resolving FQDNs only makes sense for an IP-shaped query; an FQDN query
+    # already matches FQDN objects by exact name in the main pass below.
+    do_resolve = resolve_fqdn and query.is_ip
+    resolve = resolver if resolve_fqdn else None
+    failures = 0
     matched: list[tuple[Address, MatchKind]] = []
     for addr in snapshot.addresses:
         if visible is not None and addr.location.name not in visible:
             continue
         nv = normalize_address(addr)
         if nv is None:
+            continue
+        if do_resolve and addr.type is AddressType.FQDN and nv.fqdn is not None:
+            resolved = resolve(nv.fqdn) if resolve is not None else set()
+            if not resolved:
+                failures += 1
+                continue
+            mk = _fqdn_match(query, resolved)
+            if mk is None or (exact and mk is not MatchKind.EXACT):
+                continue
+            matched.append((addr, mk))
             continue
         mk = match(query, nv)
         if mk is None or (exact and mk is not MatchKind.EXACT):
@@ -121,13 +177,23 @@ def find_ip(
         exists=any(mk is MatchKind.EXACT for _, mk in matched),
         matches=matches,
         groups=sorted(groups, key=lambda g: (g.location, g.name)),
+        fqdn_resolution_failures=failures,
     )
 
 
 def find_ips(
-    snapshot: Snapshot, raws: list[str], scope: Location | None = None, *, exact: bool = False
+    snapshot: Snapshot,
+    raws: list[str],
+    scope: Location | None = None,
+    *,
+    exact: bool = False,
+    resolve_fqdn: bool = False,
+    resolver: Resolver | None = None,
 ) -> list[FindResult]:
-    return [find_ip(snapshot, r, scope, exact=exact) for r in raws]
+    return [
+        find_ip(snapshot, r, scope, exact=exact, resolve_fqdn=resolve_fqdn, resolver=resolver)
+        for r in raws
+    ]
 
 
 class ObjectHit(BaseModel):
