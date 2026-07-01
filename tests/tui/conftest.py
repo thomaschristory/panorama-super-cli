@@ -89,3 +89,43 @@ def workbench_xml_dg(tmp_path):
     p = tmp_path / "config_dg.xml"
     p.write_text(WORKBENCH_XML_DG, encoding="utf-8")
     return str(p)
+
+
+WORKBENCH_XML_RULE = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="web-srv-01"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="db-gw"><ip-netmask>10.0.9.1/32</ip-netmask></entry>
+    </address>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="allow-web">
+            <from><member>any</member></from>
+            <to><member>any</member></to>
+            <source><member>web-srv-01</member></source>
+            <destination><member>any</member></destination>
+            <service><member>any</member></service>
+            <application><member>any</member></application>
+            <action>allow</action>
+          </entry>
+        </rules>
+      </security>
+    </pre-rulebase>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group/>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_rule(tmp_path):
+    """Config with a pre-rulebase security rule 'allow-web' for the rule spoke."""
+    p = tmp_path / "config_rule.xml"
+    p.write_text(WORKBENCH_XML_RULE, encoding="utf-8")
+    return str(p)
