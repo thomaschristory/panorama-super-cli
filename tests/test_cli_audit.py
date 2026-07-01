@@ -99,3 +99,61 @@ def test_audit_no_args_shows_help() -> None:
     combined = cp.stdout + cp.stderr
     assert "Usage:" in combined
     assert "overlaps" in combined
+
+
+_WELLKNOWN_CONFIG = """<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <service>
+      <entry name="my-web">
+        <protocol><tcp><port>80</port></tcp></protocol>
+      </entry>
+      <entry name="my-ssh">
+        <protocol><tcp><port>22</port></tcp></protocol>
+      </entry>
+      <entry name="custom-hi">
+        <protocol><tcp><port>9999</port></tcp></protocol>
+      </entry>
+    </service>
+  </shared>
+</config>
+"""
+
+_NO_WELLKNOWN_CONFIG = """<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <service>
+      <entry name="custom-hi">
+        <protocol><tcp><port>9999</port></tcp></protocol>
+      </entry>
+    </service>
+  </shared>
+</config>
+"""
+
+
+def test_audit_wellknown_json_valid(tmp_path: Path) -> None:
+    cp = run(
+        "-c", str(_cfg(tmp_path, _WELLKNOWN_CONFIG)), "-o", "json", "audit", "services-vs-wellknown"
+    )
+    assert cp.returncode == 0
+    data = json.loads(cp.stdout)
+    found = {(m["service_name"], m["canonical_name"], m["kind"]) for m in data}
+    assert ("my-web", "service-http", "predefined") in found
+    assert ("my-ssh", "ssh", "well-known") in found
+    # custom-hi (tcp/9999) must not be flagged.
+    assert all(m["service_name"] != "custom-hi" for m in data)
+
+
+def test_audit_wellknown_strict_exit_5_when_none(tmp_path: Path) -> None:
+    cp = run(
+        "-c",
+        str(_cfg(tmp_path, _NO_WELLKNOWN_CONFIG)),
+        "--strict",
+        "-o",
+        "json",
+        "audit",
+        "services-vs-wellknown",
+    )
+    assert cp.returncode == 5
+    assert json.loads(cp.stdout)["type"] == "not_found"
