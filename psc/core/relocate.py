@@ -18,7 +18,7 @@ situations are turned into blockers rather than clever rewrites:
   (the intermediate-shadow guard);
 - the moved object's own dependencies (group members, tags, service-group
   members, dynamic-filter tags) must already resolve from the destination, to
-  the *same* object → otherwise blocked (no auto-cascade in v1);
+  the *same* object → otherwise blocked, *unless* `--cascade` is passed;
 - the destination already defining the name is a *collision*: identical value →
   drop the source copy (the fall-through does the rest); different value →
   blocked.
@@ -26,6 +26,16 @@ situations are turned into blockers rather than clever rewrites:
 The destination object on a clean promote is built by the matching
 `crud.plan_*`, so the PAN-OS leaf-key contract and field validation are reused,
 never re-derived here.
+
+`--cascade` (issue #76) lifts the dependency blocker: instead of refusing, it
+pulls the transitive downward dependency closure up to the *same* destination in
+one ordered plan — deepest dependencies first (members/tags before the objects
+that reference them), then the named object, then the source deletes. The
+closure walk reuses dedup's cycle-safe resolution; each cascaded object still
+runs the per-object gates (intermediate-shadow, collision). A dependency still
+referenced by an object that *remains* in the source subtree is promoted but its
+source copy is retained (with a warning), never deleted out from under a local
+referrer.
 """
 
 from __future__ import annotations
@@ -42,7 +52,7 @@ from psc.core.models import (
     Tag,
 )
 from psc.core.normalize import normalize_address, service_key
-from psc.core.refs import PREDEFINED, ReferenceGraph, dag_filter_tags
+from psc.core.refs import PREDEFINED, ReferenceGraph, Target, dag_filter_tags
 
 # Each object kind resolves in exactly one namespace; address & address-group
 # share `address`, service & service-group share `service` (mirrors `refs`).
@@ -137,12 +147,14 @@ def _promotion_blocker(
     source: Location,
     dest: Location,
     namespace: str,
+    check_dependencies: bool = True,
 ) -> str | None:
     """The first reason this promotion is unsafe, or None if every gate passes.
 
-    Runs the direction gate, the intermediate-shadow guard, and the dependency
-    gate (see module docstring). Collision handling is the caller's job — it
-    needs the destination object to decide merge-vs-block.
+    Runs the direction gate, the intermediate-shadow guard, and (unless
+    `check_dependencies` is False, i.e. `--cascade` will pull them up too) the
+    dependency gate — see module docstring. Collision handling is the caller's
+    job — it needs the destination object to decide merge-vs-block.
     """
     chain = snapshot.ancestors(source)  # [source, …ancestors…, shared]
     if dest == source:
@@ -163,6 +175,9 @@ def _promotion_blocker(
                 f"defines '{name}' in the {namespace} namespace; promoting would re-resolve "
                 "references to it — resolve that shadow first"
             )
+
+    if not check_dependencies:
+        return None
 
     # Every downward dependency must resolve from dest, to the *same* object it
     # resolves to from source (no auto-cascade in v1).
@@ -231,67 +246,205 @@ def _build_destination_upsert(
     return crud.plan_tag(snapshot, obj.name, color=obj.color, comments=obj.comments, location=dest)
 
 
-def plan_move(
+# A cascade node's identity: (ObjectKind, name, source-location-name). Two
+# objects of different kinds can share a name (address vs address-group), so the
+# kind is part of the key.
+_Node = tuple[ObjectKind, str, str]
+
+
+def _obj_at(snapshot: Snapshot, target: Target) -> _Obj | None:
+    """The concrete object a resolved `Target` names, or None if absent."""
+    return _find(snapshot, ObjectKind(target.kind), target.name, target.location)
+
+
+def _cascade_closure(
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    root_kind: ObjectKind,
+    root_name: str,
+    src_obj: _Obj,
+    source: Location,
+    dest: Location,
+) -> list[tuple[ObjectKind, str, _Obj]]:
+    """Deepest-first list of the objects `--cascade` must promote to `dest`.
+
+    Post-order DFS over each object's downward dependencies (`_dependencies`),
+    resolving every dependency *name* to its actual object along the source's
+    device-group chain (PAN-OS shadowing). A dependency is pulled into the
+    cascade only when it is **DG-local** to the source subtree — i.e. it resolves
+    to an object defined *strictly below* `dest` (so it is not already visible
+    there). Dependencies that already resolve at `dest` (or above it) are left
+    untouched; the per-object gate later confirms they still resolve.
+
+    Cycle-safe via `visiting`/`done`; the walk terminates on nested/cyclic groups
+    the way dedup's closure does. The root object is emitted last (it references
+    its dependencies, so it must be created after them).
+    """
+    # Locations strictly below dest but at/above source — the source subtree the
+    # cascade is allowed to drain. A dep resolving here is DG-local; one resolving
+    # at dest or an ancestor of dest is already visible and needs no promotion.
+    chain = snapshot.ancestors(source)  # [source, …, dest, …, shared]
+    local_locs = {loc.name for loc in chain[: chain.index(dest)]}
+
+    ordered: list[tuple[ObjectKind, str, _Obj]] = []
+    done: set[_Node] = set()
+    visiting: set[_Node] = set()
+
+    def visit(kind: ObjectKind, name: str, obj: _Obj, obj_loc: Location) -> None:
+        node: _Node = (kind, name, obj_loc.name)
+        if node in done or node in visiting:
+            return  # already emitted, or an ancestor in this DFS branch (cycle)
+        visiting.add(node)
+        for ns, dep in _dependencies(kind, obj):
+            if dep in PREDEFINED:
+                continue
+            src_t = graph.resolve(ns, dep, obj_loc)
+            if src_t is None or src_t.location.name not in local_locs:
+                continue  # dangling, or already visible at/above dest — not cascaded
+            dep_obj = _obj_at(snapshot, src_t)
+            if dep_obj is None:
+                continue
+            visit(ObjectKind(src_t.kind), src_t.name, dep_obj, src_t.location)
+        visiting.discard(node)
+        done.add(node)
+        ordered.append((kind, name, obj))
+
+    visit(root_kind, root_name, src_obj, source)
+    return ordered
+
+
+def _plan_cascade(
+    cs: ChangeSet,
     snapshot: Snapshot,
     graph: ReferenceGraph,
     *,
     kind: ObjectKind,
     name: str,
-    source_name: str,
-    dest_name: str,
-) -> ChangeSet:
-    """Plan promoting `kind`/`name` from `source_name` toward `dest_name`.
+    src_obj: _Obj,
+    source: Location,
+    dest: Location,
+) -> None:
+    """Fold the whole dependency closure's promotion into `cs`, in safe order.
 
-    Returns a `ChangeSet`; any unsafe condition yields a blocked, zero-op plan
-    (see module docstring). The caller (`cli/_plan.complete`) refuses to apply a
-    blocked plan, exactly like every other mutating command.
+    Every closure member runs the same per-object gates as a single move
+    (intermediate-shadow, collision) via `_plan_one`; a blocker on any of them
+    gates the entire cascade (the caller clears ops). Deepest dependencies are
+    upserted first, then their parents, then the named object, then the source
+    deletes — one inspectable, dependency-ordered plan.
+
+    The retain-source rule: a cascaded dependency keeps its source copy when an
+    object that *remains* in the source subtree still references it (a where-used
+    check). Promoting it to `dest` keeps it visible to that referrer by
+    inheritance, so leaving the source copy is safe — deleting it would strand
+    the local referrer. Such a retention emits a warning, never a blocker.
     """
-    source, dest = _loc(source_name), _loc(dest_name)
-    namespace = _NAMESPACE[kind]
-    cs = ChangeSet(title=f"move {kind.value} '{name}' @{source.name} -> @{dest.name}")
-
-    src_obj = _find(snapshot, kind, name, source)
-    if src_obj is None:
-        cs.blockers.append(f"{kind.value} '{name}' is not defined at {source.name}")
-        return _blocked(cs)
-
-    blocker = _promotion_blocker(
+    closure = _cascade_closure(
         snapshot,
         graph,
-        kind=kind,
-        name=name,
+        root_kind=kind,
+        root_name=name,
         src_obj=src_obj,
         source=source,
         dest=dest,
-        namespace=namespace,
     )
-    if blocker is not None:
-        cs.blockers.append(blocker)
-        return _blocked(cs)
+    # Identities being drained from the source (candidates for source deletion),
+    # keyed by (target-kind, name, location) to match `where_used`/`resolve`.
+    cascade_ids = {(k.value, n, o.location.name) for (k, n, o) in closure}
 
-    # -- collision dispatch -------------------------------------------------
-    dest_obj = _find(snapshot, kind, name, dest)
-    if dest_obj is not None:
-        if not _same_value(kind, src_obj, dest_obj):
-            cs.blockers.append(
-                f"destination {dest.name} already defines {kind.value} '{name}' with a "
-                "different value; merge or rename one side first"
-            )
-            return _blocked(cs)
-        cs.warnings.append(
-            f"{dest.name} already defines {kind.value} '{name}' with an identical value; the "
-            f"{source.name} copy will be removed and references will resolve to the destination"
+    # First pass: gate every member of the closure and collect ALL blockers, so
+    # the operator sees the full list to fix in one go. The intermediate-shadow
+    # guard still applies per dependency (direction is guaranteed — every object
+    # shares one destination); the dependency gate is off because the closure
+    # already accounts for downward deps. If anything is blocked we return before
+    # planning a single op, so no misleading "will be removed" warnings leak from
+    # deps that were never going to move.
+    for obj_kind, obj_name, obj in closure:
+        blocker = _promotion_blocker(
+            snapshot,
+            graph,
+            kind=obj_kind,
+            name=obj_name,
+            src_obj=obj,
+            source=obj.location,
+            dest=dest,
+            namespace=_NAMESPACE[obj_kind],
+            check_dependencies=False,
         )
-    else:
-        upsert_cs = _build_destination_upsert(snapshot, kind, src_obj, dest)
-        cs.upserts.extend(upsert_cs.upserts)
-        cs.blockers.extend(upsert_cs.blockers)
-        cs.warnings.extend(upsert_cs.warnings)
+        if blocker is not None:
+            cs.blockers.append(blocker)
+    if cs.blockers:
+        return
 
-    cs.deletes.append(ObjectDelete(kind=kind, name=name, location=source.name))
+    # Second pass: emit the ordered plan (deepest deps first, root last).
+    for obj_kind, obj_name, obj in closure:
+        namespace = _NAMESPACE[obj_kind]
+        obj_loc = obj.location
+        # The named object always deletes its source copy — that *is* the move,
+        # and its referrers fall through to the destination by shadowing. Only a
+        # cascaded *dependency* is retain-eligible: it may still be needed by an
+        # object staying behind in the source subtree.
+        is_root = (obj_kind, obj_name, obj_loc.name) == (kind, name, source.name)
+        retain = not is_root and _has_remaining_local_referrer(
+            graph, kind=obj_kind, name=obj_name, loc=obj_loc, cascade_ids=cascade_ids
+        )
+        if retain:
+            cs.warnings.append(
+                f"{obj_kind.value} '{obj_name}'@{obj_loc.name} is still referenced by an object "
+                f"remaining in {source.name}; it is promoted to {dest.name} but its "
+                f"{obj_loc.name} copy is retained (delete it by hand once nothing local needs it)"
+            )
+        _plan_one(
+            cs,
+            snapshot,
+            graph,
+            kind=obj_kind,
+            name=obj_name,
+            src_obj=obj,
+            source=obj_loc,
+            dest=dest,
+            namespace=namespace,
+            delete_source=not retain,
+        )
 
-    # -- side-effect warning: a dangling reference elsewhere that the promotion
-    # newly makes resolve (the destination becomes visible to its location).
+
+def _has_remaining_local_referrer(
+    graph: ReferenceGraph,
+    *,
+    kind: ObjectKind,
+    name: str,
+    loc: Location,
+    cascade_ids: set[tuple[str, str, str]],
+) -> bool:
+    """Whether an object outside the cascade set still references `name`@`loc`.
+
+    `where_used` keys on the resolved target's kind, which for a group is
+    `address-group`/`service-group`; a referrer whose own identity is itself in
+    `cascade_ids` is being drained too, so it does not count. Any surviving
+    referrer means the source copy must be retained.
+    """
+    for ref in graph.where_used(kind.value, name, loc):
+        referrer_id = (ref.referrer_kind, ref.referrer_name, ref.referrer_location.name)
+        if referrer_id not in cascade_ids:
+            return True
+    return False
+
+
+def _revive_warnings(
+    cs: ChangeSet,
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    name: str,
+    namespace: str,
+    dest: Location,
+) -> None:
+    """Warn when promoting `name` newly resolves a reference that dangles today.
+
+    Once `name` is defined at `dest`, every location that inherits `dest` sees
+    it; a reference that dangled on `name` from such a location will silently
+    start resolving. Surface that side effect.
+    """
     for ref in graph.dangling():
         if (
             ref.target_name == name
@@ -302,6 +455,115 @@ def plan_move(
                 f"{ref.referrer_kind} '{ref.referrer_name}'@{ref.referrer_location.name} "
                 f"{ref.field} currently dangles on '{name}' and will resolve to it after this move"
             )
+
+
+def _plan_one(
+    cs: ChangeSet,
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    kind: ObjectKind,
+    name: str,
+    src_obj: _Obj,
+    source: Location,
+    dest: Location,
+    namespace: str,
+    delete_source: bool,
+) -> None:
+    """Fold one object's promotion (collision + upsert/delete + revive) into `cs`.
+
+    The collision handling is shared by the single-object and cascade paths:
+    an identical-valued copy already at `dest` merges by dropping the source; a
+    different-valued one is a hard blocker. `delete_source` is False for a
+    cascaded dependency that must be retained (a local referrer still needs its
+    source definition) — it is still promoted, just not deleted.
+    """
+    dest_obj = _find(snapshot, kind, name, dest)
+    if dest_obj is not None:
+        if not _same_value(kind, src_obj, dest_obj):
+            cs.blockers.append(
+                f"destination {dest.name} already defines {kind.value} '{name}' with a "
+                "different value; merge or rename one side first"
+            )
+            return
+        if delete_source:
+            cs.warnings.append(
+                f"{dest.name} already defines {kind.value} '{name}' with an identical value; the "
+                f"{source.name} copy will be removed and references will resolve to the destination"
+            )
+    else:
+        upsert_cs = _build_destination_upsert(snapshot, kind, src_obj, dest)
+        cs.upserts.extend(upsert_cs.upserts)
+        cs.blockers.extend(upsert_cs.blockers)
+        cs.warnings.extend(upsert_cs.warnings)
+
+    if delete_source:
+        cs.deletes.append(ObjectDelete(kind=kind, name=name, location=source.name))
+
+    _revive_warnings(cs, snapshot, graph, name=name, namespace=namespace, dest=dest)
+
+
+def plan_move(
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    kind: ObjectKind,
+    name: str,
+    source_name: str,
+    dest_name: str,
+    cascade: bool = False,
+) -> ChangeSet:
+    """Plan promoting `kind`/`name` from `source_name` toward `dest_name`.
+
+    Returns a `ChangeSet`; any unsafe condition yields a blocked, zero-op plan
+    (see module docstring). The caller (`cli/_plan.complete`) refuses to apply a
+    blocked plan, exactly like every other mutating command. With `cascade`,
+    the object's transitive downward dependency closure is promoted too, in
+    dependency order (see `_plan_cascade`).
+    """
+    source, dest = _loc(source_name), _loc(dest_name)
+    namespace = _NAMESPACE[kind]
+    cs = ChangeSet(title=f"move {kind.value} '{name}' @{source.name} -> @{dest.name}")
+
+    src_obj = _find(snapshot, kind, name, source)
+    if src_obj is None:
+        cs.blockers.append(f"{kind.value} '{name}' is not defined at {source.name}")
+        return _blocked(cs)
+
+    # The named object's own gates always run. Under `cascade` the dependency
+    # gate is skipped here — the closure walk pulls those deps up instead.
+    blocker = _promotion_blocker(
+        snapshot,
+        graph,
+        kind=kind,
+        name=name,
+        src_obj=src_obj,
+        source=source,
+        dest=dest,
+        namespace=namespace,
+        check_dependencies=not cascade,
+    )
+    if blocker is not None:
+        cs.blockers.append(blocker)
+        return _blocked(cs)
+
+    if cascade:
+        _plan_cascade(
+            cs, snapshot, graph, kind=kind, name=name, src_obj=src_obj, source=source, dest=dest
+        )
+    else:
+        _plan_one(
+            cs,
+            snapshot,
+            graph,
+            kind=kind,
+            name=name,
+            src_obj=src_obj,
+            source=source,
+            dest=dest,
+            namespace=namespace,
+            delete_source=True,
+        )
 
     if cs.blockers:
         return _blocked(cs)

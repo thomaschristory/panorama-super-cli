@@ -17,6 +17,7 @@ from pathlib import Path
 from defusedxml.ElementTree import fromstring as xml_fromstring
 
 FIXTURE = Path(__file__).parent / "fixtures" / "nested-device-groups.xml"
+CASCADE_FIXTURE = Path(__file__).parent / "fixtures" / "cascade-device-groups.xml"
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -121,6 +122,83 @@ def test_apply_out_round_trips(tmp_path: Path) -> None:
 
     # The group member text is unchanged — it now resolves to the shared copy.
     assert "grp-prod" in out.read_text()
+
+
+def test_cascade_off_group_with_local_members_blocked_exit_six() -> None:
+    # Without --cascade, a group whose members are DG-local blocks (list deps).
+    cp = run(
+        "-c",
+        str(CASCADE_FIXTURE),
+        "move",
+        "address-group",
+        "c-grp",
+        "--from",
+        "EMEA",
+        "--to",
+        "shared",
+    )
+    assert cp.returncode == 6, cp.stdout + cp.stderr
+    assert "c-m1" in (cp.stdout + cp.stderr)
+
+
+def test_cascade_group_closure_json_plan() -> None:
+    cp = run(
+        "-c",
+        str(CASCADE_FIXTURE),
+        "-o",
+        "json",
+        "move",
+        "address-group",
+        "c-grp",
+        "--from",
+        "EMEA",
+        "--to",
+        "shared",
+        "--cascade",
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    data = json.loads(cp.stdout)
+    assert not data["blockers"]
+    upsert_names = [u["name"] for u in data["upserts"]]
+    # members precede the group
+    assert upsert_names.index("c-m1") < upsert_names.index("c-grp")
+    assert upsert_names.index("c-m2") < upsert_names.index("c-grp")
+    del_set = {(d["name"], d["location"]) for d in data["deletes"]}
+    assert del_set == {("c-grp", "EMEA"), ("c-m1", "EMEA"), ("c-m2", "EMEA")}
+
+
+def test_cascade_apply_out_round_trips(tmp_path: Path) -> None:
+    out = tmp_path / "rewritten.xml"
+    cp = run(
+        "-c",
+        str(CASCADE_FIXTURE),
+        "move",
+        "address-group",
+        "c-grp",
+        "--from",
+        "EMEA",
+        "--to",
+        "shared",
+        "--cascade",
+        "--apply",
+        "--out",
+        str(out),
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    root = xml_fromstring(out.read_text())
+
+    shared_addr = {e.get("name") for e in root.findall("./shared/address/entry")}
+    assert {"c-m1", "c-m2"} <= shared_addr  # members promoted to shared
+    shared_grp = {e.get("name") for e in root.findall("./shared/address-group/entry")}
+    assert "c-grp" in shared_grp  # group promoted to shared
+
+    emea = next(
+        e for e in root.findall("./devices/entry/device-group/entry") if e.get("name") == "EMEA"
+    )
+    emea_addr = {e.get("name") for e in emea.findall("./address/entry")}
+    assert not ({"c-m1", "c-m2"} & emea_addr)  # source copies removed
+    emea_grp = {e.get("name") for e in emea.findall("./address-group/entry")}
+    assert "c-grp" not in emea_grp
 
 
 def test_set_output_renders_create_and_delete() -> None:

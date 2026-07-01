@@ -32,6 +32,13 @@ def move(
         help="Destination: 'shared' or an ancestor device-group of --from. "
         "move only promotes toward shared.",
     ),
+    cascade: bool = typer.Option(
+        False,
+        "--cascade",
+        help="Also promote the object's transitive DG-local dependencies "
+        "(members/tags) to the destination, in one ordered plan. Without it, "
+        "unresolved dependencies block the move and are listed to move first.",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Execute the move (default: dry-run)."),
     out: str | None = typer.Option(
         None,
@@ -49,6 +56,11 @@ def move(
     shadowing device-group between source and destination, leave the object's
     own dependencies unresolved at the destination, or collide with a
     different-valued object already at the destination.
+
+    Pass `--cascade` to also pull the object's transitive DG-local dependencies
+    (group members, tags) up to the same destination, deepest-first, as one
+    ordered plan; a dependency still needed by an object left behind is promoted
+    but its source copy is retained (with a warning).
     """
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
@@ -60,5 +72,6 @@ def move(
         name=name,
         source_name=from_location,
         dest_name=to_location,
+        cascade=cascade,
     )
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
