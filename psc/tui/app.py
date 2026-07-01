@@ -35,6 +35,7 @@ class WorkbenchApp(App[None]):
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         ("space", "toggle_row", "select"),
         ("d", "dedup", "dedup"),
+        ("u", "usage", "usage"),
         ("ctrl+a", "apply_batch", "apply"),
         ("q", "quit", "quit"),
     ]
@@ -87,6 +88,11 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.dedup import DedupScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(DedupScreen(self.session))
+
+    def action_usage(self) -> None:
+        from psc.tui.screens.usage import UsageScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(UsageScreen(self.session))
 
     def action_apply_batch(self) -> None:
         out_path = self.session.apply_out_path
