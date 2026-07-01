@@ -25,7 +25,11 @@ _MIN_DUP_COUNT = 2
 def plan_selection_merge(session: WorkbenchSession) -> tuple[str, ChangeSet] | None:
     """First duplicate address pair in the selection -> (label, merge plan).
 
-    Returns None when fewer than two selected addresses share a value.
+    Returns None when fewer than two selected addresses share a value. The
+    first-selected item of the pair is kept, the second is dropped (selection
+    order = the order the user pressed space). Items no longer in the working
+    snapshot (stale selection) are silently skipped — if every duplicate is
+    stale, the result is None.
     """
     addrs = session.selected_of_kinds({"address"})
     snap = session.working_snapshot
@@ -34,7 +38,7 @@ def plan_selection_merge(session: WorkbenchSession) -> tuple[str, ChangeSet] | N
     for item in addrs:
         obj = index.get((item.location, item.name))
         if obj is None:
-            continue
+            continue  # stale selection item; not in the current snapshot
         by_value.setdefault(obj.value, []).append(item)
     for _value, group in by_value.items():
         if len(group) >= _MIN_DUP_COUNT:
