@@ -64,5 +64,5 @@ class DecommissionScreen(Screen[None]):
             self.app.bell()
             return
         self.session.stage("decommission address objects", self._plan)
-        self.app.pop_screen()
         cast("WorkbenchApp", self.app)._refresh_selection_view()
+        self.app.pop_screen()

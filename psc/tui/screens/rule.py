@@ -74,17 +74,21 @@ class RuleScreen(Screen[None]):
         if not rule_name:
             self.app.bell()
             return
+        hub = cast("WorkbenchApp", self.app)
         try:
             for member in list(self._members):
                 cs = plan_rule_add_member(self.session, rule_name, Rulebase.PRE, field, member)
                 if not can_apply(cs):
+                    # Stop on a blocked member and stay on-screen (preceding
+                    # members are already staged and visible in the hub strip).
                     self.app.bell()
-                    break
+                    hub._refresh_selection_view()
+                    return
                 if not cs.is_empty:
                     self.session.stage(f"add {member} to {rule_name}.{field}", cs)
         except PscError:
             # Unknown rule / invalid field: signal and stay on the screen.
             self.app.bell()
             return
+        hub._refresh_selection_view()
         self.app.pop_screen()
-        cast("WorkbenchApp", self.app)._refresh_selection_view()

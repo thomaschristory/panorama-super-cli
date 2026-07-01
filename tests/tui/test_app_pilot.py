@@ -193,3 +193,43 @@ async def test_move_and_rule_bindings_open(workbench_xml: str) -> None:
         await pilot.press("e")
         await pilot.pause()
         assert isinstance(app.screen, RuleScreen)
+
+
+@pytest.mark.asyncio
+async def test_rename_spoke_stages_and_reconciles(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        app.screen.query_one("#rename-input", Input).value = "db-gateway"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        # db-gw renamed -> its old identity drops out of the selection
+        assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_move_spoke_stages_and_reconciles(workbench_xml_dg: str) -> None:
+    sess = WorkbenchSession(source=OfflineSource(workbench_xml_dg), output_mode=OutputMode.SET)
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "dg-only"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        # dg-only moved dg1 -> shared; the dg1 identity drops out of the selection
+        assert app.session.selection == []

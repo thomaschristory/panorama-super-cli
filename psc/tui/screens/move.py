@@ -75,5 +75,5 @@ class MoveScreen(Screen[None]):
                 hub._refresh_selection_view()
                 return
             self.session.stage(f"move {item.name} -> shared", cs)
-        self.app.pop_screen()
         hub._refresh_selection_view()
+        self.app.pop_screen()

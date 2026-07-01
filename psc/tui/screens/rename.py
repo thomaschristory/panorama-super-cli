@@ -68,5 +68,5 @@ class RenameScreen(Screen[None]):
             self.app.bell()
             return
         self.session.stage(f"rename {self._item.name} -> {new_name}", cs)
-        self.app.pop_screen()
         cast("WorkbenchApp", self.app)._refresh_selection_view()
+        self.app.pop_screen()

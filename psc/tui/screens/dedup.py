@@ -85,7 +85,6 @@ class DedupScreen(Screen[None]):
             self.app.bell()
             return
         self.session.stage(label, cs)
+        # Refresh the hub view while it is still on the stack, then pop.
+        cast("WorkbenchApp", self.app)._refresh_selection_view()
         self.app.pop_screen()
-        # Refresh the hub's selection/staging view after returning.
-        hub_app = cast("WorkbenchApp", self.app)
-        hub_app._refresh_selection_view()
