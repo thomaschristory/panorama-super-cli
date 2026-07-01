@@ -16,6 +16,7 @@ from psc.cli import (
     decommission_cmds,
     dedup_cmds,
     diff_cmds,
+    export_cmds,
     find_cmds,
     move_cmds,
     name_cmds,
@@ -156,6 +157,10 @@ app.command(
     "diff",
     help="Diff two configs, or two device-groups in one config.",
 )(diff_cmds.diff)
+app.command(
+    "export",
+    help="Export objects of a kind as NDJSON (one JSON object per line).",
+)(export_cmds.export)
 app.command(
     "decommission",
     help="Reference-safe teardown of address objects matching an IP/CIDR.",
