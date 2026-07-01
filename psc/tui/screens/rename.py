@@ -63,10 +63,14 @@ class RenameScreen(Screen[None]):
         if not new_name:
             self.app.bell()
             return
-        cs = plan_rename_item(self.session, self._item, new_name)
-        if not can_apply(cs):
+        try:
+            cs = plan_rename_item(self.session, self._item, new_name)
+            if not can_apply(cs):
+                self.app.bell()
+                return
+            self.session.stage(f"rename {self._item.name} -> {new_name}", cs)
+        except Exception:
             self.app.bell()
             return
-        self.session.stage(f"rename {self._item.name} -> {new_name}", cs)
         cast("WorkbenchApp", self.app)._refresh_selection_view()
         self.app.pop_screen()

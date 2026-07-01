@@ -45,11 +45,35 @@ class WorkbenchApp(App[None]):
         ("q", "quit", "quit"),
     ]
 
+    # Hub-only bindings — disabled while any spoke screen is on top of the
+    # stack, so a spoke key can't stack a second spoke over the first (which
+    # would let the first spoke's plan go stale and corrupt the config on
+    # confirm). Spokes have their own ctrl+y/escape bindings.
+    _HUB_ACTIONS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "toggle_row",
+            "dedup",
+            "usage",
+            "audit",
+            "move",
+            "decommission",
+            "rename",
+            "rule_edit",
+            "apply_batch",
+        }
+    )
+
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
         self.session = session
         # The rows currently shown in #results, parallel to the table rows.
         self._results: list[SelectionItem] = []
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # A spoke screen is pushed on top of the hub (stack depth > 1). While one
+        # is active, the hub bindings are inert — you must finish/cancel the
+        # spoke first. This is the guard that prevents cross-spoke plan staleness.
+        return not (action in self._HUB_ACTIONS and len(self.screen_stack) > 1)
 
     def compose(self) -> ComposeResult:
         yield Header()

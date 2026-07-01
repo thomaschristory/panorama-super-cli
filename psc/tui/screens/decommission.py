@@ -60,9 +60,16 @@ class DecommissionScreen(Screen[None]):
             panel.show(self._plan)
 
     def action_stage(self) -> None:
-        if self._plan is None or not can_apply(self._plan):
+        # Re-plan against the current snapshot at confirm time; never crash on an
+        # engine/apply error.
+        try:
+            plan = plan_selection_decommission(self.session)
+            if plan is None or not can_apply(plan):
+                self.app.bell()
+                return
+            self.session.stage("decommission address objects", plan)
+        except Exception:
             self.app.bell()
             return
-        self.session.stage("decommission address objects", self._plan)
         cast("WorkbenchApp", self.app)._refresh_selection_view()
         self.app.pop_screen()

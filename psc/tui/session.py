@@ -7,6 +7,7 @@ built against reality (prior staged edits already applied).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -132,8 +133,10 @@ class WorkbenchSession:
     def apply_batch(self, *, out_path: str | None) -> ApplyOutcome:
         """Apply the staged batch per `output_mode`. Read-only until here.
 
-        Does not clear `self.staging` on success: the operator decides when to
-        clear (they may want to re-export the same batch in another mode).
+        SET is a preview (renders the script, changes nothing, keeps staging).
+        OFFLINE_APPLY / LIVE_APPLY commit the batch and then CLEAR staging, so a
+        second apply can't replay the same changes (a repeated live push would
+        otherwise re-apply renames against already-renamed objects and fail).
         """
         # Number of staged *changes* applied (not raw XML op count — this is a
         # TUI-facing tally, distinct from ApplyResult.ops).
@@ -160,10 +163,8 @@ class WorkbenchSession:
                 and dest.resolve() == self.source.path.resolve()
             ):
                 raise PscError("output path must differ from the source config", ErrorType.CONFIG)
-            try:
-                dest.write_text(self.working_xml, encoding="utf-8")
-            except OSError as exc:
-                raise PscError(f"cannot write to {dest}: {exc}", ErrorType.INPUT) from exc
+            self._atomic_write(dest, self.working_xml)
+            self.staging.clear()
             return ApplyOutcome(
                 mode=self.output_mode, ops=ops, out_path=str(dest), detail=f"wrote {dest}"
             )
@@ -175,6 +176,19 @@ class WorkbenchSession:
         # config`). A transactional wrapper is a future concern.
         for staged in self.staging:
             self.source.apply(staged.changeset, out_path=None)
+        self.staging.clear()
         return ApplyOutcome(
             mode=self.output_mode, ops=ops, out_path=None, detail="pushed to candidate"
         )
+
+    @staticmethod
+    def _atomic_write(dest: Path, text: str) -> None:
+        """Write via a temp sibling + os.replace so `dest` is never truncated —
+        a killed/failed write leaves the old file intact, not a half-written one."""
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, dest)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise PscError(f"cannot write to {dest}: {exc}", ErrorType.INPUT) from exc

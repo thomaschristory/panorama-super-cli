@@ -60,20 +60,27 @@ class MoveScreen(Screen[None]):
         yield Footer()
 
     def action_stage(self) -> None:
-        if not self._items:
+        hub = cast("WorkbenchApp", self.app)
+        # Re-derive movable items from the current selection at confirm time.
+        items = movable_items(self.session)
+        if not items:
             self.app.bell()
             return
-        hub = cast("WorkbenchApp", self.app)
-        for item in list(self._items):
-            cs = plan_move_item(self.session, item, "shared")
-            if not can_apply(cs):
-                # A blocked move stops here rather than silently popping with a
-                # partial result: preceding items are already staged (visible in
-                # the hub's staging strip), and the user stays on-screen to see
-                # the bell and decide (esc to leave).
-                self.app.bell()
-                hub._refresh_selection_view()
-                return
-            self.session.stage(f"move {item.name} -> shared", cs)
+        try:
+            for item in items:
+                cs = plan_move_item(self.session, item, "shared")
+                if not can_apply(cs):
+                    # A blocked move stops here rather than silently popping with
+                    # a partial result: preceding items are already staged
+                    # (visible in the hub's staging strip); stay on-screen so the
+                    # user sees the bell and can decide (esc to leave).
+                    self.app.bell()
+                    hub._refresh_selection_view()
+                    return
+                self.session.stage(f"move {item.name} -> shared", cs)
+        except Exception:
+            self.app.bell()
+            hub._refresh_selection_view()
+            return
         hub._refresh_selection_view()
         self.app.pop_screen()

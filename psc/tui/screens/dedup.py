@@ -77,14 +77,19 @@ class DedupScreen(Screen[None]):
             self.query_one("#review", ReviewPanel).show(self._plan[1])
 
     def action_stage(self) -> None:
-        if self._plan is None:
+        # Re-plan against the CURRENT snapshot rather than trusting the plan
+        # built at screen-open time, and never let an engine/apply error crash
+        # the app.
+        try:
+            plan = plan_selection_merge(self.session)
+            if plan is None or not can_apply(plan[1]):
+                self.app.bell()
+                return
+            label, cs = plan
+            self.session.stage(label, cs)
+        except Exception:
             self.app.bell()
             return
-        label, cs = self._plan
-        if not can_apply(cs):
-            self.app.bell()
-            return
-        self.session.stage(label, cs)
         # Refresh the hub view while it is still on the stack, then pop.
         cast("WorkbenchApp", self.app)._refresh_selection_view()
         self.app.pop_screen()

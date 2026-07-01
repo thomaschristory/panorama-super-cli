@@ -58,6 +58,13 @@ def workbench(
     # so the flag is never a silent no-op under the default SET mode.
     if apply_out is not None and output_mode is OutputMode.SET:
         output_mode = OutputMode.OFFLINE_APPLY
+    # Fail fast rather than letting the user stage a whole batch and only
+    # discover at apply time that offline-apply has nowhere to write.
+    if output_mode is OutputMode.OFFLINE_APPLY and apply_out is None:
+        raise PscError(
+            "--output-mode offline-apply requires --apply-out <file>",
+            ErrorType.CONFIG,
+        )
     session = build_session(config_file=rt.config_file, profile=rt.profile, output_mode=output_mode)
     session.apply_out_path = apply_out
     WorkbenchApp(session).run()

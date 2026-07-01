@@ -12,7 +12,6 @@ from textual.widgets import Footer, Input, Static
 from psc.core.changeset import ChangeSet
 from psc.core.models import Rulebase
 from psc.core.rule_edit import plan_rule_member_edit
-from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.widgets.review import can_apply
 
@@ -75,8 +74,11 @@ class RuleScreen(Screen[None]):
             self.app.bell()
             return
         hub = cast("WorkbenchApp", self.app)
+        # Re-derive members from the CURRENT selection at confirm time so we never
+        # add a stale (e.g. renamed/decommissioned) object name to a rule field.
+        members = [i.name for i in self.session.selection]
         try:
-            for member in list(self._members):
+            for member in members:
                 cs = plan_rule_add_member(self.session, rule_name, Rulebase.PRE, field, member)
                 if not can_apply(cs):
                     # Stop on a blocked member and stay on-screen (preceding
@@ -86,9 +88,9 @@ class RuleScreen(Screen[None]):
                     return
                 if not cs.is_empty:
                     self.session.stage(f"add {member} to {rule_name}.{field}", cs)
-        except PscError:
-            # Unknown rule / invalid field: signal and stay on the screen.
+        except Exception:
             self.app.bell()
+            hub._refresh_selection_view()
             return
         hub._refresh_selection_view()
         self.app.pop_screen()
