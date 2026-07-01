@@ -15,6 +15,7 @@ from psc.cli import (
     auth_cmds,
     decommission_cmds,
     dedup_cmds,
+    diff_cmds,
     find_cmds,
     move_cmds,
     name_cmds,
@@ -151,6 +152,10 @@ app.add_typer(
 )
 app.add_typer(profile_cmds.app, name="profile", help="Manage live connection profiles.")
 app.add_typer(version_cmds.app, name="version", help="Show version; check PyPI for updates.")
+app.command(
+    "diff",
+    help="Diff two configs, or two device-groups in one config.",
+)(diff_cmds.diff)
 app.command(
     "decommission",
     help="Reference-safe teardown of address objects matching an IP/CIDR.",
