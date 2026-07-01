@@ -14,7 +14,9 @@ from psc.core.dedup import (
     find_duplicate_groups,
     find_duplicate_services,
     plan_merge,
+    plan_merge_bucket,
     plan_merge_group,
+    select_address_bucket,
 )
 from psc.core.refs import ReferenceGraph
 from psc.core.source import ConfigFormat
@@ -124,13 +126,29 @@ def groups(
 @app.command("merge")
 def merge(
     ctx: typer.Context,
-    keep: str = typer.Option(..., "--keep", help="Survivor object name."),
-    remove: str = typer.Option(..., "--remove", help="Object to collapse into --keep and delete."),
+    keep: str | None = typer.Option(
+        None, "--keep", help="Survivor object name. Required with --remove; optional with --group."
+    ),
+    remove: str | None = typer.Option(
+        None, "--remove", help="Object to collapse into --keep and delete (pairwise merge)."
+    ),
+    group: str | None = typer.Option(
+        None,
+        "--group",
+        help="Collapse the WHOLE duplicate-address bucket with this value "
+        "(e.g. '10.0.0.10/32') toward --keep in one plan. Run `dedup addresses` "
+        "to list buckets.",
+    ),
     location: str | None = typer.Option(
         None, "--location", help="Location of both objects (default: --device-group or shared)."
     ),
     keep_location: str | None = typer.Option(None, "--keep-location"),
     remove_location: str | None = typer.Option(None, "--remove-location"),
+    not_strict: bool = typer.Option(
+        False,
+        "--not-strict",
+        help="With --group, match the bucket under host-bit masking (see `dedup addresses`).",
+    ),
     allow_value_change: bool = typer.Option(
         False, "--allow-value-change", help="Permit merging objects with different values."
     ),
@@ -138,16 +156,41 @@ def merge(
     out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
-    """Collapse one address object into another, repointing every reference.
+    """Collapse address duplicates into one survivor, repointing every reference.
 
-    Dry-run by default: prints the rewrite plan (use `-o set` for the PAN-OS
-    script). Repoints all groups/rules/NAT *before* deleting; refuses if any
-    reference can't be safely repointed.
+    Two modes: pairwise (`--keep X --remove Y`) collapses one object; group
+    (`--group <value> [--keep X]`) collapses the ENTIRE duplicate bucket sharing
+    that value into one survivor in a single plan. Dry-run by default (use
+    `-o set` for the PAN-OS script). Repoints all groups/rules/NAT *before*
+    deleting; refuses if any reference can't be safely repointed.
     """
     rt: Runtime = ctx.obj
     default_loc = location or rt.device_group or "shared"
     snap = rt.snapshot()
     graph = ReferenceGraph.build(snap)
+
+    if group is not None:
+        if remove is not None:
+            raise PscError("--group and --remove are mutually exclusive", ErrorType.INPUT)
+        bucket = select_address_bucket(snap, group, strict=not not_strict)
+        members = [ObjectRef(name=m.name, location=m.location) for m in bucket.members]
+        keep_ref = (
+            ObjectRef(name=keep, location=keep_location or default_loc)
+            if keep is not None
+            else None
+        )
+        cs = plan_merge_bucket(
+            snap,
+            graph,
+            members=members,
+            keep=keep_ref,
+            allow_value_change=allow_value_change,
+        )
+        complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
+        return
+
+    if keep is None or remove is None:
+        raise PscError("pairwise merge needs both --keep and --remove", ErrorType.INPUT)
     cs = plan_merge(
         snap,
         graph,

@@ -361,6 +361,99 @@ def test_merge_no_out_no_apply_still_dry_run(tmp_path: Path) -> None:
     assert not out.exists()
 
 
+def test_merge_group_collapses_whole_bucket_dry_run() -> None:
+    # FIXTURE bucket {h-web1, web-primary, h-web1-slash} all == 10.0.0.10/32.
+    # Collapsing toward h-web1 drops the other two in one plan.
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "-o",
+        "set",
+        "dedup",
+        "merge",
+        "--group",
+        "10.0.0.10/32",
+        "--keep",
+        "h-web1",
+    )
+    assert cp.returncode == 0
+    assert "delete shared address web-primary" in cp.stdout
+    assert "delete shared address h-web1-slash" in cp.stdout
+
+
+def test_merge_group_default_keep_is_first_member() -> None:
+    # No --keep: deterministic default survivor is the sorted-first bucket member
+    # (h-web1); the other two are dropped.
+    cp = run("-c", str(FIXTURE), "-o", "set", "dedup", "merge", "--group", "10.0.0.10/32")
+    assert cp.returncode == 0
+    assert "delete shared address web-primary" in cp.stdout
+    assert "delete shared address h-web1-slash" in cp.stdout
+    assert "delete shared address h-web1\n" not in cp.stdout + "\n"
+
+
+def test_merge_group_selects_survivor_via_keep() -> None:
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "-o",
+        "json",
+        "dedup",
+        "merge",
+        "--group",
+        "10.0.0.10/32",
+        "--keep",
+        "web-primary",
+    )
+    assert cp.returncode == 0
+    dropped = {d["name"] for d in json.loads(cp.stdout)["deletes"]}
+    assert dropped == {"h-web1", "h-web1-slash"}
+
+
+def test_merge_group_invalid_keep_exit_3() -> None:
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "-o",
+        "json",
+        "dedup",
+        "merge",
+        "--group",
+        "10.0.0.10/32",
+        "--keep",
+        "net-10",  # not in the bucket
+    )
+    assert cp.returncode == 3
+    assert json.loads(cp.stdout)["type"] == "input"
+
+
+def test_merge_group_unknown_value_exit_3() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "dedup", "merge", "--group", "203.0.113.9/32")
+    assert cp.returncode == 3
+    assert json.loads(cp.stdout)["type"] == "input"
+
+
+def test_merge_group_apply_roundtrips_out(tmp_path: Path) -> None:
+    out = tmp_path / "fixed.xml"
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "dedup",
+        "merge",
+        "--group",
+        "10.0.0.10/32",
+        "--keep",
+        "h-web1",
+        "--apply",
+        "--out",
+        str(out),
+    )
+    assert cp.returncode == 0
+    text = out.read_text(encoding="utf-8")
+    assert "web-primary" not in text
+    assert "h-web1-slash" not in text
+    assert "h-web1" in text  # survivor stays
+
+
 DEDUP_GROUPS_FIXTURE = Path(__file__).parent / "fixtures" / "dedup-groups.xml"
 
 
