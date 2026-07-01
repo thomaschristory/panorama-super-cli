@@ -5,6 +5,8 @@ from textual.widgets import DataTable, Input
 
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
+from psc.tui.screens.audit import AuditScreen
+from psc.tui.screens.usage import UsageScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
 
@@ -101,3 +103,37 @@ async def test_apply_batch_offline_writes_file(workbench_xml: str, tmp_path) -> 
         await pilot.pause()
     assert dest.exists()
     assert "web-srv-02" not in dest.read_text()
+
+
+@pytest.mark.asyncio
+async def test_usage_spoke_opens_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "web-srv-01"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, UsageScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_audit_spoke_opens_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "web-srv-01"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, AuditScreen)
+        await pilot.press("escape")
+        await pilot.pause()
