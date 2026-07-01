@@ -545,14 +545,19 @@ class ReferenceGraph:
         for r in self.references:
             if r.namespace == "tag" and r.resolved is not None:
                 used.add((r.resolved.location.name, r.resolved.name))
-        # Dynamic address-group filters reference tags by name; see
-        # `dag_filter_tags` for why this is an exact-token match.
+        # Dynamic address-group filters reference tags by name. A token resolves
+        # through the filter's *own* scope (closest definition up its ancestor
+        # chain wins), exactly like a real object reference — so it marks only the
+        # single tag the filter actually binds to, not every same-named tag. A
+        # shadowed or sibling-DG copy the filter can't see stays unused (#26).
         for ag in self.snapshot.address_groups:
-            if ag.dynamic_filter:
-                filter_tags = dag_filter_tags(ag.dynamic_filter)
-                for t in self.snapshot.tags:
-                    if t.name in filter_tags:
-                        used.add((t.location.name, t.name))
+            if not ag.dynamic_filter:
+                continue
+            chain = self.snapshot.ancestors(ag.location)
+            for token in dag_filter_tags(ag.dynamic_filter):
+                bound = self._tag_idx.resolve(token, chain)
+                if bound is not None:
+                    used.add((bound.location.name, bound.name))
         return [
             Target("tag", t.name, t.location)
             for t in self.snapshot.tags
