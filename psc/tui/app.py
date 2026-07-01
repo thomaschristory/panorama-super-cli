@@ -11,7 +11,6 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import SelectionItem
 
@@ -95,7 +94,10 @@ class WorkbenchApp(App[None]):
         out_path = getattr(self.session, "apply_out_path", None) or self.apply_out_path
         try:
             outcome = self.session.apply_batch(out_path=out_path)
-        except PscError as exc:
+        except Exception as exc:
+            # Surface any apply failure in the staging strip rather than letting
+            # it crash the app — PscError (missing out_path / blocked) for
+            # offline, plus arbitrary transport errors from a live push.
             self.query_one("#staging", Static).update(f"[red]apply failed: {exc}[/red]")
             self.bell()
             return
