@@ -51,3 +51,25 @@ async def test_space_twice_deselects(workbench_xml: str) -> None:
         await pilot.press("space")
         await pilot.pause()
         assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_dedup_spoke_stages_merge_and_reconciles(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")  # row 0
+        results.move_cursor(row=1)
+        await pilot.press("space")  # row 1
+        await pilot.pause()
+        assert len(app.session.selection) == 2
+        await pilot.press("d")  # open dedup screen
+        await pilot.pause()
+        await pilot.press("ctrl+y")  # stage the proposed merge
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        assert len(app.session.selection) == 1  # reconciled: merged-away dupe gone

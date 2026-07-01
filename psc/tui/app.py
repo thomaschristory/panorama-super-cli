@@ -83,8 +83,10 @@ class WorkbenchApp(App[None]):
         self.session.toggle(self._results[row])
         self._refresh_selection_view()
 
-    def action_dedup(self) -> None:  # filled in Task 10
-        self.bell()
+    def action_dedup(self) -> None:
+        from psc.tui.screens.dedup import DedupScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(DedupScreen(self.session))
 
     def action_apply_batch(self) -> None:  # filled in Task 11
         self.bell()
