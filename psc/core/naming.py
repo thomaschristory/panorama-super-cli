@@ -24,7 +24,7 @@ from psc.core.changeset import (
 )
 from psc.core.dedup import field_members
 from psc.core.models import Address, AddressType, Location, Service, Snapshot
-from psc.core.refs import ReferenceGraph
+from psc.core.refs import Reference, ReferenceGraph
 
 # PAN-OS object names: <=63 chars, start alphanumeric, then [0-9a-zA-Z._-] (+space).
 # Public so the CRUD validators consume the *same* rule rather than re-declaring
@@ -128,6 +128,161 @@ def lint(snapshot: Snapshot, scheme: NamingScheme) -> list[NameFinding]:
     return findings
 
 
+def _namespace_for(kind: ObjectKind) -> str:
+    return (
+        "address"
+        if kind in (ObjectKind.ADDRESS, ObjectKind.ADDRESS_GROUP)
+        else ("service" if kind in (ObjectKind.SERVICE, ObjectKind.SERVICE_GROUP) else "tag")
+    )
+
+
+class _SchemeTarget(BaseModel):
+    """One object `name apply --all` wants to rename to its scheme name."""
+
+    kind: ObjectKind
+    location_name: str
+    old_name: str
+    new_name: str
+
+
+def plan_apply_scheme(  # noqa: PLR0912 — explicit collision/shadow/chaining phases
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    scheme: NamingScheme,
+    *,
+    scope: Location | None = None,
+) -> ChangeSet:
+    """Plan renaming *every* non-compliant object to its scheme name in one plan.
+
+    Composes per-object `plan_rename` results into a single `ChangeSet`. Each
+    individually-safe rename contributes its `ObjectRename`; any rename that would
+    collide (target already exists) or shadow (shared↔device-group) contributes a
+    blocker attributed to the offending object. Two objects whose *scheme* names
+    collide with each other also raise a blocker — never silently overwrite. Per
+    the global safety rule a non-empty `blockers` list gates the WHOLE batch, so a
+    blocked plan carries zero ops.
+
+    Reference edits are chained through the full rename map: a referrer naming
+    several renamed objects (or a renamed object referenced by another renamed
+    object) is rewritten to the *final* names, order-independently.
+    """
+    cs = ChangeSet(title="apply naming scheme to all non-compliant objects")
+
+    # A bulk rename is a mutation, so scope means "objects defined AT this
+    # location", not "visible from here": scoping to a device-group must not
+    # sweep up inherited `shared` objects (which affect every other DG) — that
+    # keeps the blast radius smallest, the safe default. Unscoped renames every
+    # non-compliant object everywhere.
+    scope_name = scope.name if scope is not None else None
+    targets: list[_SchemeTarget] = []
+    for f in lint(snapshot, scheme):
+        if f.compliant:
+            continue
+        if scope_name is not None and f.location != scope_name:
+            continue
+        kind = ObjectKind.ADDRESS if f.kind == "address" else ObjectKind.SERVICE
+        targets.append(
+            _SchemeTarget(
+                kind=kind,
+                location_name=f.location,
+                old_name=f.current,
+                new_name=f.suggested,
+            )
+        )
+
+    if not targets:
+        cs.warnings.append("no non-compliant objects to rename")
+        return cs
+
+    # Intra-batch collision: two objects in the same namespace+location whose
+    # scheme names coincide. Renaming both would silently overwrite one, so
+    # block and attribute the clash to every object that wants that name.
+    by_new: dict[tuple[str, str, str], list[_SchemeTarget]] = {}
+    for t in targets:
+        nkey = (_namespace_for(t.kind), t.location_name, t.new_name)
+        by_new.setdefault(nkey, []).append(t)
+    for (namespace, loc_name, new_name), group in by_new.items():
+        if len(group) > 1:
+            olds = ", ".join(f"'{t.old_name}'" for t in sorted(group, key=lambda x: x.old_name))
+            cs.blockers.append(
+                f"{olds} all map to '{new_name}' in the {namespace} namespace @{loc_name}; "
+                "renaming them together would collide — resolve the scheme clash first"
+            )
+
+    # Per-object plan: reuse `plan_rename` for its shadow/collision guards and its
+    # unmappable-reference gate. Aggregate the sub-plan blockers/warnings verbatim
+    # so each is attributed to its object. Reference edits are recomputed below,
+    # per referrer, from the renames this batch actually applies.
+    applied: list[_SchemeTarget] = []
+    for t in targets:
+        sub = plan_rename(
+            snapshot,
+            graph,
+            kind=t.kind,
+            location_name=t.location_name,
+            old_name=t.old_name,
+            new_name=t.new_name,
+        )
+        cs.blockers.extend(sub.blockers)
+        cs.warnings.extend(sub.warnings)
+        if not sub.is_blocked:
+            cs.renames.append(sub.renames[0])
+            applied.append(t)
+
+    if cs.blockers:
+        # Global gate: any per-object or intra-batch blocker refuses the whole
+        # batch. Invariant: a blocked plan carries zero ops.
+        cs.renames.clear()
+        cs.reference_edits.clear()
+        return cs
+
+    # Chained reference edits: for each referrer field, substitute exactly the
+    # renames of the targets THIS referrer binds to. `where_used` already resolves
+    # PAN-OS shadowing (a DG-local name shadows a same-named shared object), so a
+    # member is rewritten only where it actually resolves to a renamed object —
+    # correct even when the same name is defined at multiple locations, and
+    # order-independent when one referrer names several renamed objects.
+    edit_key = tuple[str, str, str, str, str | None]
+    subs: dict[edit_key, dict[str, str]] = {}
+    ref_by_key: dict[edit_key, Reference] = {}
+    for t in applied:
+        loc = Location.shared() if t.location_name == "shared" else Location.dg(t.location_name)
+        for ref in graph.where_used(t.kind.value, t.old_name, loc):
+            ekey: edit_key = (
+                ref.referrer_kind,
+                ref.referrer_name,
+                ref.referrer_location.name,
+                ref.field,
+                ref.rulebase.value if ref.rulebase else None,
+            )
+            subs.setdefault(ekey, {})[t.old_name] = t.new_name
+            ref_by_key.setdefault(ekey, ref)
+    for ekey, ref in ref_by_key.items():
+        before = field_members(snapshot, ref)
+        sub_map = subs[ekey]
+        after = [sub_map.get(m, m) for m in before]
+        cs.reference_edits.append(
+            ReferenceEdit(
+                referrer_kind=ref.referrer_kind,
+                referrer_name=ref.referrer_name,
+                referrer_location=ref.referrer_location.name,
+                field=ref.field,
+                rulebase=ref.rulebase.value if ref.rulebase else None,
+                before=before,
+                after=after,
+            )
+        )
+
+    # The individually-safe sub-plans already passed the unmappable gate, so the
+    # composed edits are mappable; re-run for defence in depth (and to gate any
+    # edit whose referrer names two renamed objects across mappability lines).
+    gate_unmappable_reference_edits(cs)
+    if cs.blockers:
+        cs.renames.clear()
+        cs.reference_edits.clear()
+    return cs
+
+
 def plan_rename(
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -146,11 +301,7 @@ def plan_rename(
         cs.warnings.append(f"new name sanitized to '{new_clean}' (PAN-OS naming rules)")
         new_name = new_clean
 
-    namespace = (
-        "address"
-        if kind in (ObjectKind.ADDRESS, ObjectKind.ADDRESS_GROUP)
-        else ("service" if kind in (ObjectKind.SERVICE, ObjectKind.SERVICE_GROUP) else "tag")
-    )
+    namespace = _namespace_for(kind)
 
     # Shadow guard: introducing `new_name` at `loc` is unsafe if that name is
     # already defined anywhere in loc's visibility cone — an ancestor (the new

@@ -8,8 +8,9 @@ from psc.cli._options import OUT_OPTION
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
 from psc.core.changeset import ObjectKind
+from psc.core.models import Location
 from psc.core.naming import lint as lint_engine
-from psc.core.naming import plan_rename
+from psc.core.naming import plan_apply_scheme, plan_rename
 from psc.core.refs import ReferenceGraph
 from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
@@ -66,17 +67,46 @@ def rename(
 @app.command("apply")
 def apply_scheme(
     ctx: typer.Context,
-    object_name: str = typer.Option(..., "--object", help="Object to rename to its scheme name."),
+    object_name: str | None = typer.Option(
+        None, "--object", help="Object to rename to its scheme name."
+    ),
+    rename_all: bool = typer.Option(
+        False, "--all", help="Rename EVERY non-compliant object to its scheme name in one plan."
+    ),
     location: str | None = typer.Option(None, "--location"),
     apply: bool = typer.Option(False, "--apply", help="Execute the rename (default: dry-run)."),
     out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
 ) -> None:
-    """Rename one object to the name the configured scheme implies for its value."""
+    """Rename object(s) to the name the configured scheme implies.
+
+    `--object` renames one object; `--all` renames every non-compliant object
+    (from `name lint`) in a single reviewed plan, blocking any that would collide
+    or shadow. Both are dry-run by default; pass `--apply` to execute.
+    """
     rt: Runtime = ctx.obj
-    loc = location or rt.device_group or "shared"
-    snap = rt.snapshot()
     scheme = rt.config.defaults.naming
+    snap = rt.snapshot()
+
+    if rename_all == (object_name is not None):
+        raise PscError(
+            "pass exactly one of --object or --all",
+            ErrorType.VALIDATION,
+        )
+
+    if rename_all:
+        scope: Location | None = None
+        if location is not None:
+            scope = Location.shared() if location == "shared" else Location.dg(location)
+        elif rt.device_group is not None:
+            scope = Location.dg(rt.device_group)
+        graph = ReferenceGraph.build(snap)
+        cs = plan_apply_scheme(snap, graph, scheme, scope=scope)
+        complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
+        return
+
+    assert object_name is not None  # narrowed by the exactly-one guard above
+    loc = location or rt.device_group or "shared"
 
     suggested: str | None = None
     kind = ObjectKind.ADDRESS

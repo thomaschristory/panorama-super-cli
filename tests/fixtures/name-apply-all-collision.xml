@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="h-a"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+      <entry name="H-10.0.0.1"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+    </address>
+  </shared>
+</config>

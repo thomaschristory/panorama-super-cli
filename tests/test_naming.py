@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 from psc.core.changeset import ObjectKind
-from psc.core.models import SHARED, Address, AddressType, Location, Service, Snapshot
-from psc.core.naming import NamingScheme, lint, plan_rename, sanitize_name
+from psc.core.models import (
+    SHARED,
+    Address,
+    AddressGroup,
+    AddressType,
+    Location,
+    SecurityRule,
+    Service,
+    Snapshot,
+)
+from psc.core.naming import NamingScheme, lint, plan_apply_scheme, plan_rename, sanitize_name
 from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
+
+
+def _addr(name: str, value: str, loc: Location = SHARED) -> Address:
+    return Address(name=name, location=loc, type=AddressType.IP_NETMASK, value=value)
 
 
 def test_rename_tag_preserves_other_tags_on_a_security_rule() -> None:
@@ -169,3 +182,142 @@ def test_rename_blocks_shared_dg_shadow() -> None:
     )
     assert cs.is_blocked
     assert any("DG1" in b for b in cs.blockers)
+
+
+# --- name apply --all (bulk scheme rename, issue #15) ---------------------
+
+
+def test_apply_all_renames_every_noncompliant_and_repoints() -> None:
+    # Two non-compliant hosts, both members of one group and a rule; the batch
+    # renames both and rewrites the shared referrer fields to the FINAL names.
+    snap = Snapshot(
+        addresses=[_addr("h-a", "10.0.0.1/32"), _addr("h-b", "10.0.0.2/32")],
+        address_groups=[
+            AddressGroup(name="grp", location=SHARED, static_members=["h-a", "h-b"]),
+        ],
+        security_rules=[
+            SecurityRule(name="r", location=SHARED, source=["h-a"], destination=["h-b"]),
+        ],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert not cs.is_blocked
+    new_names = {r.old_name: r.new_name for r in cs.renames}
+    assert new_names == {"h-a": "H-10.0.0.1", "h-b": "H-10.0.0.2"}
+    # The group referrer (one field naming BOTH renamed objects) is rewritten to
+    # both final names in one edit — chaining is order-independent.
+    grp_edit = next(e for e in cs.reference_edits if e.referrer_name == "grp")
+    assert grp_edit.after == ["H-10.0.0.1", "H-10.0.0.2"]
+    rule_src = next(e for e in cs.reference_edits if e.referrer_name == "r" and e.field == "source")
+    assert rule_src.after == ["H-10.0.0.1"]
+
+
+def test_apply_all_leaves_compliant_object_untouched() -> None:
+    snap = Snapshot(
+        addresses=[_addr("H-10.0.0.1", "10.0.0.1/32"), _addr("h-b", "10.0.0.2/32")],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert not cs.is_blocked
+    renamed = {r.old_name for r in cs.renames}
+    assert renamed == {"h-b"}  # the already-compliant host is not touched
+
+
+def test_apply_all_blocks_when_scheme_name_collides_with_existing() -> None:
+    # h-a would become H-10.0.0.1, but that name already exists on another
+    # object → a collision attributed to h-a; the whole batch is gated.
+    snap = Snapshot(
+        addresses=[
+            _addr("h-a", "10.0.0.1/32"),
+            _addr("H-10.0.0.1", "10.9.9.9/32"),  # occupies the target name
+        ],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert cs.is_blocked
+    assert any("H-10.0.0.1" in b for b in cs.blockers)
+    assert cs.op_count == 0
+
+
+def test_apply_all_blocks_when_two_objects_share_a_scheme_name() -> None:
+    # Two different objects whose values imply the SAME scheme name must not
+    # silently overwrite each other — block, attributing both old names.
+    snap = Snapshot(
+        addresses=[
+            _addr("dup-1", "10.0.0.1/32"),
+            _addr("dup-2", "10.0.0.1/32"),  # same value → same H-10.0.0.1
+        ],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert cs.is_blocked
+    assert any("dup-1" in b and "dup-2" in b for b in cs.blockers)
+    assert cs.op_count == 0
+
+
+def test_apply_all_refuses_shadow_inducing_rename() -> None:
+    # A shared object whose scheme name is already defined in a child DG would
+    # shadow it across the hierarchy — refuse (REQUIRED shadow test).
+    snap = Snapshot(
+        addresses=[
+            _addr("h-a", "10.0.0.1/32", SHARED),
+            _addr("H-10.0.0.1", "2.2.2.2/32", Location.dg("DG1")),
+        ],
+        device_groups=["DG1"],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert cs.is_blocked
+    assert any("DG1" in b and "shadow" in b for b in cs.blockers)
+    assert cs.op_count == 0
+
+
+def test_apply_all_scope_filter_limits_to_selected_location() -> None:
+    # Only the DG1 object is in scope; the shared one is left alone.
+    snap = Snapshot(
+        addresses=[
+            _addr("h-shared", "10.0.0.1/32", SHARED),
+            _addr("h-dg", "10.0.0.2/32", Location.dg("DG1")),
+        ],
+        device_groups=["DG1"],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme(), scope=Location.dg("DG1"))
+    assert not cs.is_blocked
+    # A bulk rename scoped to DG1 renames only DG1-local objects; the inherited
+    # `shared` object is deliberately left alone (mutations don't sweep up shared).
+    assert {r.old_name for r in cs.renames} == {"h-dg"}
+
+
+def test_apply_all_repoints_same_name_at_different_locations_independently() -> None:
+    # Two objects share the name "myhost" but live at different scopes with
+    # different values, so they get different scheme names. A group at each scope
+    # references its own "myhost"; each must repoint to the right new name — a
+    # location-agnostic rename map would corrupt one of them.
+    snap = Snapshot(
+        addresses=[
+            _addr("myhost", "10.0.0.1/32", SHARED),
+            _addr("myhost", "10.0.0.2/32", Location.dg("DG1")),
+        ],
+        address_groups=[
+            AddressGroup(name="g-shared", location=SHARED, static_members=["myhost"]),
+            AddressGroup(name="g-dg", location=Location.dg("DG1"), static_members=["myhost"]),
+        ],
+        device_groups=["DG1"],
+    )
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert not cs.is_blocked
+    by_referrer = {e.referrer_name: e.after for e in cs.reference_edits}
+    # g-dg's "myhost" binds to the DG1 object (10.0.0.2) → H-10.0.0.2; g-shared's
+    # binds to the shared object (10.0.0.1) → H-10.0.0.1. No cross-contamination.
+    assert by_referrer["g-dg"] == ["H-10.0.0.2"]
+    assert by_referrer["g-shared"] == ["H-10.0.0.1"]
+
+
+def test_apply_all_empty_when_all_compliant() -> None:
+    snap = Snapshot(addresses=[_addr("H-10.0.0.1", "10.0.0.1/32")])
+    graph = ReferenceGraph.build(snap)
+    cs = plan_apply_scheme(snap, graph, NamingScheme())
+    assert not cs.is_blocked
+    assert cs.is_empty
