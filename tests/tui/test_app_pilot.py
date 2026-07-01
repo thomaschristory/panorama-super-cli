@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import pytest
+from textual.widgets import DataTable, Input
+
+from psc.core.source import OfflineSource
+from psc.tui.app import WorkbenchApp
+from psc.tui.screens.audit import AuditScreen
+from psc.tui.screens.move import MoveScreen
+from psc.tui.screens.rename import RenameScreen
+from psc.tui.screens.rule import RuleScreen
+from psc.tui.screens.usage import UsageScreen
+from psc.tui.session import WorkbenchSession
+from psc.tui.state import OutputMode
+
+
+def _app(workbench_xml: str) -> WorkbenchApp:
+    sess = WorkbenchSession(source=OfflineSource(workbench_xml), output_mode=OutputMode.SET)
+    return WorkbenchApp(sess)
+
+
+@pytest.mark.asyncio
+async def test_search_populates_results(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "srv"
+        await pilot.press("enter")
+        await pilot.pause()
+        table = app.query_one("#results", DataTable)
+        assert table.row_count == 2
+
+
+@pytest.mark.asyncio
+async def test_space_toggles_selection(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        assert [i.name for i in app.session.selection] == ["db-gw"]
+
+
+@pytest.mark.asyncio
+async def test_space_twice_deselects(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+        assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_dedup_spoke_stages_merge_and_reconciles(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")  # row 0
+        results.move_cursor(row=1)
+        await pilot.press("space")  # row 1
+        await pilot.pause()
+        assert len(app.session.selection) == 2
+        await pilot.press("d")  # open dedup screen
+        await pilot.pause()
+        await pilot.press("ctrl+y")  # stage the proposed merge
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        assert len(app.session.selection) == 1  # reconciled: merged-away dupe gone
+
+
+@pytest.mark.asyncio
+async def test_apply_batch_offline_writes_file(workbench_xml: str, tmp_path) -> None:
+    sess = WorkbenchSession(
+        source=OfflineSource(workbench_xml), output_mode=OutputMode.OFFLINE_APPLY
+    )
+    dest = tmp_path / "candidate.xml"
+    sess.apply_out_path = str(dest)  # the hub reads this for offline apply
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")
+        results.move_cursor(row=1)
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        await pilot.press("ctrl+a")  # apply batch
+        await pilot.pause()
+    assert dest.exists()
+    assert "web-srv-02" not in dest.read_text()
+
+
+@pytest.mark.asyncio
+async def test_usage_spoke_opens_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "web-srv-01"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, UsageScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_audit_spoke_opens_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "web-srv-01"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, AuditScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_decommission_spoke_stages_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_rename_spoke_opens_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert isinstance(app.screen, RenameScreen)
+
+
+@pytest.mark.asyncio
+async def test_move_and_rule_bindings_open(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        assert isinstance(app.screen, MoveScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, RuleScreen)
+
+
+@pytest.mark.asyncio
+async def test_rename_spoke_stages_and_reconciles(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        app.screen.query_one("#rename-input", Input).value = "db-gateway"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        # db-gw renamed -> its old identity drops out of the selection
+        assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_move_spoke_stages_and_reconciles(workbench_xml_dg: str) -> None:
+    sess = WorkbenchSession(source=OfflineSource(workbench_xml_dg), output_mode=OutputMode.SET)
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "dg-only"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        # dg-only moved dg1 -> shared; the dg1 identity drops out of the selection
+        assert app.session.selection == []

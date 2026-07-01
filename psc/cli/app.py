@@ -23,6 +23,7 @@ from psc.cli import (
     rule_cmds,
     set_cmds,
     version_cmds,
+    workbench_cmds,
 )
 from psc.cli.runtime import Runtime, configure_logging
 from psc.config.loader import config_path, load_config
@@ -166,6 +167,8 @@ app.command(
     "login",
     help="Verify a profile's API key — and rotate it with --user.",
 )(auth_cmds.login)
+app.command("workbench", help="Launch the interactive workbench TUI.")(workbench_cmds.workbench)
+app.command("w", hidden=True, help="Alias for workbench.")(workbench_cmds.workbench)
 
 
 def _emit_error(err: PscError) -> None:
