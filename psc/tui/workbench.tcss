@@ -1,0 +1,8 @@
+/* Palo Alto orange accent. */
+Screen { background: $surface; }
+#search { border: tall #fa582d; }
+#results { height: 1fr; border: round #fa582d; }
+#selection { height: 1fr; border: round $secondary; }
+#staging { height: auto; border: round #fa582d; color: $text; }
+DataTable > .datatable--cursor { background: #fa582d; color: black; }
+Footer { background: #fa582d; }
