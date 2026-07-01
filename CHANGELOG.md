@@ -7,6 +7,38 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v0.5.0 — 2026-07-01
+
+### Added
+
+- **`psc workbench` (alias `psc w`) — an interactive Textual TUI** (#80). A
+  keyboard-driven "workbench" that glues the engines together around a
+  persistent, heterogeneous **selection buffer**: search objects (by IP, value,
+  or name), multi-select them, then route the selection into a spoke. Mutations
+  accumulate into a git-like **staged changelist** that compounds in-memory (via
+  the existing `apply_changeset`) and applies as one batch — `set` script,
+  offline write, or live candidate push (never commits). All seven v1 spokes are
+  included:
+  - **dedup** (`d`) — merge duplicate selected addresses;
+  - **usage** (`u`) — where-used for the selection (read-only);
+  - **audit** (`a`) — address overlaps/containment involving the selection
+    (read-only);
+  - **move** (`m`) — promote selected objects toward `shared`;
+  - **decommission** (`x`) — reference-safe cascading teardown of selected
+    addresses;
+  - **rename** (`r`) — reference-aware rename;
+  - **rule** (`e`) — add selected objects as members of an existing rule field.
+
+  The TUI is a pure `psc.core`/`psc.output` frontend (it never imports
+  `psc.cli`), inheriting every safety invariant: dry-run by default, a hard
+  blocker gate on staging, repoint-before-delete, offline never overwrites the
+  source export, and live never commits. Textual is now a runtime dependency.
+
+### Notes
+
+- The **rule** spoke edits members of *existing* rules; rule creation is not yet
+  supported (there is no core rule-creation engine).
+
 ## v0.4.3 — 2026-06-08
 
 ### Fixed
