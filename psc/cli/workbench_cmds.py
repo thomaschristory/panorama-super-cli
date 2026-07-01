@@ -41,14 +41,23 @@ def build_session(
 
 def workbench(
     ctx: typer.Context,
+    output_mode: OutputMode = typer.Option(
+        OutputMode.SET,
+        "--output-mode",
+        help="How a staged batch applies: 'set' prints the PAN-OS script, "
+        "'offline-apply' writes the compounded config to --apply-out, "
+        "'live-apply' pushes to the live candidate (never commits).",
+    ),
     apply_out: str | None = typer.Option(
-        None, "--apply-out", help="File to write when output mode is offline-apply."
+        None, "--apply-out", help="File to write when --output-mode is offline-apply."
     ),
 ) -> None:
     """Launch the interactive workbench TUI."""
     rt: Runtime = ctx.obj
-    session = build_session(
-        config_file=rt.config_file, profile=rt.profile, output_mode=OutputMode.SET
-    )
+    # Passing --apply-out is an unambiguous request for offline-apply; honour it
+    # so the flag is never a silent no-op under the default SET mode.
+    if apply_out is not None and output_mode is OutputMode.SET:
+        output_mode = OutputMode.OFFLINE_APPLY
+    session = build_session(config_file=rt.config_file, profile=rt.profile, output_mode=output_mode)
     session.apply_out_path = apply_out
     WorkbenchApp(session).run()

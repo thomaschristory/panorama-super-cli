@@ -44,8 +44,6 @@ class WorkbenchApp(App[None]):
         self.session = session
         # The rows currently shown in #results, parallel to the table rows.
         self._results: list[SelectionItem] = []
-        # Where offline-apply writes the compounded config; set by the launcher.
-        self.apply_out_path: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -91,7 +89,7 @@ class WorkbenchApp(App[None]):
         self.push_screen(DedupScreen(self.session))
 
     def action_apply_batch(self) -> None:
-        out_path = getattr(self.session, "apply_out_path", None) or self.apply_out_path
+        out_path = self.session.apply_out_path
         try:
             outcome = self.session.apply_batch(out_path=out_path)
         except Exception as exc:
