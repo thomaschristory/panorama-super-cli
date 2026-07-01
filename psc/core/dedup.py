@@ -25,6 +25,7 @@ from psc.core.models import Location, Snapshot
 from psc.core.normalize import normalize_address, service_key
 from psc.core.refs import Reference, ReferenceGraph
 from psc.core.rulebases import rule_container
+from psc.output.errors import ErrorType, PscError
 
 # Address-groups share the `address` namespace with address objects in the
 # reference graph's `_addr_idx`; this is the namespace string every resolve/
@@ -334,6 +335,109 @@ def plan_merge(
     if cs.blockers:
         # Invariant: a blocked plan carries zero ops, so no consumer can execute
         # a partial rewrite by iterating ops without checking `is_blocked`.
+        cs.reference_edits.clear()
+        cs.deletes.clear()
+    return cs
+
+
+def select_address_bucket(snapshot: Snapshot, value: str, *, strict: bool = True) -> DuplicateGroup:
+    """Find the duplicate-address bucket matching a user-supplied `--group` value.
+
+    Accepts either the full display string `dedup addresses` prints
+    (`ip-netmask 10.0.0.10/32`) or just the value token (`10.0.0.10/32`). Raises
+    an INPUT error when nothing — or ambiguously more than one bucket — matches,
+    so the CLI surfaces a clean usage error rather than a silent no-op.
+    """
+    wanted = value.strip()
+    matches = [
+        g
+        for g in find_duplicate_addresses(snapshot, strict=strict)
+        if g.value == wanted or g.value.split(" ", 1)[-1] == wanted
+    ]
+    if not matches:
+        raise PscError(
+            f"no duplicate-address bucket matches '{value}' "
+            "(run `dedup addresses` to list buckets)",
+            ErrorType.INPUT,
+        )
+    if len(matches) > 1:
+        raise PscError(
+            f"'{value}' matches {len(matches)} buckets; qualify it with the type prefix "
+            "(e.g. 'ip-netmask 10.0.0.10/32')",
+            ErrorType.INPUT,
+        )
+    return matches[0]
+
+
+def plan_merge_bucket(
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    members: list[ObjectRef],
+    keep: ObjectRef | None = None,
+    allow_value_change: bool = False,
+) -> ChangeSet:
+    """Collapse an entire duplicate bucket toward one survivor in a single plan.
+
+    Composes the pairwise `plan_merge` for every dropped member against the same
+    survivor and folds the results into one `ChangeSet`: repoints from all
+    dropped objects onto `keep`, then deletes every dropped object. Blockers and
+    warnings aggregate across members, and the same unmappable-reference gate
+    applies — a single un-repointable reference gates the whole plan (zero ops).
+
+    `keep` must be one of `members`; omitting it selects the deterministic default
+    survivor — the sorted-first member, matching the order `find_duplicate_*`
+    already emit. A `keep` outside the bucket is an INPUT error.
+    """
+    if not members:
+        raise PscError("empty duplicate bucket", ErrorType.INPUT)
+
+    ordered = sorted(members, key=lambda m: (m.location, m.name))
+    if keep is None:
+        keep = ordered[0]
+    elif not any(m.name == keep.name and m.location == keep.location for m in ordered):
+        names = ", ".join(f"'{m.name}'@{m.location}" for m in ordered)
+        raise PscError(
+            f"--keep '{keep.name}'@{keep.location} is not a member of this bucket ({names})",
+            ErrorType.INPUT,
+        )
+
+    drops = [m for m in ordered if (m.name, m.location) != (keep.name, keep.location)]
+    cs = ChangeSet(title=f"merge bucket ({len(drops)} object(s)) -> '{keep.name}'@{keep.location}")
+
+    # Fold each pairwise plan's ops in. Reference edits touching the same field
+    # must chain: the second drop rewrites the *first drop's* result, not the
+    # original members, or a shared referrer would keep a still-dropped member.
+    edit_index: dict[tuple[str, str, str, str, str | None], ReferenceEdit] = {}
+    for drop in drops:
+        sub = plan_merge(
+            snapshot, graph, keep=keep, drop=drop, allow_value_change=allow_value_change
+        )
+        cs.warnings.extend(sub.warnings)
+        cs.blockers.extend(sub.blockers)
+        for edit in sub.reference_edits:
+            key = (
+                edit.referrer_kind,
+                edit.referrer_name,
+                edit.referrer_location,
+                edit.field,
+                edit.rulebase,
+            )
+            prior = edit_index.get(key)
+            if prior is None:
+                edit_index[key] = edit
+                cs.reference_edits.append(edit)
+            else:
+                # Re-derive the rewrite against the already-accumulated `after`,
+                # so successive drops on one field compose instead of clobbering.
+                prior.after = _rewrite_members(prior.after, drop.name, keep.name)
+        cs.deletes.extend(sub.deletes)
+
+    # Re-run the shared teardown gate over the *combined* plan (individual subs
+    # already gated themselves, but recompute so aggregated ops are consistent).
+    gate_unmappable_reference_edits(cs)
+
+    if cs.blockers:
         cs.reference_edits.clear()
         cs.deletes.clear()
     return cs
