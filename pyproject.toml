@@ -29,6 +29,7 @@ dependencies = [
     "pan-os-python>=1.12",
     "defusedxml>=0.7",
     "packaging>=23.0",
+    "textual>=0.85",
 ]
 
 [project.scripts]
