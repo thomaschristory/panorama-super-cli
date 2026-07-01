@@ -11,7 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from psc.tui.session import WorkbenchSession
+from psc.tui.session import WorkbenchSession, render_value
 from psc.tui.state import SelectionItem
 
 _TCSS = str(Path(__file__).with_name("workbench.tcss"))
@@ -82,7 +82,7 @@ class WorkbenchApp(App[None]):
 
     def on_mount(self) -> None:
         results = self.query_one("#results", DataTable)
-        results.add_columns("kind", "name", "location")
+        results.add_columns("kind", "name", "location", "value")
         results.cursor_type = "row"
         sel = self.query_one("#selection", DataTable)
         sel.add_columns("kind", "name", "location")
@@ -93,8 +93,9 @@ class WorkbenchApp(App[None]):
         self._results = self.session.search(event.value)
         table = self.query_one("#results", DataTable)
         table.clear()
+        snapshot = self.session.working_snapshot
         for item in self._results:
-            table.add_row(item.kind, item.name, item.location)
+            table.add_row(item.kind, item.name, item.location, render_value(snapshot, item))
 
     def _refresh_selection_view(self) -> None:
         sel = self.query_one("#selection", DataTable)
