@@ -71,11 +71,16 @@ def used(
 def unused(
     ctx: typer.Context,
     kind: str = typer.Option("address", "--kind", help=f"One of: {', '.join(_KINDS)}."),
+    ignore_disabled: bool = typer.Option(
+        False,
+        "--ignore-disabled",
+        help="Treat disabled rules as non-references; surface objects used only by disabled rules.",
+    ),
 ) -> None:
     """List objects no rule reaches — directly or transitively through groups."""
     rt: Runtime = ctx.obj
     graph = ReferenceGraph.build(rt.snapshot())
-    targets = graph.unused(kind)
+    targets = graph.unused(kind, ignore_disabled=ignore_disabled)
     rows = [{"kind": t.kind, "name": t.name, "location": t.location.name} for t in targets]
     if rt.strict and not targets:
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
