@@ -138,10 +138,12 @@ def test_stage_reconciles_selection_dropping_dead_items(workbench_xml):
 
 def test_stage_refuses_blocked_changeset(workbench_xml):
     sess = _session(workbench_xml)
+    original_xml = sess.working_xml
     cs = ChangeSet(title="bad", blockers=["cannot repoint cross-scope reference"])
     with pytest.raises(PscError):
         sess.stage("bad", cs)
     assert sess.staging == []
+    assert sess.working_xml == original_xml  # blocked stage never mutates config
 
 
 def test_second_stage_plans_against_compounded_reality(workbench_xml):

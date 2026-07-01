@@ -104,8 +104,13 @@ class WorkbenchSession:
             )
         if cs.is_empty:
             return
-        self.working_xml = apply_changeset(self.working_xml, cs)
-        self.working_snapshot = parse_config(self.working_xml)
+        # Stage onto temporaries and promote atomically: if apply_changeset or
+        # parse_config raises, self.working_xml/working_snapshot stay consistent
+        # with each other (no half-applied state).
+        new_xml = apply_changeset(self.working_xml, cs)
+        new_snapshot = parse_config(new_xml)
+        self.working_xml = new_xml
+        self.working_snapshot = new_snapshot
         self.staging.append(StagedChange(label=label, changeset=cs))
         self._reconcile_selection()
 
