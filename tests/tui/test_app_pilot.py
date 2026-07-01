@@ -31,6 +31,24 @@ async def test_search_populates_results(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_results_show_value_column(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        # web-srv-01 (10.0.5.10/32) and web-srv-02 (10.0.5.10/32) share a prefix;
+        # db-gw (10.0.9.1/32) does not. Searching "srv" returns the two web rows,
+        # each of which must carry its ip-netmask value so they're distinguishable.
+        app.query_one("#search", Input).value = "web"
+        await pilot.press("enter")
+        await pilot.pause()
+        table = app.query_one("#results", DataTable)
+        headers = [str(c.label) for c in table.columns.values()]
+        assert "value" in headers
+        value_key = next(k for k, c in table.columns.items() if str(c.label) == "value")
+        values = {str(table.get_cell(rk, value_key)) for rk in table.rows}
+        assert values == {"10.0.5.10/32"}
+
+
+@pytest.mark.asyncio
 async def test_space_toggles_selection(workbench_xml: str) -> None:
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
