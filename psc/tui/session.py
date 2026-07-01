@@ -72,3 +72,19 @@ class WorkbenchSession:
                 found[item.key] = item
 
         return list(found.values())
+
+    def toggle(self, item: SelectionItem) -> bool:
+        """Add `item` if absent (by key), remove it if present. Returns True
+        when the result is 'now selected'."""
+        for existing in self.selection:
+            if existing.key == item.key:
+                self.selection.remove(existing)
+                return False
+        self.selection.append(item)
+        return True
+
+    def selected_of_kinds(self, kinds: set[str]) -> list[SelectionItem]:
+        return [i for i in self.selection if i.kind in kinds]
+
+    def clear_selection(self) -> None:
+        self.selection.clear()

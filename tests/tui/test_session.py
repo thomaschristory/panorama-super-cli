@@ -65,3 +65,36 @@ def test_search_empty_returns_nothing(workbench_xml):
     sess = _session(workbench_xml)
     assert sess.search("") == []
     assert sess.search("   ") == []
+
+
+def test_toggle_adds_then_removes(workbench_xml):
+    sess = _session(workbench_xml)
+    item = SelectionItem(kind="address", name="web-srv-01", location="shared")
+    assert sess.toggle(item) is True  # added
+    assert sess.selection == [item]
+    assert sess.toggle(item) is False  # removed
+    assert sess.selection == []
+
+
+def test_toggle_is_idempotent_on_key(workbench_xml):
+    sess = _session(workbench_xml)
+    a = SelectionItem(kind="address", name="web-srv-01", location="shared")
+    a2 = SelectionItem(kind="address", name="web-srv-01", location="shared")
+    sess.toggle(a)
+    sess.toggle(a2)  # same key -> removes
+    assert sess.selection == []
+
+
+def test_selected_of_kinds_filters(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.toggle(SelectionItem(kind="address", name="web-srv-01", location="shared"))
+    sess.toggle(SelectionItem(kind="service", name="tcp-8443", location="shared"))
+    addrs = sess.selected_of_kinds({"address"})
+    assert [i.name for i in addrs] == ["web-srv-01"]
+
+
+def test_clear_selection(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.toggle(SelectionItem(kind="address", name="db-gw", location="shared"))
+    sess.clear_selection()
+    assert sess.selection == []
