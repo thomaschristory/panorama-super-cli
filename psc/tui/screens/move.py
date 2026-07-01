@@ -63,11 +63,17 @@ class MoveScreen(Screen[None]):
         if not self._items:
             self.app.bell()
             return
+        hub = cast("WorkbenchApp", self.app)
         for item in list(self._items):
             cs = plan_move_item(self.session, item, "shared")
             if not can_apply(cs):
+                # A blocked move stops here rather than silently popping with a
+                # partial result: preceding items are already staged (visible in
+                # the hub's staging strip), and the user stays on-screen to see
+                # the bell and decide (esc to leave).
                 self.app.bell()
-                break
+                hub._refresh_selection_view()
+                return
             self.session.stage(f"move {item.name} -> shared", cs)
         self.app.pop_screen()
-        cast("WorkbenchApp", self.app)._refresh_selection_view()
+        hub._refresh_selection_view()
