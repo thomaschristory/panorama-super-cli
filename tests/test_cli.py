@@ -46,6 +46,31 @@ def test_unused_prints_scope_caveat_to_stderr() -> None:
     assert "template" in low  # names the most dangerous blind spot
 
 
+def test_unused_ignore_disabled_surfaces_disabled_only_object(tmp_path: Path) -> None:
+    # An address referenced only by a DISABLED rule is used by default but
+    # surfaces under `refs unused --ignore-disabled` (#9).
+    cfg = tmp_path / "disabled-only.xml"
+    cfg.write_text(
+        """<config><shared>
+          <address><entry name="h-off"><ip-netmask>10.9.9.9/32</ip-netmask></entry></address>
+          <pre-rulebase><security><rules><entry name="r">
+            <source><member>any</member></source>
+            <destination><member>h-off</member></destination>
+            <disabled>yes</disabled></entry>
+          </rules></security></pre-rulebase>
+        </shared></config>"""
+    )
+    default = run("-c", str(cfg), "-o", "json", "refs", "unused", "--kind", "address")
+    assert default.returncode == 0
+    assert "h-off" not in {row["name"] for row in json.loads(default.stdout)}
+
+    flagged = run(
+        "-c", str(cfg), "-o", "json", "refs", "unused", "--kind", "address", "--ignore-disabled"
+    )
+    assert flagged.returncode == 0
+    assert "h-off" in {row["name"] for row in json.loads(flagged.stdout)}
+
+
 def test_unparseable_dag_filter_warns_on_stderr(tmp_path: Path) -> None:
     # An unparseable DAG filter must not crash the audit; psc warns on stderr
     # (naming the DAG) that its membership is unverified, and stdout stays clean.
