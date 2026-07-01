@@ -35,7 +35,7 @@ def build_session(
                 "no source: pass --config <export.xml> or configure a profile",
                 ErrorType.CONFIG,
             )
-        source = LiveSource(prof.hostname, prof.api_key, port=prof.port, verify=prof.verify_ssl)
+        source = prof.to_live_source()
     return WorkbenchSession(source=source, output_mode=output_mode)
 
 

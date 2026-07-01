@@ -23,7 +23,7 @@ from panos.errors import (
     PanURLError,
 )
 
-from psc.core.source import LiveSource
+from psc.core.source import InsecureTLSWarning, LiveSource
 from psc.output.errors import ErrorType, PscError
 
 _SysInfo = collections.namedtuple("SystemInfo", ["version", "platform", "serial"])
@@ -151,3 +151,32 @@ def test_verify_unreachable_is_transport(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(PscError) as exc:
         LiveSource("pano.example", "KEY").verify()
     assert exc.value.error_type is ErrorType.TRANSPORT
+
+
+def test_fetch_api_key_insecure_emits_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A password-bearing keygen over an unverified channel is MITM-able: warn loudly.
+    _patch_keygen(monkeypatch)
+    with pytest.warns(InsecureTLSWarning, match="credentials"):
+        LiveSource.fetch_api_key("pano.example", "admin", "s3cret", verify=False)
+
+
+def test_fetch_api_key_secure_no_warning(
+    monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+) -> None:
+    _patch_keygen(monkeypatch)
+    LiveSource.fetch_api_key("pano.example", "admin", "s3cret", verify=True)
+    assert not [w for w in recwarn.list if issubclass(w.category, InsecureTLSWarning)]
+
+
+def test_device_insecure_emits_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_probe(monkeypatch)
+    with pytest.warns(InsecureTLSWarning):
+        LiveSource("pano.example", "KEY", verify=False)._device()
+
+
+def test_device_secure_no_warning(
+    monkeypatch: pytest.MonkeyPatch, recwarn: pytest.WarningsRecorder
+) -> None:
+    _patch_probe(monkeypatch)
+    LiveSource("pano.example", "KEY", verify=True)._device()
+    assert not [w for w in recwarn.list if issubclass(w.category, InsecureTLSWarning)]
