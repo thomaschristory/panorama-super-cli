@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import os
 from pathlib import Path
@@ -41,13 +42,40 @@ def load_config(path: Path | None = None) -> Config:
 
 def save_config(config: Config) -> Path:
     path = config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # The config holds API keys, so the file must never exist world-readable —
+    # not even for the create→chmod window. Create the parent dir private (0700)
+    # and open the file 0600 *atomically* (O_CREAT with mode), writing the
+    # secrets only through that already-restricted fd.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _tighten_config_dir(path.parent)
     buf = io.StringIO()
     # Inline YAML setup (not shared with psc.output) so config persistence never
     # depends on the rendering layer.
     yaml = YAML()
     yaml.default_flow_style = False
     yaml.dump(config.model_dump(mode="json"), buf)
-    path.write_text(buf.getvalue(), encoding="utf-8")
-    path.chmod(0o600)  # contains API keys
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(buf.getvalue())
+    # O_CREAT honours `mode` only on first create (and is umask-masked); a
+    # pre-existing file keeps its old bits, so re-assert 0600 explicitly.
+    _chmod_quietly(path, 0o600)
     return path
+
+
+def _tighten_config_dir(directory: Path) -> None:
+    """Ensure only the psc config dir is private (0700).
+
+    `mkdir(mode=0o700)` is a no-op when the dir already exists and is subject to
+    the umask on creation, so re-assert 0700 on *this* dir only — never touching
+    unrelated parents, and never crashing on a platform without chmod semantics.
+    """
+    _chmod_quietly(directory, 0o700)
+
+
+def _chmod_quietly(target: Path, mode: int) -> None:
+    # chmod is a POSIX concept; on platforms where it is unsupported or the OS
+    # refuses (e.g. some Windows filesystems) fall back gracefully rather than
+    # crash — the O_CREAT mode already did the best-effort tightening.
+    with contextlib.suppress(NotImplementedError, OSError):
+        target.chmod(mode)

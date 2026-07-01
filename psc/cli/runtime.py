@@ -72,9 +72,7 @@ class Runtime:
             return self._source
         prof = self.config.profile(self.profile)
         if prof is not None:
-            self._source = LiveSource(
-                prof.hostname, prof.api_key, port=prof.port, verify=prof.verify_ssl
-            )
+            self._source = prof.to_live_source()
             return self._source
         raise PscError(
             "no config source: pass --config <export.xml> for offline, or "
