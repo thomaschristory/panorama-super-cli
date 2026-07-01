@@ -552,11 +552,18 @@ git commit -m "feat(tui): rename spoke — reference-aware rename of a selected 
 
 Adds each selected object's name as a member of an existing rule's field (`source`/`destination`/`service`/`application`), via `rule_edit.plan_rule_member_edit`. The rule name and field are typed; the rulebase defaults to `pre`.
 
-- [ ] **Step 1: Add a rule to the fixture**
+- [ ] **Step 1: Add a dedicated rule fixture (do NOT modify `WORKBENCH_XML`)**
 
-The existing `WORKBENCH_XML` has no rules. Add a shared pre-rulebase security rule so the spoke has a target. In `tests/tui/conftest.py`, inside `<shared>` of `WORKBENCH_XML` (after the `<service>` block), add:
+Keep `WORKBENCH_XML` untouched (isolation — the same reason Plan 2 used a separate fixture). Append a new fixture to `tests/tui/conftest.py` with a shared pre-rulebase security rule `allow-web` (its `source` already contains `web-srv-01`, so an idempotent-add test has a present member, and `db-gw`/`web-srv-01` both exist to add):
 
-```xml
+```python
+WORKBENCH_XML_RULE = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="web-srv-01"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="db-gw"><ip-netmask>10.0.9.1/32</ip-netmask></entry>
+    </address>
     <pre-rulebase>
       <security>
         <rules>
@@ -572,10 +579,26 @@ The existing `WORKBENCH_XML` has no rules. Add a shared pre-rulebase security ru
         </rules>
       </security>
     </pre-rulebase>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group/>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_rule(tmp_path):
+    """Config with a pre-rulebase security rule 'allow-web' for the rule spoke."""
+    p = tmp_path / "config_rule.xml"
+    p.write_text(WORKBENCH_XML_RULE, encoding="utf-8")
+    return str(p)
 ```
 
 Verify it parses to a security rule: run
-`uv run python -c "from psc.core.parse import parse_config; from tests.tui.conftest import WORKBENCH_XML; s=parse_config(WORKBENCH_XML); print([(r.name, r.rulebase) for r in s.security_rules])"`
+`uv run python -c "from psc.core.parse import parse_config; from tests.tui.conftest import WORKBENCH_XML_RULE; s=parse_config(WORKBENCH_XML_RULE); print([(r.name, r.rulebase) for r in s.security_rules])"`
 Expected: shows `allow-web` with rulebase `pre` (or the parser's representation). If it parses to zero security rules, read `psc/core/parse.py`'s `_parse_security_rules` and the scope/rulebase walk to learn the exact expected XML nesting (shared vs device-group, `pre-rulebase`/`post-rulebase` tag names) and fix the fixture minimally so exactly one security rule named `allow-web` appears. Confirm the Plan 1/2 tests still pass afterward (`just test tests/tui -q`).
 
 - [ ] **Step 2: Write the failing test**
@@ -596,16 +619,16 @@ def _session(workbench_xml: str) -> WorkbenchSession:
     return WorkbenchSession(source=OfflineSource(workbench_xml), output_mode=OutputMode.SET)
 
 
-def test_add_member_to_rule_source(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_add_member_to_rule_source(workbench_xml_rule: str) -> None:
+    sess = _session(workbench_xml_rule)
     cs = plan_rule_add_member(sess, "allow-web", Rulebase.PRE, "source", "db-gw")
     # adding db-gw to allow-web's source is a real, non-blocked edit
     assert not cs.is_blocked
     assert not cs.is_empty
 
 
-def test_add_present_member_is_empty(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_add_present_member_is_empty(workbench_xml_rule: str) -> None:
+    sess = _session(workbench_xml_rule)
     # web-srv-01 is already in allow-web's source -> idempotent no-op
     cs = plan_rule_add_member(sess, "allow-web", Rulebase.PRE, "source", "web-srv-01")
     assert cs.is_empty

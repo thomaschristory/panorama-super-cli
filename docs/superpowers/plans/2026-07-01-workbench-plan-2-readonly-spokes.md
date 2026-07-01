@@ -31,33 +31,29 @@ def _loc(name: str) -> Location:
 
 ---
 
-### Task 1: Extend the test fixture for refs + overlaps
+### Task 1: Add a dedicated refs/overlaps fixture
 
 **Files:**
 - Modify: `tests/tui/conftest.py`
 
-The Plan 1 fixture has three `/32` addresses + one service in `shared`. Add (a) an address-group `web-pool` referencing `web-srv-01` (so where-used has an edge), and (b) a broader network `net-10-0-5` = `10.0.5.0/24` that CONTAINS `web-srv-01` (`10.0.5.10/32`) so the audit finds a containment pair.
+**Do NOT modify the existing `WORKBENCH_XML`.** Adding a containing `/24` network to it would make `find_ip("10.0.5.10")` return that network as the first match, breaking Plan 1's dedup Pilot test (which selects the first two results expecting the two `/32` duplicates). Instead add a **new, isolated fixture** with (a) an address-group `web-pool` referencing `web-srv-01` (a where-used edge) and (b) a broader network `net-10-0-5` = `10.0.5.0/24` that CONTAINS `web-srv-01` (`10.0.5.10/32`) so audit finds a containment pair.
 
-- [ ] **Step 1: Update the fixture XML**
+- [ ] **Step 1: Add the new fixture**
 
-In `tests/tui/conftest.py`, replace the `<address>...</address>` block and add an `<address-group>` block inside `<shared>` so it reads:
+Append to `tests/tui/conftest.py` (keep `WORKBENCH_XML` and `workbench_xml` untouched):
 
 ```python
-WORKBENCH_XML = """<?xml version="1.0"?>
+WORKBENCH_XML_REFS = """<?xml version="1.0"?>
 <config>
   <shared>
     <address>
       <entry name="web-srv-01"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
-      <entry name="web-srv-02"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
       <entry name="db-gw"><ip-netmask>10.0.9.1/32</ip-netmask></entry>
       <entry name="net-10-0-5"><ip-netmask>10.0.5.0/24</ip-netmask></entry>
     </address>
     <address-group>
       <entry name="web-pool"><static><member>web-srv-01</member></static></entry>
     </address-group>
-    <service>
-      <entry name="tcp-8443"><protocol><tcp><port>8443</port></tcp></protocol></entry>
-    </service>
   </shared>
   <devices>
     <entry name="localhost.localdomain">
@@ -66,23 +62,32 @@ WORKBENCH_XML = """<?xml version="1.0"?>
   </devices>
 </config>
 """
+
+
+@pytest.fixture
+def workbench_xml_refs(tmp_path):
+    """Config with a group referencing an address + a containing network,
+    for the usage (where-used) and audit (overlap) spokes."""
+    p = tmp_path / "config_refs.xml"
+    p.write_text(WORKBENCH_XML_REFS, encoding="utf-8")
+    return str(p)
 ```
 
-- [ ] **Step 2: Verify the fixture parses with the new objects**
+- [ ] **Step 2: Verify the fixture parses**
 
-Run: `uv run python -c "from psc.core.parse import parse_config; from tests.tui.conftest import WORKBENCH_XML; s=parse_config(WORKBENCH_XML); print(len(s.addresses), len(s.address_groups), len(s.services))"`
-Expected: prints `4 1 1`.
+Run: `uv run python -c "from psc.core.parse import parse_config; from tests.tui.conftest import WORKBENCH_XML_REFS; s=parse_config(WORKBENCH_XML_REFS); print(len(s.addresses), len(s.address_groups))"`
+Expected: prints `3 1`.
 
-- [ ] **Step 3: Confirm existing tests still pass**
+- [ ] **Step 3: Confirm existing tests still pass (fixture is additive)**
 
 Run: `just test tests/tui -q`
-Expected: PASS. (Plan 1 tests search "srv" → still exactly web-srv-01/02; "10.0.5.10" still finds the two /32s. `net-10-0-5` has a different value so it doesn't disturb those assertions. If any Plan 1 test now fails because the new objects change a count, STOP and report — do not weaken Plan 1 tests without cause.)
+Expected: PASS — unchanged, since `WORKBENCH_XML` was not touched.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add tests/tui/conftest.py
-git commit -m "test(tui): extend workbench fixture with a group + containing network"
+git commit -m "test(tui): dedicated refs/overlaps fixture (group + containing network)"
 ```
 
 ---
@@ -113,8 +118,8 @@ def _session(workbench_xml: str) -> WorkbenchSession:
     return WorkbenchSession(source=OfflineSource(workbench_xml), output_mode=OutputMode.SET)
 
 
-def test_where_used_finds_group_referrer(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_where_used_finds_group_referrer(workbench_xml_refs: str) -> None:
+    sess = _session(workbench_xml_refs)
     sess.toggle(SelectionItem(kind="address", name="web-srv-01", location="shared"))
     rows = selection_where_used(sess)
     # web-srv-01 is referenced by the address-group web-pool
@@ -127,15 +132,15 @@ def test_where_used_finds_group_referrer(workbench_xml: str) -> None:
     )
 
 
-def test_where_used_empty_for_unreferenced(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_where_used_empty_for_unreferenced(workbench_xml_refs: str) -> None:
+    sess = _session(workbench_xml_refs)
     sess.toggle(SelectionItem(kind="address", name="db-gw", location="shared"))
     rows = selection_where_used(sess)
     assert rows == []
 
 
-def test_where_used_only_considers_selection(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_where_used_only_considers_selection(workbench_xml_refs: str) -> None:
+    sess = _session(workbench_xml_refs)
     # nothing selected -> nothing to report
     assert selection_where_used(sess) == []
 ```
@@ -295,8 +300,8 @@ def _session(workbench_xml: str) -> WorkbenchSession:
     return WorkbenchSession(source=OfflineSource(workbench_xml), output_mode=OutputMode.SET)
 
 
-def test_overlaps_finds_containment_involving_selection(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_overlaps_finds_containment_involving_selection(workbench_xml_refs: str) -> None:
+    sess = _session(workbench_xml_refs)
     # net-10-0-5 (10.0.5.0/24) CONTAINS web-srv-01 (10.0.5.10/32)
     sess.toggle(SelectionItem(kind="address", name="web-srv-01", location="shared"))
     pairs = selection_overlaps(sess)
@@ -304,15 +309,15 @@ def test_overlaps_finds_containment_involving_selection(workbench_xml: str) -> N
     assert ("net-10-0-5", "web-srv-01") in names
 
 
-def test_overlaps_empty_when_selection_not_involved(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_overlaps_empty_when_selection_not_involved(workbench_xml_refs: str) -> None:
+    sess = _session(workbench_xml_refs)
     # db-gw (10.0.9.1/32) overlaps nothing
     sess.toggle(SelectionItem(kind="address", name="db-gw", location="shared"))
     assert selection_overlaps(sess) == []
 
 
-def test_overlaps_empty_without_selection(workbench_xml: str) -> None:
-    sess = _session(workbench_xml)
+def test_overlaps_empty_without_selection(workbench_xml_refs: str) -> None:
+    sess = _session(workbench_xml_refs)
     assert selection_overlaps(sess) == []
 ```
 
