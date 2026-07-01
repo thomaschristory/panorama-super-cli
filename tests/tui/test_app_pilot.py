@@ -6,6 +6,9 @@ from textual.widgets import DataTable, Input
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.audit import AuditScreen
+from psc.tui.screens.move import MoveScreen
+from psc.tui.screens.rename import RenameScreen
+from psc.tui.screens.rule import RuleScreen
 from psc.tui.screens.usage import UsageScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
@@ -137,3 +140,56 @@ async def test_audit_spoke_opens_from_hub(workbench_xml: str) -> None:
         assert isinstance(app.screen, AuditScreen)
         await pilot.press("escape")
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_decommission_spoke_stages_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_rename_spoke_opens_from_hub(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        assert isinstance(app.screen, RenameScreen)
+
+
+@pytest.mark.asyncio
+async def test_move_and_rule_bindings_open(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        assert isinstance(app.screen, MoveScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        assert isinstance(app.screen, RuleScreen)
