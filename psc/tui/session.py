@@ -13,13 +13,53 @@ from pathlib import Path
 
 from psc.core.apply_xml import apply_changeset
 from psc.core.changeset import ChangeSet
-from psc.core.models import Snapshot
+from psc.core.models import AddressGroup, Service, Snapshot
 from psc.core.parse import parse_config
 from psc.core.resolve import find_ip
 from psc.core.setcmd import render_changeset
 from psc.core.source import LiveSource, OfflineSource
 from psc.output.errors import ErrorType, PscError
 from psc.tui.state import ApplyOutcome, OutputMode, SelectionItem, StagedChange
+
+
+def _service_value(s: Service) -> str:
+    out = f"{s.protocol}/{s.destination_port}" if s.destination_port else s.protocol
+    if s.source_port:
+        out += f" src:{s.source_port}"
+    return out
+
+
+def _address_group_value(g: AddressGroup) -> str:
+    if g.dynamic_filter is not None:
+        return f"filter: {g.dynamic_filter}"
+    return f"{{{len(g.static_members or [])} members}}"
+
+
+def render_value(snapshot: Snapshot, item: SelectionItem) -> str:
+    """Compact, human-readable value for one selectable object.
+
+    Framework-free (no Textual): the results table calls this per row so two
+    same-named-prefix objects with different values are distinguishable. A
+    missing object or a `None` field renders as "", never raises. Objects are
+    resolved out of `snapshot` by the item's (kind, name, location) identity.
+    """
+    key = (item.location, item.name)
+    if item.kind == "address":
+        a = {(o.location.name, o.name): o for o in snapshot.addresses}.get(key)
+        return a.value if a else ""
+    if item.kind == "service":
+        s = {(o.location.name, o.name): o for o in snapshot.services}.get(key)
+        return _service_value(s) if s else ""
+    if item.kind == "address-group":
+        g = {(o.location.name, o.name): o for o in snapshot.address_groups}.get(key)
+        return _address_group_value(g) if g else ""
+    if item.kind == "service-group":
+        sg = {(o.location.name, o.name): o for o in snapshot.service_groups}.get(key)
+        return f"{{{len(sg.members)} members}}" if sg else ""
+    if item.kind == "tag":
+        t = {(o.location.name, o.name): o for o in snapshot.tags}.get(key)
+        return (t.color or "") if t else ""
+    return ""
 
 
 def _iter_objects(snapshot: Snapshot) -> Iterator[tuple[str, str, str]]:
