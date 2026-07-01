@@ -39,6 +39,7 @@ class WorkbenchApp(App[None]):
         ("a", "audit", "audit"),
         ("m", "move", "move"),
         ("x", "decommission", "decommission"),
+        ("r", "rename", "rename"),
         ("ctrl+a", "apply_batch", "apply"),
         ("q", "quit", "quit"),
     ]
@@ -111,6 +112,11 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.decommission import DecommissionScreen  # noqa: PLC0415 — avoid cycle
 
         self.push_screen(DecommissionScreen(self.session))
+
+    def action_rename(self) -> None:
+        from psc.tui.screens.rename import RenameScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(RenameScreen(self.session))
 
     def action_apply_batch(self) -> None:
         out_path = self.session.apply_out_path
