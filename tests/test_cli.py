@@ -46,6 +46,14 @@ def test_unused_prints_scope_caveat_to_stderr() -> None:
     assert "template" in low  # names the most dangerous blind spot
 
 
+def test_unused_no_caveat_suppresses_stderr_caveat() -> None:
+    # --no-caveat opts out of the blind-spot notice (e.g. for known-clean scripts).
+    cp = run("-c", str(FIXTURE), "-o", "json", "refs", "unused", "--kind", "address", "--no-caveat")
+    assert cp.returncode == 0
+    json.loads(cp.stdout)
+    assert "caveat" not in cp.stderr.lower()
+
+
 def test_unused_ignore_disabled_surfaces_disabled_only_object(tmp_path: Path) -> None:
     # An address referenced only by a DISABLED rule is used by default but
     # surfaces under `refs unused --ignore-disabled` (#9).
