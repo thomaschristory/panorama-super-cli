@@ -38,6 +38,7 @@ class WorkbenchApp(App[None]):
         ("u", "usage", "usage"),
         ("a", "audit", "audit"),
         ("m", "move", "move"),
+        ("x", "decommission", "decommission"),
         ("ctrl+a", "apply_batch", "apply"),
         ("q", "quit", "quit"),
     ]
@@ -105,6 +106,11 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.move import MoveScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(MoveScreen(self.session))
+
+    def action_decommission(self) -> None:
+        from psc.tui.screens.decommission import DecommissionScreen  # noqa: PLC0415 — avoid cycle
+
+        self.push_screen(DecommissionScreen(self.session))
 
     def action_apply_batch(self) -> None:
         out_path = self.session.apply_out_path
