@@ -22,6 +22,67 @@ from psc.core.models import Address, Location, Snapshot
 from psc.core.normalize import AddrValue, normalize_address, value_bounds
 
 
+class WellKnownKind(str, Enum):
+    """Whether a matched (protocol, port) names a real PAN-OS object or a port
+    number the community treats as reserved."""
+
+    PREDEFINED = "predefined"
+    """A predefined PAN-OS *service object* (e.g. `service-http`) — a custom
+    service can be deleted and every reference repointed onto this name."""
+    WELL_KNOWN = "well-known"
+    """An IANA well-known port with a conventional name (e.g. `ssh`), but *not*
+    a shipped PAN-OS object — the flag is advisory (name/document consistently),
+    there is no predefined object to consolidate onto."""
+
+
+# Curated (protocol, port) → (canonical name, kind) table.
+#
+# Only two entries are true predefined PAN-OS *service objects* that ship in
+# every config — service-http (tcp/80) and service-https (tcp/443) — so a custom
+# tcp/80 object is genuinely redundant and can be consolidated onto the
+# predefined name. The rest are IANA well-known ports: there is no shipped object
+# to fold onto, but a bespoke "ssh"-on-tcp/22 object is still worth surfacing so
+# teams name/document it consistently. Kept deliberately small and conventional
+# (one canonical name per port) rather than exhaustive, to avoid noisy or
+# arguable matches. udp/67 (dhcp server) is the single canonical name for the
+# 67/68 pair; we match the server port a service object would realistically use.
+_WELLKNOWN: dict[tuple[str, int], tuple[str, WellKnownKind]] = {
+    # Predefined PAN-OS service objects.
+    ("tcp", 80): ("service-http", WellKnownKind.PREDEFINED),
+    ("tcp", 443): ("service-https", WellKnownKind.PREDEFINED),
+    # IANA well-known ports (conventional names, no predefined object).
+    ("tcp", 21): ("ftp", WellKnownKind.WELL_KNOWN),
+    ("tcp", 22): ("ssh", WellKnownKind.WELL_KNOWN),
+    ("tcp", 23): ("telnet", WellKnownKind.WELL_KNOWN),
+    ("tcp", 25): ("smtp", WellKnownKind.WELL_KNOWN),
+    ("tcp", 53): ("dns", WellKnownKind.WELL_KNOWN),
+    ("udp", 53): ("dns", WellKnownKind.WELL_KNOWN),
+    ("udp", 67): ("dhcp", WellKnownKind.WELL_KNOWN),
+    ("tcp", 110): ("pop3", WellKnownKind.WELL_KNOWN),
+    ("udp", 123): ("ntp", WellKnownKind.WELL_KNOWN),
+    ("tcp", 143): ("imap", WellKnownKind.WELL_KNOWN),
+    ("tcp", 389): ("ldap", WellKnownKind.WELL_KNOWN),
+    ("tcp", 636): ("ldaps", WellKnownKind.WELL_KNOWN),
+    ("tcp", 993): ("imaps", WellKnownKind.WELL_KNOWN),
+    ("tcp", 995): ("pop3s", WellKnownKind.WELL_KNOWN),
+    ("tcp", 3389): ("rdp", WellKnownKind.WELL_KNOWN),
+    ("tcp", 8080): ("http-alt", WellKnownKind.WELL_KNOWN),
+}
+
+
+class WellKnownMatch(BaseModel):
+    """One custom service whose single destination port duplicates a predefined
+    PAN-OS service or an IANA well-known port."""
+
+    service_name: str
+    service_location: str
+    protocol: str
+    port: str
+    canonical_name: str
+    """The predefined/well-known name this service duplicates."""
+    kind: WellKnownKind
+
+
 class OverlapKind(str, Enum):
     """How the *left* object relates to the *right* in an emitted pair."""
 
@@ -135,3 +196,55 @@ def find_overlapping_addresses(
 
     pairs.sort(key=lambda p: (p.left_location, p.left_name, p.right_location, p.right_name))
     return pairs
+
+
+def _single_port(port: str | None) -> int | None:
+    """The one integer this destination-port spec denotes, or `None`.
+
+    Conservative on purpose: a range (`"79-81"`), a list (`"80,443"`), or an
+    empty/absent value denotes no single port and must never be folded onto a
+    well-known name. Only a bare integer qualifies."""
+    if port is None:
+        return None
+    text = port.strip()
+    if not text.isdigit():  # ranges ("-"), lists (","), empty → not a single port
+        return None
+    return int(text)
+
+
+def find_wellknown_duplicate_services(
+    snapshot: Snapshot, scope: Location | None = None
+) -> list[WellKnownMatch]:
+    """Custom services whose single destination port duplicates a predefined
+    PAN-OS service or an IANA well-known port.
+
+    A service matches only when its destination port is a *single* integer (not
+    a range or list) equalling a `_WELLKNOWN` entry for the *same* protocol —
+    deliberately conservative to avoid false-positives on multi-port objects.
+    Source ports are ignored. Honours `--device-group` scope and sorts
+    deterministically by `(location, name)`.
+    """
+    visible = snapshot.visible_location_names(scope)
+    matches: list[WellKnownMatch] = []
+    for svc in snapshot.services:
+        if visible is not None and svc.location.name not in visible:
+            continue
+        port = _single_port(svc.destination_port)
+        if port is None:
+            continue
+        entry = _WELLKNOWN.get((svc.protocol, port))
+        if entry is None:
+            continue
+        canonical, kind = entry
+        matches.append(
+            WellKnownMatch(
+                service_name=svc.name,
+                service_location=svc.location.name,
+                protocol=svc.protocol,
+                port=str(port),
+                canonical_name=canonical,
+                kind=kind,
+            )
+        )
+    matches.sort(key=lambda m: (m.service_location, m.service_name))
+    return matches
