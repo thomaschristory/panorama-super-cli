@@ -18,6 +18,9 @@ def selection_overlaps(session: WorkbenchSession) -> list[OverlapPair]:
     selected = {(i.location, i.name) for i in session.selected_of_kinds({"address"})}
     if not selected:
         return []
+    # Unscoped scan over the whole snapshot (find_overlapping_addresses accepts
+    # a scope=Location; a future optimisation could narrow to the selection's DG
+    # for large configs).
     pairs = find_overlapping_addresses(session.working_snapshot)
     return [
         p
