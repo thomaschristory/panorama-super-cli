@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import time
 
-from psc.core.audit import OverlapKind, OverlapPair, find_overlapping_addresses
-from psc.core.models import Address, AddressType, Location, Snapshot
+from psc.core.audit import (
+    OverlapKind,
+    OverlapPair,
+    WellKnownKind,
+    WellKnownMatch,
+    find_overlapping_addresses,
+    find_wellknown_duplicate_services,
+)
+from psc.core.models import Address, AddressType, Location, Service, Snapshot
 
 
 def _addr(
@@ -259,3 +266,123 @@ def test_overlap_pair_model_roundtrips() -> None:
         relationship=OverlapKind.CONTAINS,
     )
     assert p.model_dump(mode="json")["relationship"] == "contains"
+
+
+# --- services-vs-wellknown ------------------------------------------------
+
+
+def _svc(
+    name: str,
+    protocol: str,
+    dst: str | None,
+    *,
+    loc: Location | None = None,
+    src: str | None = None,
+) -> Service:
+    return Service(
+        name=name,
+        location=loc or Location.shared(),
+        protocol=protocol,
+        destination_port=dst,
+        source_port=src,
+    )
+
+
+def test_tcp80_shadows_predefined_service_http() -> None:
+    snap = Snapshot(services=[_svc("my-web", "tcp", "80")])
+    matches = find_wellknown_duplicate_services(snap)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.service_name == "my-web"
+    assert m.canonical_name == "service-http"
+    assert m.kind is WellKnownKind.PREDEFINED
+
+
+def test_tcp443_shadows_predefined_service_https() -> None:
+    snap = Snapshot(services=[_svc("secure", "tcp", "443")])
+    matches = find_wellknown_duplicate_services(snap)
+    assert len(matches) == 1
+    assert matches[0].canonical_name == "service-https"
+    assert matches[0].kind is WellKnownKind.PREDEFINED
+
+
+def test_tcp22_flagged_as_wellknown_ssh() -> None:
+    snap = Snapshot(services=[_svc("mgmt-ssh", "tcp", "22")])
+    matches = find_wellknown_duplicate_services(snap)
+    assert len(matches) == 1
+    assert matches[0].canonical_name == "ssh"
+    assert matches[0].kind is WellKnownKind.WELL_KNOWN
+
+
+def test_non_wellknown_port_not_flagged() -> None:
+    snap = Snapshot(services=[_svc("custom", "tcp", "9999")])
+    assert find_wellknown_duplicate_services(snap) == []
+
+
+def test_port_range_not_false_flagged() -> None:
+    # A range that merely spans port 80 must not match tcp/80.
+    snap = Snapshot(services=[_svc("range", "tcp", "79-81")])
+    assert find_wellknown_duplicate_services(snap) == []
+
+
+def test_multi_port_list_not_false_flagged() -> None:
+    snap = Snapshot(services=[_svc("multi", "tcp", "80,443")])
+    assert find_wellknown_duplicate_services(snap) == []
+
+
+def test_protocol_matters_udp80_not_http() -> None:
+    # udp/80 is not tcp/80, so it must not match service-http.
+    snap = Snapshot(services=[_svc("udp-weird", "udp", "80")])
+    assert find_wellknown_duplicate_services(snap) == []
+
+
+def test_udp53_matches_domain() -> None:
+    snap = Snapshot(services=[_svc("dns", "udp", "53")])
+    matches = find_wellknown_duplicate_services(snap)
+    assert len(matches) == 1
+    assert matches[0].canonical_name == "dns"
+    assert matches[0].kind is WellKnownKind.WELL_KNOWN
+
+
+def test_no_destination_port_not_flagged() -> None:
+    snap = Snapshot(services=[_svc("empty", "tcp", None)])
+    assert find_wellknown_duplicate_services(snap) == []
+
+
+def test_wellknown_deterministic_ordering() -> None:
+    snap = Snapshot(
+        services=[
+            _svc("z-web", "tcp", "80"),
+            _svc("a-web", "tcp", "80"),
+            _svc("m-ssh", "tcp", "22"),
+        ]
+    )
+    matches = find_wellknown_duplicate_services(snap)
+    keys = [(m.service_location, m.service_name) for m in matches]
+    assert keys == sorted(keys)
+
+
+def test_wellknown_scope_filtering() -> None:
+    snap = Snapshot(
+        services=[
+            _svc("shared-web", "tcp", "80", loc=Location.shared()),
+            _svc("dg1-web", "tcp", "80", loc=Location.dg("DG1")),
+            _svc("dg2-web", "tcp", "80", loc=Location.dg("DG2")),
+        ],
+        device_groups=["DG1", "DG2"],
+    )
+    matches = find_wellknown_duplicate_services(snap, scope=Location.dg("DG1"))
+    names = {m.service_name for m in matches}
+    assert names == {"shared-web", "dg1-web"}
+
+
+def test_wellknown_match_model_roundtrips() -> None:
+    m = WellKnownMatch(
+        service_name="my-web",
+        service_location="shared",
+        protocol="tcp",
+        port="80",
+        canonical_name="service-http",
+        kind=WellKnownKind.PREDEFINED,
+    )
+    assert m.model_dump(mode="json")["kind"] == "predefined"
