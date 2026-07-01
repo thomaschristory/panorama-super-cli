@@ -37,6 +37,7 @@ class WorkbenchApp(App[None]):
         ("d", "dedup", "dedup"),
         ("u", "usage", "usage"),
         ("a", "audit", "audit"),
+        ("m", "move", "move"),
         ("ctrl+a", "apply_batch", "apply"),
         ("q", "quit", "quit"),
     ]
@@ -99,6 +100,11 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.audit import AuditScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(AuditScreen(self.session))
+
+    def action_move(self) -> None:
+        from psc.tui.screens.move import MoveScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(MoveScreen(self.session))
 
     def action_apply_batch(self) -> None:
         out_path = self.session.apply_out_path

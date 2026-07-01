@@ -59,3 +59,33 @@ def workbench_xml_refs(tmp_path):
     p = tmp_path / "config_refs.xml"
     p.write_text(WORKBENCH_XML_REFS, encoding="utf-8")
     return str(p)
+
+
+WORKBENCH_XML_DG = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="anchor"><ip-netmask>10.1.1.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <address>
+            <entry name="dg-only"><ip-netmask>10.2.2.2/32</ip-netmask></entry>
+          </address>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_dg(tmp_path):
+    """A config with an object inside device-group dg1 (for move/rename)."""
+    p = tmp_path / "config_dg.xml"
+    p.write_text(WORKBENCH_XML_DG, encoding="utf-8")
+    return str(p)
