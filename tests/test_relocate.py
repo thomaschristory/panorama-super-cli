@@ -52,9 +52,17 @@ def _addr(name: str, loc: str, value: str = "10.0.0.1/32", **kw: object) -> Addr
     )  # type: ignore[arg-type]
 
 
-def _move(snap: Snapshot, *, kind: ObjectKind, name: str, src: str, dst: str) -> ChangeSet:
+def _move(
+    snap: Snapshot, *, kind: ObjectKind, name: str, src: str, dst: str, cascade: bool = False
+) -> ChangeSet:
     return plan_move(
-        snap, ReferenceGraph.build(snap), kind=kind, name=name, source_name=src, dest_name=dst
+        snap,
+        ReferenceGraph.build(snap),
+        kind=kind,
+        name=name,
+        source_name=src,
+        dest_name=dst,
+        cascade=cascade,
     )
 
 
@@ -244,3 +252,166 @@ def test_promote_to_ancestor_does_not_warn_about_unrelated_dangling() -> None:
     cs = _move(snap, kind=ObjectKind.ADDRESS, name="h1", src=DC, dst=EMEA)
     assert not cs.is_blocked
     assert not any("apac-r" in w for w in cs.warnings)
+
+
+# -- cascade ---------------------------------------------------------------
+
+
+def _upsert_order(cs: ChangeSet) -> list[tuple[str, str]]:
+    return [(u.kind.value, u.name) for u in cs.upserts]
+
+
+def _delete_set(cs: ChangeSet) -> set[tuple[str, str]]:
+    return {(d.name, d.location) for d in cs.deletes}
+
+
+def test_cascade_group_members_ordered_members_before_group_before_deletes() -> None:
+    # A static group whose members are DG-local. Without --cascade this blocks;
+    # with it, the whole closure promotes in one ordered plan: members before the
+    # group, and every source delete after every create.
+    snap = _snap(
+        addresses=[_addr("m1", DC), _addr("m2", DC)],
+        address_groups=[
+            AddressGroup(name="grp", location=Location.dg(DC), static_members=["m1", "m2"])
+        ],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=True)
+    assert not cs.is_blocked, cs.blockers
+    order = _upsert_order(cs)
+    # every member upsert precedes the group upsert
+    grp_i = order.index(("address-group", "grp"))
+    assert order.index(("address", "m1")) < grp_i
+    assert order.index(("address", "m2")) < grp_i
+    # source deletes cover the group and both members
+    assert _delete_set(cs) == {("grp", DC), ("m1", DC), ("m2", DC)}
+
+
+def test_cascade_address_tag_promotes_the_tag() -> None:
+    snap = _snap(
+        addresses=[_addr("h1", DC, tags=["t1"])],
+        tags=[Tag(name="t1", location=Location.dg(DC))],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS, name="h1", src=DC, dst="shared", cascade=True)
+    assert not cs.is_blocked, cs.blockers
+    order = _upsert_order(cs)
+    # tag promoted before the address that carries it
+    assert order.index(("tag", "t1")) < order.index(("address", "h1"))
+    assert _delete_set(cs) == {("h1", DC), ("t1", DC)}
+
+
+def test_cascade_dependency_different_value_at_dest_blocks_whole_cascade() -> None:
+    # m1 already exists at shared with a *different* value: the whole cascade is
+    # unsafe (dropping the DG copy would change matching), so block, zero ops.
+    snap = _snap(
+        addresses=[
+            _addr("m1", DC, "10.0.0.1/32"),
+            _addr("m1", "shared", "10.9.9.9/32"),
+        ],
+        address_groups=[AddressGroup(name="grp", location=Location.dg(DC), static_members=["m1"])],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=True)
+    assert cs.is_blocked
+    assert cs.op_count == 0
+    assert any("m1" in b and "value" in b for b in cs.blockers)
+
+
+def test_cascade_dependency_identical_at_dest_drops_source_no_duplicate() -> None:
+    # m1 already at shared with the same value: promote nothing for it, just drop
+    # the DG copy; only the group is created at the destination.
+    snap = _snap(
+        addresses=[
+            _addr("m1", DC, "10.0.0.1/32"),
+            _addr("m1", "shared", "10.0.0.1/32"),
+        ],
+        address_groups=[AddressGroup(name="grp", location=Location.dg(DC), static_members=["m1"])],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=True)
+    assert not cs.is_blocked, cs.blockers
+    assert _upsert_order(cs) == [("address-group", "grp")]  # no duplicate m1 create
+    assert _delete_set(cs) == {("grp", DC), ("m1", DC)}
+
+
+def test_cascade_rule_referrer_retains_dependency_source_copy() -> None:
+    # m1 is a member of grp (being cascaded) AND is referenced directly by a
+    # security rule that STAYS in the source DG. Deleting m1's DG copy would
+    # dangle the rule — the worst-case retain false-negative. m1 must be promoted
+    # but its DG copy retained, with a warning. (Safety-critical retain path.)
+    snap = _snap(
+        addresses=[_addr("m1", DC)],
+        address_groups=[
+            AddressGroup(name="grp", location=Location.dg(DC), static_members=["m1"]),
+        ],
+        security_rules=[SecurityRule(name="r1", location=Location.dg(DC), source=["m1"])],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=True)
+    assert not cs.is_blocked, cs.blockers
+    assert ("address", "m1") in _upsert_order(cs)  # promoted to shared
+    assert ("m1", DC) not in _delete_set(cs)  # DG copy retained (rule still needs it)
+    assert ("grp", DC) in _delete_set(cs)  # the moved group's copy is removed
+    assert any("m1" in w for w in cs.warnings)
+
+
+def test_cascade_shared_member_retained_at_source_with_warning() -> None:
+    # m1 is a member of grp (being moved) AND of grp2, which stays in the source
+    # DG. Promote m1 to shared, but do NOT delete its DG copy — grp2 still needs
+    # the local definition. Warn about the retained copy.
+    snap = _snap(
+        addresses=[_addr("m1", DC)],
+        address_groups=[
+            AddressGroup(name="grp", location=Location.dg(DC), static_members=["m1"]),
+            AddressGroup(name="grp2", location=Location.dg(DC), static_members=["m1"]),
+        ],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=True)
+    assert not cs.is_blocked, cs.blockers
+    # m1 promoted (created at shared) but its DG copy retained.
+    assert ("address", "m1") in _upsert_order(cs)
+    assert ("m1", DC) not in _delete_set(cs)
+    assert ("grp", DC) in _delete_set(cs)
+    assert any("m1" in w for w in cs.warnings)
+
+
+def test_cascade_nested_groups_deepest_first() -> None:
+    # grp -> grp-inner -> leaf, all DG-local. Deepest deps upserted first.
+    snap = _snap(
+        addresses=[_addr("leaf", DC)],
+        address_groups=[
+            AddressGroup(name="grp-inner", location=Location.dg(DC), static_members=["leaf"]),
+            AddressGroup(name="grp", location=Location.dg(DC), static_members=["grp-inner"]),
+        ],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=True)
+    assert not cs.is_blocked, cs.blockers
+    order = _upsert_order(cs)
+    assert order.index(("address", "leaf")) < order.index(("address-group", "grp-inner"))
+    assert order.index(("address-group", "grp-inner")) < order.index(("address-group", "grp"))
+    assert _delete_set(cs) == {("grp", DC), ("grp-inner", DC), ("leaf", DC)}
+
+
+def test_cascade_cycle_safe() -> None:
+    # grp-a and grp-b reference each other (a PAN-OS-invalid but defensively
+    # handled cycle). The closure walk must terminate, not recurse forever.
+    snap = _snap(
+        address_groups=[
+            AddressGroup(name="grp-a", location=Location.dg(DC), static_members=["grp-b"]),
+            AddressGroup(name="grp-b", location=Location.dg(DC), static_members=["grp-a"]),
+        ],
+    )
+    cs = _move(
+        snap, kind=ObjectKind.ADDRESS_GROUP, name="grp-a", src=DC, dst="shared", cascade=True
+    )
+    # Terminates; both groups are in the closure.
+    names = {u.name for u in cs.upserts}
+    assert {"grp-a", "grp-b"} <= names or cs.is_blocked
+
+
+def test_cascade_off_still_blocks_and_lists_deps() -> None:
+    # The --cascade-off path is byte-for-byte identical to today: block + list.
+    snap = _snap(
+        addresses=[_addr("m1", DC)],
+        address_groups=[AddressGroup(name="grp", location=Location.dg(DC), static_members=["m1"])],
+    )
+    cs = _move(snap, kind=ObjectKind.ADDRESS_GROUP, name="grp", src=DC, dst="shared", cascade=False)
+    assert cs.is_blocked
+    assert cs.op_count == 0
+    assert any("m1" in b for b in cs.blockers)
