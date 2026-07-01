@@ -76,6 +76,11 @@ def unused(
         "--ignore-disabled",
         help="Treat disabled rules as non-references; surface objects used only by disabled rules.",
     ),
+    caveat: bool = typer.Option(
+        True,
+        "--caveat/--no-caveat",
+        help="Print the scan-scope blind-spot caveat on stderr (--no-caveat to suppress).",
+    ),
 ) -> None:
     """List objects no rule reaches — directly or transitively through groups."""
     rt: Runtime = ctx.obj
@@ -86,7 +91,7 @@ def unused(
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
     render(rt.stdout, rt.output, model=rows, rows=rows, table_title=f"unused {kind}")
     _emit_graph_warnings(rt, graph)
-    if targets:
+    if targets and caveat:
         # `unused` only sees device-group objects + policy rulebases. Objects
         # referenced from templates/network config are NOT scanned and look
         # unused here. DAG membership is now resolved from config tags, but an
