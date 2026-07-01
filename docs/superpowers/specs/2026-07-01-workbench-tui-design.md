@@ -9,9 +9,10 @@
 An interactive terminal UI ("the workbench") that glues the existing `psc`
 engines together around a single, persistent, **heterogeneous selection
 buffer**. You search for objects, multi-select them into the buffer, then route
-that selection into an action (dedup, usage, rule create/edit) without
-copy-pasting names between commands. Mutations accumulate into a git-like
-**staged changelist** that you review together and apply as one batch.
+that selection into an action (dedup, usage/refs, rule create/edit, naming,
+move-to-shared, decommission, audit) without copy-pasting names between
+commands. Mutations accumulate into a git-like **staged changelist** that you
+review together and apply as one batch.
 
 The workbench is a new **frontend** beside the CLI. It imports only
 `psc.core` (engines) and `psc.output` (formatters) — never `psc.cli`. All
@@ -28,7 +29,7 @@ safety-critical logic already lives in the engines; the TUI orchestrates them.
 
 ## Non-goals (v1)
 
-See **Roadmap / out of scope** below.
+See **Out of scope** below.
 
 ## Architecture
 
@@ -37,8 +38,9 @@ See **Roadmap / out of scope** below.
 New `psc/tui/` package, sibling to `psc/cli/`.
 
 - Imports **only** `psc.core` (engines: `resolve`, `dedup`, `refs`, `crud`,
-  `rule_edit`, `changeset`, `apply_xml`, `source`, `parse`) and `psc.output`
-  (set-command rendering / formatters).
+  `rule_edit`, `naming`, `relocate`, `decommission`, `audit`, `changeset`,
+  `apply_xml`, `source`, `parse`) and `psc.output` (set-command rendering /
+  formatters).
 - Imports **nothing** from `psc/cli`. Honours the existing hard rule: core is
   UI-framework-free; the TUI is just another frontend, exactly as a future web
   UI would be.
@@ -47,9 +49,9 @@ New `psc/tui/` package, sibling to `psc/cli/`.
 
 ### Dependency
 
-`textual` is a new dependency, shipped as an **optional extra**:
-`pip install panorama-super-cli[tui]`. The base CLI stays lean; `psc workbench`
-prints a friendly "install the `tui` extra" message if Textual is absent.
+`textual` is a new **mandatory** runtime dependency, added to
+`pyproject.toml` `dependencies`. It ships with every install; `psc workbench`
+is always available.
 
 ### Entry point
 
@@ -134,7 +136,7 @@ references something a prior stage deleted. No late conflict surprises.
 │ [ ] svc   tcp-8443          │  ── staged (2) ──────────── [review][apply] │
 │ ...                         │  ✓ merge web-srv dupes                       │
 ├─────────────────────────────┴────────────────────────────────────────────┤
-│ act: [d]edup  [u]sage  [r]ule  ·  [space]select [/]search [tab]panes [?]  │
+│ act:[d]edup [u]sage [r]ule [n]ame [m]ove [x]decomm [a]udit · [/]search [?]│
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -161,6 +163,19 @@ Uniform contract: **filter selection to the kinds I handle → show plan/result 
   slots by kind; a form covers the rest (name, action, zones…); builds via
   `crud` / `rule_edit`, `stage` appends. Edit mode adds/removes selected members
   on an existing rule (idempotent, per the engine).
+- **Naming / rename** — `naming.py` (templates + reference-aware rename); applies
+  a naming template to selected objects or renames them, repointing references;
+  `stage` appends. Shadow-rename refusal is a blocker, per the engine.
+- **Move to shared** — `relocate.py` (cross-scope relocation); moves selected
+  objects DG → shared (or between scopes), repointing references; `stage`
+  appends. Cross-scope conflicts surface as blockers.
+- **Decommission** *(destructive)* — `decommission.py`; reference-safe cascading
+  teardown of selected address objects (scrub groups → scrub rules → orphan-rule
+  delete → emptied-group delete → object delete, to a fixpoint); `stage` appends.
+  Requires an extra explicit confirm before staging given its blast radius.
+- **Audit (overlaps)** *(read-only, never stages)* — `audit.py`;
+  overlap/containment report over the selection's address ranges
+  (ip-netmask / ip-range only). Rows are actionable back into the selection.
 
 ### Shared widgets
 
@@ -187,16 +202,12 @@ Uniform contract: **filter selection to the kinds I handle → show plan/result 
 - Because staging is pure XML-in / XML-out, the entire compounding flow is
   testable headless with no device.
 
-## Roadmap / out of scope (v1)
+## Out of scope (v1)
 
-**Later spokes** (each drops in against its existing engine with the same
-enter-with-selection → filter → plan → stage contract; no architecture change):
-
-1. **Naming / rename** — `naming.py` (templates + reference-aware rename)
-2. **Move to shared** — `relocate.py` (cross-scope relocation)
-3. **Decommission** — `decommission.py` (cascading reference-safe teardown;
-   destructive → after the safe spokes are solid)
-4. **Audit (overlaps)** — `audit.py` (overlap/containment report; read-only)
+All seven spokes ship in v1 (find hub, dedup, usage/refs, rule create/edit,
+naming, move-to-shared, decommission, audit). Each follows the same
+enter-with-selection → filter → plan → stage contract against its existing
+engine, so adding them is additive, not architectural.
 
 **Explicitly out of scope:**
 
