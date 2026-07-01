@@ -8,6 +8,7 @@ from typing import ClassVar
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from psc.tui.session import WorkbenchSession
@@ -16,8 +17,8 @@ from psc.tui.state import SelectionItem
 _TCSS = str(Path(__file__).with_name("workbench.tcss"))
 
 
-class HubScreen(Static):
-    """The home layout. Kept as a container widget for simplicity in v1."""
+class HubScreen(Widget):
+    """The home layout container (a plain Widget, not a leaf Static)."""
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="search: IP / value / name", id="search")
@@ -38,12 +39,11 @@ class WorkbenchApp(App[None]):
         ("q", "quit", "quit"),
     ]
 
-    # Declared at class level for mypy --strict; assigned in on_mount.
-    _results: list[SelectionItem]
-
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
         self.session = session
+        # The rows currently shown in #results, parallel to the table rows.
+        self._results: list[SelectionItem] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -56,7 +56,6 @@ class WorkbenchApp(App[None]):
         results.cursor_type = "row"
         sel = self.query_one("#selection", DataTable)
         sel.add_columns("kind", "name", "location")
-        self._results = []
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "search":
