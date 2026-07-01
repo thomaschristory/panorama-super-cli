@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
+from psc.core.apply_xml import apply_changeset
+from psc.core.changeset import ChangeSet
 from psc.core.models import Snapshot
 from psc.core.parse import parse_config
 from psc.core.resolve import find_ip
 from psc.core.source import LiveSource, OfflineSource
-from psc.tui.state import OutputMode, SelectionItem
+from psc.output.errors import ErrorType, PscError
+from psc.tui.state import OutputMode, SelectionItem, StagedChange
 
 
 def _iter_objects(snapshot: Snapshot) -> Iterator[tuple[str, str, str]]:
@@ -42,6 +45,7 @@ class WorkbenchSession:
         self.working_xml: str = source.raw_xml()
         self.working_snapshot: Snapshot = parse_config(self.working_xml)
         self.selection: list[SelectionItem] = []
+        self.staging: list[StagedChange] = []
 
     def search(self, query: str) -> list[SelectionItem]:
         """Search the working snapshot by name substring and by IP/value."""
@@ -88,3 +92,24 @@ class WorkbenchSession:
 
     def clear_selection(self) -> None:
         self.selection.clear()
+
+    def stage(self, label: str, cs: ChangeSet) -> None:
+        """Compound `cs` onto the working config and record it. A blocked
+        changeset is refused (hard gate), exactly like the CLI."""
+        if cs.is_blocked:
+            raise PscError(
+                "cannot stage a blocked change: " + "; ".join(cs.blockers),
+                ErrorType.CONFLICT,
+                details={"blockers": cs.blockers, "warnings": cs.warnings},
+            )
+        if cs.is_empty:
+            return
+        self.working_xml = apply_changeset(self.working_xml, cs)
+        self.working_snapshot = parse_config(self.working_xml)
+        self.staging.append(StagedChange(label=label, changeset=cs))
+        self._reconcile_selection()
+
+    def _reconcile_selection(self) -> None:
+        """Drop selection items that no longer exist in the working snapshot."""
+        live = set(_iter_objects(self.working_snapshot))
+        self.selection = [i for i in self.selection if i.key in live]

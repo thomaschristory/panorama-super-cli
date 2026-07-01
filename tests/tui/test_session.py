@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import pytest
+
 from psc.core.changeset import ChangeSet
+from psc.core.dedup import ObjectRef, plan_merge
+from psc.core.refs import ReferenceGraph
 from psc.core.source import OfflineSource
+from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import ApplyOutcome, OutputMode, SelectionItem, StagedChange
 
@@ -98,3 +103,48 @@ def test_clear_selection(workbench_xml):
     sess.toggle(SelectionItem(kind="address", name="db-gw", location="shared"))
     sess.clear_selection()
     assert sess.selection == []
+
+
+def _merge_web_dupes_cs(sess: WorkbenchSession) -> ChangeSet:
+    snap = sess.working_snapshot
+    graph = ReferenceGraph.build(snap)
+    return plan_merge(
+        snap,
+        graph,
+        keep=ObjectRef(name="web-srv-01", location="shared"),
+        drop=ObjectRef(name="web-srv-02", location="shared"),
+    )
+
+
+def test_stage_appends_and_compounds_working_snapshot(workbench_xml):
+    sess = _session(workbench_xml)
+    assert any(a.name == "web-srv-02" for a in sess.working_snapshot.addresses)
+    cs = _merge_web_dupes_cs(sess)
+    sess.stage("merge web dupes", cs)
+    assert [s.label for s in sess.staging] == ["merge web dupes"]
+    assert not any(a.name == "web-srv-02" for a in sess.working_snapshot.addresses)
+    assert any(a.name == "web-srv-01" for a in sess.working_snapshot.addresses)
+
+
+def test_stage_reconciles_selection_dropping_dead_items(workbench_xml):
+    sess = _session(workbench_xml)
+    keep = SelectionItem(kind="address", name="web-srv-01", location="shared")
+    drop = SelectionItem(kind="address", name="web-srv-02", location="shared")
+    sess.toggle(keep)
+    sess.toggle(drop)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    assert sess.selection == [keep]
+
+
+def test_stage_refuses_blocked_changeset(workbench_xml):
+    sess = _session(workbench_xml)
+    cs = ChangeSet(title="bad", blockers=["cannot repoint cross-scope reference"])
+    with pytest.raises(PscError):
+        sess.stage("bad", cs)
+    assert sess.staging == []
+
+
+def test_second_stage_plans_against_compounded_reality(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    assert sess.search("web-srv-02") == []
