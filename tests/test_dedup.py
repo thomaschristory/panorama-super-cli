@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
+from psc.core.apply_xml import apply_changeset
 from psc.core.dedup import (
     ObjectRef,
     find_duplicate_addresses,
     find_duplicate_groups,
     find_duplicate_services,
     plan_merge,
+    plan_merge_bucket,
     plan_merge_group,
     resolve_group_members,
 )
@@ -14,11 +18,14 @@ from psc.core.models import (
     AddressGroup,
     AddressType,
     Location,
+    NatRule,
     SecurityRule,
     Snapshot,
 )
 from psc.core.normalize import normalize_address
+from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
+from psc.output.errors import ErrorType, PscError
 
 
 def test_merge_repoints_across_new_rulebases(all_rb_snapshot: Snapshot) -> None:
@@ -655,3 +662,134 @@ def test_plan_merge_group_blocks_nested_dynamic_unresolvable() -> None:
     assert cs.is_blocked
     assert any("unresolvable members" in b for b in cs.blockers)
     assert cs.op_count == 0
+
+
+# --- group-bucket merge (issue #4): collapse a whole duplicate bucket -------
+
+
+def _bucket_snapshot() -> Snapshot:
+    """One 3-member bucket {d1,d2,d3} all == 10.0.0.9/32, referenced apart.
+
+    grp holds d2+d3 (same field, BOTH dropped when keeping d1 — forces edit
+    chaining); r1 destination holds d2; nat-1 source holds d3.
+    """
+    return Snapshot(
+        addresses=[
+            _addr("d1", "10.0.0.9/32"),
+            _addr("d2", "10.0.0.9/32"),
+            _addr("d3", "10.0.0.9/32"),
+        ],
+        address_groups=[AddressGroup(name="grp", static_members=["d2", "d3"])],
+        security_rules=[SecurityRule(name="r1", destination=["d2"])],
+        nat_rules=[NatRule(name="nat-1", source=["d3"])],
+    )
+
+
+def test_plan_merge_bucket_collapses_three_toward_keep() -> None:
+    snap = _bucket_snapshot()
+    graph = ReferenceGraph.build(snap)
+    members = [ObjectRef(name=n, location="shared") for n in ("d1", "d2", "d3")]
+    cs = plan_merge_bucket(
+        snap, graph, members=members, keep=ObjectRef(name="d1", location="shared")
+    )
+    assert not cs.is_blocked
+    # Both other members are deleted in one plan.
+    assert {d.name for d in cs.deletes} == {"d2", "d3"}
+    # grp held d2 and d3 (both dropped) — the collapsed result must be exactly
+    # [d1], not [d1, d3] with the second drop lost (proves the two edits chained
+    # on the same field instead of the last one clobbering the first).
+    grp_edits = [e for e in cs.reference_edits if e.referrer_name == "grp"]
+    assert grp_edits[-1].after == ["d1"]
+    r1 = next(e for e in cs.reference_edits if e.referrer_name == "r1")
+    assert r1.after == ["d1"]
+    nat = next(e for e in cs.reference_edits if e.referrer_name == "nat-1")
+    assert nat.after == ["d1"]
+
+
+def test_plan_merge_bucket_keep_defaults_to_first_member() -> None:
+    snap = _bucket_snapshot()
+    graph = ReferenceGraph.build(snap)
+    members = [ObjectRef(name=n, location="shared") for n in ("d1", "d2", "d3")]
+    cs = plan_merge_bucket(snap, graph, members=members)
+    # Deterministic default survivor = the sorted-first bucket member (d1).
+    assert {d.name for d in cs.deletes} == {"d2", "d3"}
+
+
+def test_plan_merge_bucket_keep_selects_survivor() -> None:
+    snap = _bucket_snapshot()
+    graph = ReferenceGraph.build(snap)
+    members = [ObjectRef(name=n, location="shared") for n in ("d1", "d2", "d3")]
+    cs = plan_merge_bucket(
+        snap, graph, members=members, keep=ObjectRef(name="d2", location="shared")
+    )
+    assert {d.name for d in cs.deletes} == {"d1", "d3"}
+
+
+def test_plan_merge_bucket_invalid_keep_is_input_error() -> None:
+    snap = _bucket_snapshot()
+    graph = ReferenceGraph.build(snap)
+    members = [ObjectRef(name=n, location="shared") for n in ("d1", "d2", "d3")]
+    with pytest.raises(PscError) as exc:
+        plan_merge_bucket(
+            snap, graph, members=members, keep=ObjectRef(name="not-in-bucket", location="shared")
+        )
+    assert exc.value.error_type is ErrorType.INPUT
+
+
+def test_plan_merge_bucket_surfaces_blocker_and_gates_plan() -> None:
+    # d3 is referenced by a NAT translation field (no flat member list): its
+    # repoint is unmappable while d3 is being deleted -> hard blocker. The whole
+    # collapsed plan is gated (zero ops), exactly like the pairwise path.
+    snap = Snapshot(
+        addresses=[
+            _addr("d1", "10.0.0.9/32"),
+            _addr("d2", "10.0.0.9/32"),
+            _addr("d3", "10.0.0.9/32"),
+        ],
+        nat_rules=[
+            NatRule(name="nat-1", source_translation=["d3"]),
+        ],
+    )
+    graph = ReferenceGraph.build(snap)
+    members = [ObjectRef(name=n, location="shared") for n in ("d1", "d2", "d3")]
+    cs = plan_merge_bucket(
+        snap, graph, members=members, keep=ObjectRef(name="d1", location="shared")
+    )
+    assert cs.is_blocked
+    assert cs.op_count == 0
+
+
+def test_plan_merge_bucket_apply_roundtrips() -> None:
+    xml = """<?xml version="1.0"?>
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="d1"><ip-netmask>10.0.0.9/32</ip-netmask></entry>
+      <entry name="d2"><ip-netmask>10.0.0.9/32</ip-netmask></entry>
+      <entry name="d3"><ip-netmask>10.0.0.9/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="grp"><static><member>d1</member><member>d2</member></static></entry>
+    </address-group>
+    <pre-rulebase>
+      <security>
+        <rules>
+          <entry name="r1"><destination><member>d3</member></destination></entry>
+        </rules>
+      </security>
+    </pre-rulebase>
+  </shared>
+</config>
+"""
+    snap = parse_config(xml)
+    graph = ReferenceGraph.build(snap)
+    members = [ObjectRef(name=n, location="shared") for n in ("d1", "d2", "d3")]
+    cs = plan_merge_bucket(
+        snap, graph, members=members, keep=ObjectRef(name="d1", location="shared")
+    )
+    new_snap = parse_config(apply_changeset(xml, cs))
+    assert {a.name for a in new_snap.addresses} == {"d1"}
+    grp = next(g for g in new_snap.address_groups if g.name == "grp")
+    assert grp.static_members == ["d1"]
+    r1 = next(r for r in new_snap.security_rules if r.name == "r1")
+    assert r1.destination == ["d1"]
