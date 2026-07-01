@@ -150,3 +150,45 @@ def test_second_stage_plans_against_compounded_reality(workbench_xml):
     sess = _session(workbench_xml)
     sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
     assert sess.search("web-srv-02") == []
+
+
+def test_combined_set_script_covers_every_staged_change(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    script = sess.combined_set_script()
+    assert "delete shared address web-srv-02" in script
+
+
+def test_apply_batch_set_mode_returns_script_no_write(workbench_xml, tmp_path):
+    sess = _session(workbench_xml)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    out = sess.apply_batch(out_path=None)
+    assert isinstance(out, ApplyOutcome)
+    assert out.mode is OutputMode.SET
+    assert out.ops == 1
+    assert "delete shared address web-srv-02" in out.detail
+
+
+def test_apply_batch_offline_writes_compounded_config(workbench_xml, tmp_path):
+    sess = _session(workbench_xml)
+    sess.output_mode = OutputMode.OFFLINE_APPLY
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    dest = tmp_path / "out.xml"
+    out = sess.apply_batch(out_path=str(dest))
+    assert dest.exists()
+    assert "web-srv-02" not in dest.read_text()
+    assert out.out_path == str(dest)
+
+
+def test_apply_batch_offline_requires_out_path(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.output_mode = OutputMode.OFFLINE_APPLY
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    with pytest.raises(PscError):
+        sess.apply_batch(out_path=None)
+
+
+def test_apply_batch_empty_staging_is_noop(workbench_xml):
+    sess = _session(workbench_xml)
+    out = sess.apply_batch(out_path=None)
+    assert out.ops == 0

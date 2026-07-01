@@ -8,15 +8,17 @@ built against reality (prior staged edits already applied).
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 from psc.core.apply_xml import apply_changeset
 from psc.core.changeset import ChangeSet
 from psc.core.models import Snapshot
 from psc.core.parse import parse_config
 from psc.core.resolve import find_ip
+from psc.core.setcmd import render_changeset
 from psc.core.source import LiveSource, OfflineSource
 from psc.output.errors import ErrorType, PscError
-from psc.tui.state import OutputMode, SelectionItem, StagedChange
+from psc.tui.state import ApplyOutcome, OutputMode, SelectionItem, StagedChange
 
 
 def _iter_objects(snapshot: Snapshot) -> Iterator[tuple[str, str, str]]:
@@ -118,3 +120,47 @@ class WorkbenchSession:
         """Drop selection items that no longer exist in the working snapshot."""
         live = set(_iter_objects(self.working_snapshot))
         self.selection = [i for i in self.selection if i.key in live]
+
+    def combined_set_script(self) -> str:
+        """All staged changes as one ordered PAN-OS set/delete script."""
+        lines: list[str] = []
+        for staged in self.staging:
+            lines.extend(render_changeset(staged.changeset))
+        return "\n".join(lines)
+
+    def apply_batch(self, *, out_path: str | None) -> ApplyOutcome:
+        """Apply the staged batch per `output_mode`. Read-only until here."""
+        ops = len(self.staging)
+        if ops == 0:
+            return ApplyOutcome(
+                mode=self.output_mode, ops=0, out_path=None, detail="nothing staged"
+            )
+
+        if self.output_mode is OutputMode.SET:
+            script = self.combined_set_script()
+            return ApplyOutcome(mode=self.output_mode, ops=ops, out_path=None, detail=script)
+
+        if self.output_mode is OutputMode.OFFLINE_APPLY:
+            if out_path is None:
+                raise PscError(
+                    "offline apply needs an output path (the compounded config "
+                    "is never written back over the source export)",
+                    ErrorType.CONFIG,
+                )
+            dest = Path(out_path)
+            if (
+                isinstance(self.source, OfflineSource)
+                and dest.resolve() == self.source.path.resolve()
+            ):
+                raise PscError("output path must differ from the source config", ErrorType.CONFIG)
+            dest.write_text(self.working_xml, encoding="utf-8")
+            return ApplyOutcome(
+                mode=self.output_mode, ops=ops, out_path=str(dest), detail=f"wrote {dest}"
+            )
+
+        # LIVE_APPLY: replay each staged changeset in order to the candidate.
+        for staged in self.staging:
+            self.source.apply(staged.changeset, out_path=None)
+        return ApplyOutcome(
+            mode=self.output_mode, ops=ops, out_path=None, detail="pushed to candidate"
+        )
