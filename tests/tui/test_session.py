@@ -59,3 +59,9 @@ def test_search_is_deduped(workbench_xml):
     hits = sess.search("10.0.5.10")
     keys = [h.key for h in hits]
     assert len(keys) == len(set(keys))
+
+
+def test_search_empty_returns_nothing(workbench_xml):
+    sess = _session(workbench_xml)
+    assert sess.search("") == []
+    assert sess.search("   ") == []

@@ -61,7 +61,7 @@ class WorkbenchSession:
         # simply yields nothing here.
         try:
             fr = find_ip(self.working_snapshot, q)
-        except Exception:  # non-address queries are expected to fail here
+        except ValueError:  # unparseable (non-IP/range/fqdn) queries yield no IP hits
             fr = None
         if fr is not None:
             for m in fr.matches:
