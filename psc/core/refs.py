@@ -73,6 +73,10 @@ class Reference:
     field: str
     rulebase: Rulebase | None = None
     resolved: Target | None = None  # None => dangling or predefined
+    referrer_disabled: bool = False
+    """True only for a rule referrer whose rule is disabled. Group/object
+    referrers are always False. Lets `unused(..., ignore_disabled=True)` treat
+    disabled rules as non-roots (#9)."""
 
     @property
     def is_resolved(self) -> bool:
@@ -155,6 +159,7 @@ class ReferenceGraph:
         referrer_location: Location,
         field_name: str,
         rulebase: Rulebase | None = None,
+        referrer_disabled: bool = False,
     ) -> None:
         if target_name in PREDEFINED:
             return
@@ -170,6 +175,7 @@ class ReferenceGraph:
             field=field_name,
             rulebase=rulebase,
             resolved=resolved,
+            referrer_disabled=referrer_disabled,
         )
         self.references.append(ref)
         if resolved is not None:
@@ -237,6 +243,7 @@ class ReferenceGraph:
                         referrer_location=r.location,
                         field_name=fname,
                         rulebase=r.rulebase,
+                        referrer_disabled=r.disabled,
                     )
             for m in r.service:
                 self._emit(
@@ -247,6 +254,7 @@ class ReferenceGraph:
                     referrer_location=r.location,
                     field_name="service",
                     rulebase=r.rulebase,
+                    referrer_disabled=r.disabled,
                 )
             for t in r.tags:
                 self._emit(
@@ -257,6 +265,7 @@ class ReferenceGraph:
                     referrer_location=r.location,
                     field_name="tag",
                     rulebase=r.rulebase,
+                    referrer_disabled=r.disabled,
                 )
         for n in snap.nat_rules:
             for fname, members in (
@@ -273,6 +282,7 @@ class ReferenceGraph:
                         referrer_location=n.location,
                         field_name=fname,
                         rulebase=n.rulebase,
+                        referrer_disabled=n.disabled,
                     )
             if n.destination_translation:
                 self._emit(
@@ -283,6 +293,7 @@ class ReferenceGraph:
                     referrer_location=n.location,
                     field_name="destination-translation",
                     rulebase=n.rulebase,
+                    referrer_disabled=n.disabled,
                 )
             self._emit(
                 target_name=n.service,
@@ -292,6 +303,7 @@ class ReferenceGraph:
                 referrer_location=n.location,
                 field_name="service",
                 rulebase=n.rulebase,
+                referrer_disabled=n.disabled,
             )
             for t in n.tags:
                 self._emit(
@@ -302,6 +314,7 @@ class ReferenceGraph:
                     referrer_location=n.location,
                     field_name="tag",
                     rulebase=n.rulebase,
+                    referrer_disabled=n.disabled,
                 )
         for p in snap.policy_rules:
             kind = p.referrer_kind
@@ -315,6 +328,7 @@ class ReferenceGraph:
                         referrer_location=p.location,
                         field_name=fname,
                         rulebase=p.rulebase,
+                        referrer_disabled=p.disabled,
                     )
             for m in p.service:
                 self._emit(
@@ -325,6 +339,7 @@ class ReferenceGraph:
                     referrer_location=p.location,
                     field_name="service",
                     rulebase=p.rulebase,
+                    referrer_disabled=p.disabled,
                 )
             for t in p.tags:
                 self._emit(
@@ -335,6 +350,7 @@ class ReferenceGraph:
                     referrer_location=p.location,
                     field_name="tag",
                     rulebase=p.rulebase,
+                    referrer_disabled=p.disabled,
                 )
             if p.nexthop is not None:
                 # A PBF forwarding next-hop that names an address object. Nested
@@ -348,6 +364,7 @@ class ReferenceGraph:
                     referrer_location=p.location,
                     field_name="nexthop",
                     rulebase=p.rulebase,
+                    referrer_disabled=p.disabled,
                 )
 
     def _resolve_dags(self) -> None:
@@ -432,14 +449,20 @@ class ReferenceGraph:
         """
         return [r for r in self.references if not r.is_resolved and r.field != "nexthop"]
 
-    def _rule_seeded_targets(self) -> set[Target]:
+    def _rule_seeded_targets(self, *, ignore_disabled: bool = False) -> set[Target]:
         # Seed reachability from *every* rulebase, not just security/nat — an
         # object referenced only by e.g. a QoS or PBF rule is still in use, and
-        # reporting it unused would invite an unsafe delete.
+        # reporting it unused would invite an unsafe delete. With
+        # `ignore_disabled`, a disabled rule is not a root, so an object reached
+        # only through disabled rules (directly or via a group) surfaces as
+        # unused — the "only disabled references" cleanup case (#9).
         seeds: set[Target] = set()
         for r in self.references:
-            if rule_container(r.referrer_kind) is not None and r.resolved is not None:
-                seeds.add(r.resolved)
+            if rule_container(r.referrer_kind) is None or r.resolved is None:
+                continue
+            if ignore_disabled and r.referrer_disabled:
+                continue
+            seeds.add(r.resolved)
         return seeds
 
     def _members_of(self, target: Target) -> list[Target]:
@@ -468,9 +491,15 @@ class ReferenceGraph:
                             out.append(t)
         return out
 
-    def reachable_targets(self) -> set[Target]:
-        """Every object a rule reaches, directly or transitively via groups."""
-        seen = self._rule_seeded_targets()
+    def reachable_targets(self, *, ignore_disabled: bool = False) -> set[Target]:
+        """Every object a rule reaches, directly or transitively via groups.
+
+        With `ignore_disabled`, disabled rules are not roots. Transitive
+        reachability still flows only from enabled-rule seeds, so a group
+        reachable *only* from disabled rules seeds nothing and its members drop
+        out too — the transitive half of the #9 cleanup case.
+        """
+        seen = self._rule_seeded_targets(ignore_disabled=ignore_disabled)
         stack = list(seen)
         while stack:
             cur = stack.pop()
@@ -480,16 +509,23 @@ class ReferenceGraph:
                     stack.append(child)
         return seen
 
-    def unused(self, kind: str) -> list[Target]:
+    def unused(self, kind: str, *, ignore_disabled: bool = False) -> list[Target]:
         """Objects of `kind` that no rule reaches (recursively).
 
         `kind` is one of: address, address-group, service, service-group, tag.
         Tags are special-cased: a tag is "used" if any object or rule carries
         it, or a dynamic address-group filter mentions it.
+
+        With `ignore_disabled`, references originating from disabled rules are
+        not counted as roots, so an object referenced solely by disabled rules
+        (directly or transitively through groups) is reported unused — the
+        cleanup candidates of #9. Group membership itself still counts; only
+        *rule* roots are gated by the flag. Tags are unaffected: a tag carried
+        by a disabled rule is still a real config setting on that rule.
         """
         if kind == "tag":
             return self._unused_tags()
-        reachable = self.reachable_targets()
+        reachable = self.reachable_targets(ignore_disabled=ignore_disabled)
         defined = self._defined_targets(kind)
         return [t for t in defined if t not in reachable]
 

@@ -8,6 +8,7 @@ from psc.core.models import (
     Location,
     SecurityRule,
     Snapshot,
+    Tag,
 )
 from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
@@ -211,3 +212,87 @@ def test_unparseable_dag_filter_warns_and_matches_nothing() -> None:
     g = ReferenceGraph.build(snap)
     assert "h-prod" in {t.name for t in g.unused("address")}
     assert any("dag-bad" in w for w in g.warnings)
+
+
+def test_disabled_only_address_used_by_default_unused_with_flag() -> None:
+    # An address whose sole reference is a DISABLED rule counts as used today
+    # (default), but surfaces under ignore_disabled=True (#9).
+    snap = Snapshot(
+        addresses=[Address(name="h-off", value="10.0.0.1/32", type=AddressType.IP_NETMASK)],
+        security_rules=[SecurityRule(name="r", destination=["h-off"], disabled=True)],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "h-off" not in {t.name for t in g.unused("address")}
+    assert "h-off" in {t.name for t in g.unused("address", ignore_disabled=True)}
+
+
+def test_tag_on_disabled_rule_stays_used_under_flag() -> None:
+    # Intentional asymmetry (#9): --ignore-disabled gates only object reachability
+    # through rules. A tag carried by a disabled rule is still a real config
+    # setting on that rule, so it stays "used" even under the flag.
+    snap = Snapshot(
+        tags=[Tag(name="t-off")],
+        security_rules=[SecurityRule(name="r", tags=["t-off"], disabled=True)],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "t-off" not in {t.name for t in g.unused("tag")}
+    assert "t-off" not in {t.name for t in g.unused("tag", ignore_disabled=True)}
+
+
+def test_enabled_rule_keeps_address_used_under_flag() -> None:
+    snap = Snapshot(
+        addresses=[Address(name="h-on", value="10.0.0.2/32", type=AddressType.IP_NETMASK)],
+        security_rules=[SecurityRule(name="r", destination=["h-on"], disabled=False)],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "h-on" not in {t.name for t in g.unused("address", ignore_disabled=True)}
+
+
+def test_address_in_enabled_and_disabled_rules_stays_used_under_flag() -> None:
+    snap = Snapshot(
+        addresses=[Address(name="h", value="10.0.0.3/32", type=AddressType.IP_NETMASK)],
+        security_rules=[
+            SecurityRule(name="off", destination=["h"], disabled=True),
+            SecurityRule(name="on", destination=["h"], disabled=False),
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "h" not in {t.name for t in g.unused("address", ignore_disabled=True)}
+
+
+def test_transitive_group_reachable_only_via_disabled_rule_surfaces() -> None:
+    # An address is a member of a group that is referenced ONLY by a disabled
+    # rule: it is effectively unused once the rule goes (transitive #9).
+    snap = Snapshot(
+        addresses=[Address(name="mem", value="10.0.0.4/32", type=AddressType.IP_NETMASK)],
+        address_groups=[AddressGroup(name="grp", static_members=["mem"])],
+        security_rules=[SecurityRule(name="r", destination=["grp"], disabled=True)],
+    )
+    g = ReferenceGraph.build(snap)
+    assert "mem" not in {t.name for t in g.unused("address")}
+    unused_flag = {t.name for t in g.unused("address", ignore_disabled=True)}
+    assert "mem" in unused_flag
+    assert "grp" in {t.name for t in g.unused("address-group", ignore_disabled=True)}
+
+
+def test_mixed_reachability_disabled_and_enabled_groups() -> None:
+    # grp-on is reached by an enabled rule; grp-off only by a disabled rule.
+    # Their members follow suit under the flag.
+    snap = Snapshot(
+        addresses=[
+            Address(name="a-on", value="10.0.0.5/32", type=AddressType.IP_NETMASK),
+            Address(name="a-off", value="10.0.0.6/32", type=AddressType.IP_NETMASK),
+        ],
+        address_groups=[
+            AddressGroup(name="grp-on", static_members=["a-on"]),
+            AddressGroup(name="grp-off", static_members=["a-off"]),
+        ],
+        security_rules=[
+            SecurityRule(name="on", destination=["grp-on"], disabled=False),
+            SecurityRule(name="off", destination=["grp-off"], disabled=True),
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    unused_flag = {t.name for t in g.unused("address", ignore_disabled=True)}
+    assert "a-on" not in unused_flag
+    assert "a-off" in unused_flag
