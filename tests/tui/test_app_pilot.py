@@ -73,3 +73,31 @@ async def test_dedup_spoke_stages_merge_and_reconciles(workbench_xml: str) -> No
         await pilot.pause()
         assert len(app.session.staging) == 1
         assert len(app.session.selection) == 1  # reconciled: merged-away dupe gone
+
+
+@pytest.mark.asyncio
+async def test_apply_batch_offline_writes_file(workbench_xml: str, tmp_path) -> None:
+    sess = WorkbenchSession(
+        source=OfflineSource(workbench_xml), output_mode=OutputMode.OFFLINE_APPLY
+    )
+    dest = tmp_path / "candidate.xml"
+    sess.apply_out_path = str(dest)  # the hub reads this for offline apply
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")
+        results.move_cursor(row=1)
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        await pilot.press("ctrl+a")  # apply batch
+        await pilot.pause()
+    assert dest.exists()
+    assert "web-srv-02" not in dest.read_text()

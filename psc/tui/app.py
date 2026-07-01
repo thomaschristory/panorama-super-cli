@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import SelectionItem
 
@@ -44,6 +45,8 @@ class WorkbenchApp(App[None]):
         self.session = session
         # The rows currently shown in #results, parallel to the table rows.
         self._results: list[SelectionItem] = []
+        # Where offline-apply writes the compounded config; set by the launcher.
+        self.apply_out_path: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -88,5 +91,13 @@ class WorkbenchApp(App[None]):
 
         self.push_screen(DedupScreen(self.session))
 
-    def action_apply_batch(self) -> None:  # filled in Task 11
-        self.bell()
+    def action_apply_batch(self) -> None:
+        out_path = getattr(self.session, "apply_out_path", None) or self.apply_out_path
+        try:
+            outcome = self.session.apply_batch(out_path=out_path)
+        except PscError as exc:
+            self.query_one("#staging", Static).update(f"[red]apply failed: {exc}[/red]")
+            self.bell()
+            return
+        first_line = outcome.detail.splitlines()[0] if outcome.detail else ""
+        self.query_one("#staging", Static).update(f"applied {outcome.ops} change(s) — {first_line}")
