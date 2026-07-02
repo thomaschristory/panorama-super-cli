@@ -128,18 +128,25 @@ invalidates another.
 
 ## Applying the batch
 
-`ctrl+a` applies the whole staged batch at once, in the launch output mode:
+`ctrl+a` opens the **apply screen**, where you choose the output format and
+destination *after* reviewing the batch — no need to decide at launch. Pick one:
 
-- **SET** — renders the combined PAN-OS `set` script (write it to a file with
-  `--apply-out`, or read it on screen).
-- **OFFLINE_APPLY** — writes the compounded config (or a partial config, when the
-  batch is scoped) to `--apply-out`; never overwrites the source export.
-- **LIVE_APPLY** — pushes the batch to Panorama's candidate config over the XML
-  API and **never commits** — you review and commit yourself.
+- **Print the set script here** — the combined PAN-OS `set` script, shown inline.
+- **Save a set-command file (`.set`)** — the same script written to a file.
+- **Save a full XML config** — the whole compounded config (offline apply).
+- **Save a minimal partial XML config** — only the touched subtrees (offline apply).
+- **Push to the live candidate** — pushes over the XML API and **never commits**
+  (offered only when the session is backed by a live profile).
 
-Any apply failure (a blocked batch, a missing `--apply-out`, or a transport error
-on a live push) is surfaced in the staging strip; the app does not crash and your
-batch is preserved.
+The `--output-mode` / `--apply-out` launch flags still work; they just pre-select
+the default here, overridable in-app. The set-script options are exports (they
+keep your staging); a full/partial config write or a live push commits the batch
+and clears staging. A **live push** and **overwriting an existing file** each need
+an explicit second `ctrl+a` to confirm.
+
+The safety model is unchanged: a blocked batch is refused, an offline write never
+overwrites the source export, and a live push never commits. Any apply failure is
+surfaced on the screen; the app does not crash and your batch is preserved.
 
 ## Quitting
 
