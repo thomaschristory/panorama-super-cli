@@ -170,6 +170,45 @@ class WorkbenchSession:
         self.staging.append(StagedChange(label=label, changeset=cs))
         self._reconcile_selection()
 
+    def drop_staged(self, index: int) -> None:
+        """Remove the staged change at `index` and rebuild the working config.
+
+        Staged changes COMPOUND: `working_xml` is `source.raw_xml()` with every
+        staged changeset applied in order. Dropping change *k* therefore means
+        rebuilding from the source and re-applying every OTHER staged changeset,
+        in order — the dropped change's effect vanishes while the rest are
+        preserved.
+
+        A later change may depend on an earlier one (e.g. it edits an object the
+        earlier change created). If replaying the remaining changesets fails once
+        the dependency is gone, this raises a `PscError` and leaves `staging` plus
+        `working_xml`/`working_snapshot` completely untouched — the rebuild runs on
+        temporaries and is promoted only on full success, so the batch never ends
+        up half-rebuilt.
+        """
+        if not 0 <= index < len(self.staging):
+            return  # out-of-range: no-op, batch untouched
+
+        remaining = [s for i, s in enumerate(self.staging) if i != index]
+        # Rebuild on temporaries; promote atomically only if every replay succeeds.
+        try:
+            new_xml = self.source.raw_xml()
+            for staged in remaining:
+                new_xml = apply_changeset(new_xml, staged.changeset)
+            new_snapshot = parse_config(new_xml)
+        except PscError as exc:
+            raise PscError(
+                f"cannot drop staged change {index}: replaying the remaining "
+                f"changes failed (a later change likely depended on it) — {exc}; "
+                "the batch is left intact",
+                ErrorType.CONFLICT,
+            ) from exc
+
+        self.staging = remaining
+        self.working_xml = new_xml
+        self.working_snapshot = new_snapshot
+        self._reconcile_selection()
+
     def _reconcile_selection(self) -> None:
         """Drop selection items that no longer exist in the working snapshot."""
         live = set(_iter_objects(self.working_snapshot))
