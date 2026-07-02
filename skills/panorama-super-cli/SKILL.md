@@ -70,6 +70,7 @@ psc -c cfg.xml -o json find ip 10.0.0.10          # exact/contains/within + grou
 psc -c cfg.xml -o json find ip -e 10.0.0.10       # exact only (10.0.0.10 == /32)
 psc -c cfg.xml -o json find ip 10.0.0.0/24        # everything inside the /24
 psc -c cfg.xml -o json find ip -f ips.txt         # a whole list (array result)
+psc -c cfg.xml -o json find ip 1.2.3.4 --resolve-fqdn   # opt-in DNS: match FQDN objects too
 psc -c cfg.xml -o json find object grp-web        # locate by exact name
 ```
 
@@ -77,6 +78,9 @@ psc -c cfg.xml -o json find object grp-web        # locate by exact name
 `exact` (equal), `contains` (object is broader), `within` (object is narrower).
 Pass `--exact`/`-e` to keep only `exact` matches — handy when a broad object
 like `10.0.0.0/8` would otherwise drown out the host you asked for.
+`--resolve-fqdn` opts into DNS: FQDN objects are resolved and match when their
+A/AAAA include the IP (cached, timeout-bounded; failures counted on stderr). The
+default never touches DNS — leave it off for hermetic/offline runs.
 
 ### dedup — duplicates and merging
 
@@ -85,8 +89,9 @@ psc -c cfg.xml -o json dedup addresses            # strict: byte-identical value
 psc -c cfg.xml -o json dedup addresses --not-strict  # also mask host bits (10.1.1.50/24 ~ 10.1.1.0/24)
 psc -c cfg.xml -o json dedup services
 psc -c cfg.xml -o json dedup groups               # address-groups w/ identical effective member set
-psc -c cfg.xml -o json dedup merge --keep h-web1 --remove web-primary   # dry-run plan
+psc -c cfg.xml -o json dedup merge --keep h-web1 --remove web-primary   # dry-run plan (pairwise)
 psc -c cfg.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml
+psc -c cfg.xml dedup merge --group 10.0.0.10/32 --keep h-web1 --apply --out fixed.xml  # whole bucket
 psc -c cfg.xml dedup merge-group --keep grp-a --remove grp-b --apply --out fixed.xml
 ```
 
@@ -95,6 +100,11 @@ psc -c cfg.xml dedup merge-group --keep grp-a --remove grp-b --apply --out fixed
 (use `--allow-value-change` to override) or if the survivor isn't visible where
 a reference lives. Per-object locations: `--keep-location` / `--remove-location`
 (default: `--device-group` or `shared`).
+
+`--group <value>` collapses the WHOLE duplicate-address bucket sharing that value
+(from `dedup addresses`) toward one survivor in a single plan — `--keep` picks the
+survivor (defaults to the first bucket member); `--group` and `--remove` are
+mutually exclusive.
 
 `dedup groups` buckets address-groups by the canonical leaf-address set they
 expand to (nested groups flattened); dynamic/unresolvable groups are skipped and
@@ -109,8 +119,14 @@ survivor isn't visible where a reference lives.
 ```bash
 psc -c cfg.xml -o json refs used h-web1            # delete/rename pre-flight
 psc -c cfg.xml -o json refs unused --kind address # recursive: nothing a rule reaches
+psc -c cfg.xml -o json refs unused --kind address --ignore-disabled  # only-disabled-rule users
+psc -c cfg.xml -o json refs unused --kind address --no-caveat        # suppress the stderr caveat
 psc -c cfg.xml -o json refs dangling              # references to missing objects
 ```
+
+`--ignore-disabled` treats disabled rules as non-references (surfaces objects used
+*only* by disabled rules). `refs unused` prints the blind-spot caveat on stderr by
+default; `--no-caveat` silences it (stdout is unaffected).
 
 `refs used` may need `--kind` and `--location` if a name is ambiguous. Coverage
 spans groups and **every** object-referencing rulebase — security, NAT, PBF,
@@ -136,20 +152,26 @@ only a non-security rule reaches. A `referrer_kind` like `qos-rule` or
 psc -c cfg.xml -o json name lint                  # drift vs the configured scheme
 psc -c cfg.xml name rename --object h-web1 --to H-10.0.0.10   # reference-aware
 psc -c cfg.xml name apply --object h-web1          # rename to the scheme's name
+psc -c cfg.xml name apply --all                    # rename EVERY drifting object (one plan)
 ```
 
 Rename **refuses** a shared-vs-device-group shadow collision (exit `6`).
+`name apply` takes exactly one of `--object NAME` or `--all`; `--all` renames every
+non-compliant object in one reference-aware plan, blocking any collide/shadow.
 
-### audit — overlapping / contained ranges
+### audit — overlaps + well-known ports
 
 ```bash
 psc -c cfg.xml -o json audit overlaps             # pairs where one range contains/overlaps another
 psc -c cfg.xml --strict audit overlaps            # exit 5 when none (CI gate)
+psc -c cfg.xml -o json audit services-vs-wellknown   # custom services duplicating a predefined/IANA port
 ```
 
-Pure read. Each pair once; `relationship` is `contains` (one broader) or
-`overlaps`. `ip-netmask`/`ip-range` only (no FQDN/wildcard). Scope with `-d`;
-`--strict` is the global flag (before the group).
+Pure reads. `overlaps`: each pair once; `relationship` is `contains` (one broader)
+or `overlaps`; `ip-netmask`/`ip-range` only. `services-vs-wellknown`: custom
+services whose single dest port matches a predefined PAN-OS service or IANA
+well-known port (the `kind` column tells them apart). Scope with `-d`; `--strict`
+is the global flag (before the group).
 
 ### set — create / update one object
 
@@ -222,6 +244,36 @@ object already at the destination. A collision with an *identical-valued* object
 simply drops the source copy (references resolve to the destination). Single
 object per run; dry-run by default.
 
+Add `--cascade` to also promote the object's transitive DG-local dependencies
+(group members, tags) to the destination in one deepest-first plan; without it an
+unresolved dependency **blocks** the move and is listed to move first.
+
+### diff — what changed between two configs (or two DGs)
+
+```bash
+psc diff before.xml after.xml -o json             # file-vs-file (pre/post review)
+psc -c cfg.xml diff --device-group A --against B   # DG-vs-DG effective object sets
+```
+
+Pure read: added/removed/changed objects, groups, rules. The two modes are
+mutually exclusive. A difference is *data*, so it **exits 0** even when the sides
+differ — branch on the JSON, not the exit code.
+
+### export / set -f — port objects as NDJSON
+
+```bash
+psc -c src.xml export addresses --out addrs.ndjson       # dump one kind as NDJSON (PLURAL kind)
+psc -c dst.xml set address -f addrs.ndjson               # bulk import (dry-run plan; SINGULAR subcommand)
+psc -c dst.xml set address -f addrs.ndjson --apply --out merged.xml
+```
+
+`export <kind>` takes a PLURAL kind (addresses|address-groups|services|
+service-groups|tags) and writes one JSON object per line, ordered by
+(location, name). `set <kind> -f <file>` uses the SINGULAR `set` subcommand
+(address|address-group|service|service-group|tag) and imports the whole batch as
+**one** reviewable ChangeSet — same crud validation, aggregated; one blocker
+refuses the whole file; the singular flags are ignored in this mode.
+
 ### profile — live connections
 
 ```bash
@@ -232,9 +284,27 @@ psc profile add --name prod --host panorama.example.com --api-key "$KEY" --defau
 psc profile list
 ```
 
-Password comes from `$PSC_PASSWORD` or a hidden prompt, never a flag. TLS is
-verified by default; add `--insecure` to `init` for a self-signed Panorama. Auth
-failures exit `8`, unreachable host exits `7`.
+Password comes from `$PSC_PASSWORD` or a hidden prompt, never a flag. Set
+`$PSC_API_KEY` to override the stored key so the secret never hits disk
+(precedence: env > config file). TLS is verified by default; add `--insecure` to
+`init` for a self-signed Panorama — it emits a loud warning on every live
+connection (never use it against production). Auth failures exit `8`, unreachable
+host exits `7`.
+
+### workbench — interactive TUI
+
+```bash
+psc -c cfg.xml workbench                          # offline
+psc -p prod w --output-mode live-apply            # live (never commits)
+```
+
+`psc workbench` (alias `psc w`) is a keyboard-driven TUI at full CLI parity:
+search → multi-select into a buffer → route into a spoke → stage plans into a
+git-like changelist → apply the batch (`ctrl+a`) as a `set` script
+(`--output-mode set`, default), an offline config write (`offline-apply` +
+`--apply-out`), or a live candidate push (`live-apply`). Same dry-run/stage,
+blocker gate, and repoint-before-delete safety as the CLI. For scripting/agents
+prefer the one-shot commands above; the workbench is for interactive sessions.
 
 ## Output formats
 

@@ -58,6 +58,8 @@ nav:
       - Duplicates and merging: guides/duplicates-and-merging.md
       - References and audit: guides/references-and-audit.md
       - Editing objects: guides/editing-objects.md
+      - Comparing and porting configs: guides/comparing-and-porting.md
+      - Workbench (TUI): guides/workbench.md
       - Coverage and blind spots: guides/coverage-and-limitations.md
       - Naming templates: guides/naming.md
       - Output formats: guides/output-formats.md

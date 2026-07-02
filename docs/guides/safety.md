@@ -6,8 +6,10 @@ is always explicit.
 ## Dry-run by default
 
 Every mutating command (`dedup merge`, `dedup merge-group`, `name rename`,
-`name apply`, `set …`, `rule edit-member`, `decommission`) **prints a plan and
-exits without changing anything** unless you pass `--apply`. The plan
+`name apply`, `set …` including bulk `set -f`, `rule edit-member`,
+`decommission`, `move`) **prints a plan and exits without changing anything**
+unless you pass `--apply`. The workbench stages plans and applies them as one
+batch on `ctrl+a`, under the same gate. The plan
 you see is the exact change-set that `--apply` would execute — there's no
 second, hidden code path.
 

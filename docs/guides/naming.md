@@ -45,6 +45,22 @@ config (add `--apply` to execute; the file is written either way). Add
 `-of set` for a PAN-OS `set` script instead. Live, `--apply` pushes the
 candidate; add `--out` to also save the artifact.
 
+## Rename everything to the scheme
+
+`name apply --all` renames **every** non-compliant object (everything `name lint`
+would list) to its scheme name in one reviewed plan — a bulk convention sweep:
+
+```console
+psc -c panorama.xml name apply --all                    # dry-run: the whole plan
+psc -c panorama.xml -d DG-EDGE name apply --all          # scope to one device-group
+psc -c panorama.xml name apply --all --apply --out fixed.xml
+```
+
+`name apply` takes exactly one of `--object NAME` or `--all`. The bulk plan is
+reference-aware just like a single rename, and any object whose new name would
+**collide or shadow** is blocked (the [shadow guard](#the-shadow-guard) still
+applies) — so the plan is all-or-nothing safe.
+
 ## The shadow guard
 
 Renaming a `shared` object to a name a device-group already defines (or vice
