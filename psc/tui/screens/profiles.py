@@ -11,14 +11,16 @@ persists with `save_config()` (atomic 0600 write, reused verbatim). The API key
 Input is masked and never rendered into the table or any status line — the file
 stays 0600 and secrets never reach a log/screen cell.
 
-Switching the ACTIVE workbench source to a different profile/export is a
-deliberate NON-goal here (documented follow-up): this manages persisted config
-only and never rebuilds the session's working snapshot.
+It can also switch the ACTIVE workbench source mid-session (#121): `ctrl+r`
+reloads the session onto the focused profile (a live connection) or onto an
+offline export path typed in the reload field. That rebuilds the working
+snapshot and DISCARDS the selection + staged batch, so it asks for a second
+`ctrl+r` to confirm when a batch is staged.
 """
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -27,6 +29,7 @@ from textual.widgets import DataTable, Footer, Input, Select, Static
 
 from psc.config.loader import load_config, save_config
 from psc.config.models import Config, Profile
+from psc.core.source import LiveSource, OfflineSource
 from psc.output.errors import PscError
 from psc.tui.profiles import (
     VALID_OUTPUTS,
@@ -35,6 +38,10 @@ from psc.tui.profiles import (
     set_default_output,
     set_default_profile,
 )
+from psc.tui.session import WorkbenchSession
+
+if TYPE_CHECKING:
+    from psc.tui.app import WorkbenchApp
 
 
 class ProfilesScreen(Screen[None]):
@@ -44,14 +51,20 @@ class ProfilesScreen(Screen[None]):
         ("backspace", "remove_profile", "remove"),
         ("ctrl+d", "set_default", "set default"),
         ("ctrl+o", "set_output", "set output"),
+        ("ctrl+r", "reload_source", "load source"),
         ("escape", "app.pop_screen", "back"),
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, session: WorkbenchSession | None = None) -> None:
         super().__init__()
         # The current on-disk config; every mutation reloads before applying so
         # the screen never persists a stale in-memory view.
         self._config: Config = load_config()
+        # The live workbench session, when opened from the hub — needed to switch
+        # the active source (#121). None only in isolated/standalone use.
+        self.session = session
+        # Two-step latch: reloading discards a staged batch, so confirm first.
+        self._reload_armed = False
 
     def compose(self) -> ComposeResult:
         table: DataTable[str] = DataTable(id="profile-table")
@@ -76,9 +89,13 @@ class ProfilesScreen(Screen[None]):
             allow_blank=False,
             id="profile-output",
         )
+        yield Input(
+            placeholder="offline export path to load (or focus a profile), then ctrl+r",
+            id="reload-path",
+        )
         yield Static(
             "[ctrl+y] add/update  [del] remove focused  [ctrl+d] set default  "
-            "[ctrl+o] set output  [esc] back",
+            "[ctrl+o] set output  [ctrl+r] load source  [esc] back",
             id="profile-status",
         )
         yield Footer()
@@ -117,8 +134,60 @@ class ProfilesScreen(Screen[None]):
             return None
         return self._config.profiles[row].name
 
+    def _focused_profile(self) -> Profile | None:
+        """The Profile object under the table cursor, if any."""
+        name = self._focused_profile_name()
+        if name is None:
+            return None
+        return next((p for p in self._config.profiles if p.name == name), None)
+
     def _status(self, message: str) -> None:
         self.query_one("#profile-status", Static).update(message)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        # Editing the reload target invalidates a pending discard confirmation.
+        if event.input.id == "reload-path":
+            self._reload_armed = False
+
+    def action_reload_source(self) -> None:
+        if self.session is None:
+            self.app.bell()
+            return
+        path = self.query_one("#reload-path", Input).value.strip()
+        profile: Profile | None = None
+        if path:
+            desc = f"export {path}"
+        else:
+            profile = self._focused_profile()
+            if profile is None:
+                self._status("[red]focus a profile or type an export path to load[/red]")
+                self.app.bell()
+                return
+            desc = f"profile '{profile.name}'"
+        # Reloading discards the staged batch + selection: confirm once first.
+        if self.session.staging and not self._reload_armed:
+            self._reload_armed = True
+            n = len(self.session.staging)
+            self._status(
+                f"[yellow]loading {desc} discards {n} staged change(s) + the selection "
+                "— press ctrl+r again to confirm[/yellow]"
+            )
+            return
+        try:
+            if path:
+                source: OfflineSource | LiveSource = OfflineSource(path)
+            else:
+                assert profile is not None  # no path -> resolved above
+                source = profile.to_live_source()
+            self.session.reload(source)
+        except PscError as exc:
+            self._reload_armed = False
+            self._status(f"[red]{exc}[/red]")
+            self.app.bell()
+            return
+        self._reload_armed = False
+        cast("WorkbenchApp", self.app)._reload_view()
+        self._status(f"loaded {desc} — selection + staged batch cleared")
 
     def _persist(self, config: Config) -> bool:
         """Persist `config`, refresh the view, and report. Returns success."""

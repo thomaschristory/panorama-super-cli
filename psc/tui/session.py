@@ -96,6 +96,26 @@ class WorkbenchSession:
         # config stays the default — opt-in, no behaviour change otherwise.
         self.offline_partial: bool = False
 
+    def reload(self, source: OfflineSource | LiveSource) -> None:
+        """Point the session at a different source, discarding session state.
+
+        Rebuilds `working_xml`/`working_snapshot` from `source` and CLEARS the
+        selection and the staged batch — those referenced the old config and
+        can't carry over. Callers confirm the discard first (the TUI does).
+
+        Atomic: the new config is fetched + parsed onto temporaries before
+        anything is replaced, so if a live read or parse fails the session keeps
+        its current source and state (nothing half-swapped). A `PscError` from a
+        live keygen/probe/read propagates for the caller to surface.
+        """
+        new_xml = source.raw_xml()
+        new_snapshot = parse_config(new_xml)
+        self.source = source
+        self.working_xml = new_xml
+        self.working_snapshot = new_snapshot
+        self.selection.clear()
+        self.staging.clear()
+
     def search(self, query: str) -> list[SelectionItem]:
         """Search the working snapshot by name substring and by IP/value."""
         q = query.strip()

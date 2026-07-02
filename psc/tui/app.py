@@ -123,6 +123,14 @@ class WorkbenchApp(App[None]):
         for item in self._results:
             table.add_row(item.kind, item.name, item.location, render_value(snapshot, item))
 
+    def _reload_view(self) -> None:
+        """Reset the hub after the session is pointed at a new source (#121):
+        the old search results reference the previous config, so clear them and
+        resync the (now empty) selection + staging strip."""
+        self._results = []
+        self.query_one("#results", DataTable).clear()
+        self._refresh_selection_view()
+
     def _refresh_selection_view(self) -> None:
         sel = self.query_one("#selection", DataTable)
         sel.clear()
@@ -229,7 +237,7 @@ class WorkbenchApp(App[None]):
     def action_profiles(self) -> None:
         from psc.tui.screens.profiles import ProfilesScreen  # noqa: PLC0415 — avoid import cycle
 
-        self.push_screen(ProfilesScreen())
+        self.push_screen(ProfilesScreen(self.session))
 
     def action_staged(self) -> None:
         from psc.tui.screens.staged import StagedScreen  # noqa: PLC0415 — avoid import cycle

@@ -104,7 +104,7 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | `g` | **dangling** | List references to names that resolve to nothing (read-only). |
 | `l` | **name-lint** | Report objects that drift from the configured naming scheme. |
 | `n` | **name-apply** | Rename drifting object(s) to their scheme name; choose an entry to apply. |
-| `p` | **profiles** | CRUD live connection profiles, persisted to `~/.psc/config.yaml`. |
+| `p` | **profiles** | CRUD live connection profiles, persisted to `~/.psc/config.yaml`. Also switches the active source (`ctrl+r`) — reload the session onto the focused profile or an offline export path; discards the selection + staged batch (with a confirm when a batch is staged). |
 | `s` | **staged** | Inspect the staged changelist (see below). |
 
 The mutating spokes are the same engines as their CLI counterparts, so the
