@@ -134,6 +134,14 @@ class WorkbenchSession:
     def selected_of_kinds(self, kinds: set[str]) -> list[SelectionItem]:
         return [i for i in self.selection if i.kind in kinds]
 
+    def remove_at(self, index: int) -> bool:
+        """Drop the selection entry at `index` (the selection-panel row order).
+        Returns True if an entry was removed."""
+        if 0 <= index < len(self.selection):
+            del self.selection[index]
+            return True
+        return False
+
     def clear_selection(self) -> None:
         self.selection.clear()
 

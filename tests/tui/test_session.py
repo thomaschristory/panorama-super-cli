@@ -199,3 +199,14 @@ def test_apply_batch_does_not_clear_staging(workbench_xml):
     sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
     sess.apply_batch(out_path=None)
     assert len(sess.staging) == 1  # intentional: operator decides when to clear
+
+
+def test_remove_at_drops_one_selection_entry(workbench_xml):
+    sess = _session(workbench_xml)
+    a = SelectionItem(kind="address", name="web-srv-01", location="shared")
+    b = SelectionItem(kind="address", name="db-gw", location="shared")
+    sess.toggle(a)
+    sess.toggle(b)
+    assert sess.remove_at(0) is True
+    assert sess.selection == [b]  # only the chosen entry dropped, the rest kept
+    assert sess.remove_at(5) is False  # out-of-range is a no-op
