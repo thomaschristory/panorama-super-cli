@@ -31,6 +31,43 @@ def workbench_xml(tmp_path):
     return str(p)
 
 
+WORKBENCH_XML_TRIPLE = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="web-srv-01"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="web-srv-02"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="web-srv-03"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="db-gw"><ip-netmask>10.0.9.1/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="web-pool">
+        <static>
+          <member>web-srv-01</member>
+          <member>web-srv-02</member>
+          <member>web-srv-03</member>
+        </static>
+      </entry>
+    </address-group>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group/>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_triple(tmp_path):
+    """Three address objects sharing 10.0.5.10/32 (web-srv-01/02/03), all members
+    of 'web-pool' — the 3+ duplicate collapse case for dedup (#85)."""
+    p = tmp_path / "config_triple.xml"
+    p.write_text(WORKBENCH_XML_TRIPLE, encoding="utf-8")
+    return str(p)
+
+
 WORKBENCH_XML_REFS = """<?xml version="1.0"?>
 <config>
   <shared>
