@@ -210,3 +210,32 @@ def test_remove_at_drops_one_selection_entry(workbench_xml):
     assert sess.remove_at(0) is True
     assert sess.selection == [b]  # only the chosen entry dropped, the rest kept
     assert sess.remove_at(5) is False  # out-of-range is a no-op
+
+
+def test_apply_batch_set_mode_writes_script_to_file(workbench_xml, tmp_path):
+    sess = _session(workbench_xml)  # OutputMode.SET
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    out = tmp_path / "batch.set"
+    expected = sess.combined_set_script()
+    outcome = sess.apply_batch(out_path=str(out))
+    assert outcome.out_path == str(out)
+    text = out.read_text(encoding="utf-8")
+    assert text == expected + "\n"  # the full script, newline-terminated
+    assert expected  # non-empty (the merge rendered at least one line)
+    # SET is an export/preview, not a commit — staging is retained.
+    assert len(sess.staging) == 1
+
+
+def test_apply_batch_set_mode_no_out_path_is_preview(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    outcome = sess.apply_batch(out_path=None)
+    assert outcome.out_path is None
+    assert outcome.detail == sess.combined_set_script()  # script returned inline
+
+
+def test_apply_batch_set_mode_refuses_source_path(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
+    with pytest.raises(PscError):
+        sess.apply_batch(out_path=workbench_xml)  # would clobber the source config
