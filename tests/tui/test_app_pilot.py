@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import DataTable, Input, Select
+from textual.widgets import DataTable, Input, Select, Static
 
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
@@ -9,6 +9,7 @@ from psc.tui.screens.audit import AuditScreen
 from psc.tui.screens.move import MoveScreen
 from psc.tui.screens.rename import RenameScreen
 from psc.tui.screens.rule import RuleScreen
+from psc.tui.screens.staged import StagedScreen
 from psc.tui.screens.usage import UsageScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
@@ -354,3 +355,42 @@ async def test_move_to_chosen_dg_stages_that_destination(workbench_xml_two_dg: s
         await pilot.pause()
         assert len(app.session.staging) == 1
         assert app.session.staging[0].label == "move dg-only -> shared"
+
+
+@pytest.mark.asyncio
+async def test_staged_screen_lists_and_drops_a_change(workbench_xml: str) -> None:
+    # Stage a rename, open the staged-changes screen, confirm the change is listed
+    # with its label, drop it, and check the batch shrank + the hub strip updated.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "db-gw"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("r")
+        await pilot.pause()
+        app.screen.query_one("#rename-input", Input).value = "db-gateway"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+
+        await pilot.press("s")  # open the staged-changes screen
+        await pilot.pause()
+        assert isinstance(app.screen, StagedScreen)
+        table = app.screen.query_one("#staged-table", DataTable)
+        assert table.row_count == 1
+        label = app.session.staging[0].label
+        cells = {str(table.get_cell(rk, ck)) for rk in table.rows for ck in table.columns}
+        assert any(label in c for c in cells)
+
+        await pilot.press("d")  # drop the focused staged change
+        await pilot.pause()
+        assert app.session.staging == []
+        assert isinstance(app.screen, StagedScreen)  # stays open (now empty)
+        await pilot.press("escape")
+        await pilot.pause()
+        # Hub staging strip reflects the drop.
+        strip = app.query_one("#staging", Static)
+        assert "staged (0)" in str(strip.render())

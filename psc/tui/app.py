@@ -43,6 +43,7 @@ class WorkbenchApp(App[None]):
         ("x", "decommission", "decommission"),
         ("r", "rename", "rename"),
         ("e", "rule_edit", "rule"),
+        ("s", "staged", "staged"),
         ("ctrl+a", "apply_batch", "apply"),
         ("q", "quit", "quit"),
     ]
@@ -62,6 +63,7 @@ class WorkbenchApp(App[None]):
             "decommission",
             "rename",
             "rule_edit",
+            "staged",
             "apply_batch",
         }
     )
@@ -165,6 +167,11 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.rule import RuleScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(RuleScreen(self.session))
+
+    def action_staged(self) -> None:
+        from psc.tui.screens.staged import StagedScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(StagedScreen(self.session))
 
     def action_apply_batch(self) -> None:
         out_path = self.session.apply_out_path

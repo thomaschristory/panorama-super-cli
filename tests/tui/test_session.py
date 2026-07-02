@@ -292,3 +292,92 @@ def test_apply_batch_offline_full_is_default(workbench_xml, tmp_path):
     sess.apply_batch(out_path=str(dest))
     # Default writes the whole compounded config: an untouched sibling is present.
     assert "db-gw" in dest.read_text()
+
+
+def _add_addr_cs(name: str, ip: str) -> ChangeSet:
+    return ChangeSet(
+        title=f"add {name}",
+        upserts=[
+            ObjectUpsert(
+                kind=ObjectKind.ADDRESS,
+                name=name,
+                location="shared",
+                fields={"ip-netmask": ip},
+            )
+        ],
+    )
+
+
+def test_drop_staged_removes_only_that_change_and_rebuilds(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("add h0", _add_addr_cs("h0", "10.0.0.0/32"))
+    sess.stage("add h1", _add_addr_cs("h1", "10.0.0.1/32"))
+    sess.stage("add h2", _add_addr_cs("h2", "10.0.0.2/32"))
+
+    sess.drop_staged(1)
+
+    assert [s.label for s in sess.staging] == ["add h0", "add h2"]
+    names = {a.name for a in sess.working_snapshot.addresses}
+    # Changes 0 and 2 remain applied; the dropped change's object is gone.
+    assert "h0" in names
+    assert "h2" in names
+    assert "h1" not in names
+
+
+def test_drop_staged_reconciles_selection(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("add h0", _add_addr_cs("h0", "10.0.0.0/32"))
+    sess.stage("add h1", _add_addr_cs("h1", "10.0.0.1/32"))
+    keep = SelectionItem(kind="address", name="h0", location="shared")
+    doomed = SelectionItem(kind="address", name="h1", location="shared")
+    sess.toggle(keep)
+    sess.toggle(doomed)
+
+    sess.drop_staged(0)  # drop h0's creation
+
+    # h0 is now gone from the working snapshot, so its selection entry is dropped;
+    # h1 (still created by the surviving change) stays selected.
+    assert sess.selection == [doomed]
+
+
+def test_drop_staged_out_of_range_is_noop(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("add h0", _add_addr_cs("h0", "10.0.0.0/32"))
+    before_xml = sess.working_xml
+    sess.drop_staged(5)
+    assert len(sess.staging) == 1
+    assert sess.working_xml == before_xml
+
+
+def test_drop_staged_dependency_failure_keeps_batch_intact(workbench_xml):
+    sess = _session(workbench_xml)
+    sess.stage("add h0", _add_addr_cs("h0", "10.0.0.0/32"))
+    sess.stage("add h1", _add_addr_cs("h1", "10.0.0.1/32"))
+    # A third change that only applies cleanly on top of the others: it upserts
+    # into a device-group scope that does not exist in this config, so replaying
+    # it during a rebuild raises. It is inserted directly (bypassing stage(),
+    # which would refuse it) to model a batch whose later change depends on an
+    # earlier one — dropping change 0 must not leave a half-rebuilt state.
+    dependent = ChangeSet(
+        title="add into dg",
+        upserts=[
+            ObjectUpsert(
+                kind=ObjectKind.ADDRESS,
+                name="dep",
+                location="ghost-dg",
+                fields={"ip-netmask": "10.0.0.9/32"},
+            )
+        ],
+    )
+    sess.staging.append(StagedChange(label="dependent", changeset=dependent))
+    staging_before = list(sess.staging)
+    xml_before = sess.working_xml
+    snap_names_before = {a.name for a in sess.working_snapshot.addresses}
+
+    with pytest.raises(PscError):
+        sess.drop_staged(0)
+
+    # Nothing changed: the whole batch and working state survive intact.
+    assert sess.staging == staging_before
+    assert sess.working_xml == xml_before
+    assert {a.name for a in sess.working_snapshot.addresses} == snap_names_before
