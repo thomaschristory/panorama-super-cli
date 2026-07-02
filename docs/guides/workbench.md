@@ -90,8 +90,11 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | Key | Spoke | What it does |
 | --- | --- | --- |
 | `d` | **dedup** | Collapse the duplicate bucket in the selection toward a chosen survivor (whole-bucket merge; the rest are repointed and removed). A dropdown picks the survivor — its label is `name@location`, so the choice is also the scope. |
+| `D` | **duplicates scan** | Config-wide duplicate buckets (read-only), with a kind toggle for addresses / services / address-groups. The discovery counterpart of `d`: `d` merges the selection, `D` finds every duplicate in the config. |
 | `u` | **usage** | Where-used for the whole selection (read-only), with an owner column naming which selected object each reference resolves to. |
-| `a` | **audit** | Address overlap/containment involving the selection (read-only). |
+| `a` | **audit** | Read-only, with a mode toggle: address overlap/containment involving the selection, or custom services duplicating a well-known / predefined port. |
+| `f` | **diff** | Device-group-vs-device-group drift (read-only): added/removed/changed objects between two scopes, picked from dropdowns. |
+| `o` | **export** | Write objects of one kind to an NDJSON file (read-only export; never overwrites the source config). |
 | `m` | **move** | Promote selected objects toward `shared`; a destination drop-down offers the valid ancestors. |
 | `x` | **decommission** | Reference-safe cascading teardown of the selected addresses. |
 | `r` | **rename** | Reference-aware rename; choose which selected entry to rename and its new name. |

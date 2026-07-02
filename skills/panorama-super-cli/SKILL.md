@@ -303,8 +303,11 @@ search → multi-select into a buffer → route into a spoke → stage plans int
 git-like changelist → apply the batch (`ctrl+a`) as a `set` script
 (`--output-mode set`, default), an offline config write (`offline-apply` +
 `--apply-out`), or a live candidate push (`live-apply`). Same dry-run/stage,
-blocker gate, and repoint-before-delete safety as the CLI. For scripting/agents
-prefer the one-shot commands above; the workbench is for interactive sessions.
+blocker gate, and repoint-before-delete safety as the CLI. Alongside the
+selection-scoped action spokes are config-wide *discovery* spokes: `D`
+duplicates scan, `f` device-group diff, `o` NDJSON export, and a well-known-port
+mode on the `a` audit spoke. For scripting/agents prefer the one-shot commands
+above; the workbench is for interactive sessions.
 
 ## Output formats
 

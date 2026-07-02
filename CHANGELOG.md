@@ -7,6 +7,20 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+### Added
+
+- **Workbench discovery spokes** (#95) — the TUI now reaches the config-wide
+  *discovery* commands the selection-scoped spokes never covered:
+  - `D` **duplicates scan** — every duplicate bucket in the whole config, with a
+    kind toggle for addresses / services / address-groups (reuses
+    `find_duplicate_addresses` / `find_duplicate_services` / `find_duplicate_groups`).
+  - `f` **diff** — device-group-vs-device-group drift (added/removed/changed),
+    mirroring `psc diff --device-group A --against B`.
+  - `o` **export** — write objects of one kind to an NDJSON file, mirroring
+    `psc export`; a read-only export that never overwrites the source config.
+  - the `a` **audit** spoke gained a mode toggle for the
+    `audit services-vs-wellknown` scan alongside address overlaps.
+
 ## v1.0.0 — 2026-07-02
 
 First stable release. From this version `panorama-super-cli` follows
