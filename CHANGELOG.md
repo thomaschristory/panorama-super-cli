@@ -9,6 +9,16 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ### Added
 
+- **Interactive apply-time output picker** (#122) — `ctrl+a` now opens an apply
+  screen where you choose the output format + destination *after* seeing the
+  staged batch, instead of committing to it at launch. Options: print the set
+  script, save a `.set` file, save a full or minimal-partial XML config, or push
+  to the live candidate (offered only for live sessions). The `--output-mode` /
+  `--apply-out` launch flags still work — they just pre-seed the default now. A
+  live push and an overwrite of an existing file each require an explicit second
+  confirmation. Same safety model (blocker gate, never overwrite the source,
+  never commit live).
+
 - **Workbench discovery spokes** (#95) — the TUI now reaches the config-wide
   *discovery* commands the selection-scoped spokes never covered:
   - `D` **duplicates scan** — every duplicate bucket in the whole config, with a

@@ -237,15 +237,9 @@ class WorkbenchApp(App[None]):
         self.push_screen(StagedScreen(self.session))
 
     def action_apply_batch(self) -> None:
-        out_path = self.session.apply_out_path
-        try:
-            outcome = self.session.apply_batch(out_path=out_path)
-        except Exception as exc:
-            # Surface any apply failure in the staging strip rather than letting
-            # it crash the app — PscError (missing out_path / blocked) for
-            # offline, plus arbitrary transport errors from a live push.
-            self.query_one("#staging", Static).update(f"[red]apply failed: {exc}[/red]")
-            self.bell()
-            return
-        first_line = outcome.detail.splitlines()[0] if outcome.detail else ""
-        self.query_one("#staging", Static).update(f"applied {outcome.ops} change(s) — {first_line}")
+        # Output format + destination are chosen interactively at apply time
+        # (#122); the launch flags only pre-seed the picker's default. The
+        # ApplyScreen owns the actual apply_batch call.
+        from psc.tui.screens.apply import ApplyScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(ApplyScreen(self.session))
