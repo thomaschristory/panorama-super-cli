@@ -11,7 +11,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
-from psc.core.apply_xml import apply_changeset
+from psc.core.apply_xml import apply_changeset, partial_config_from_batch
 from psc.core.changeset import ChangeSet
 from psc.core.models import AddressGroup, Service, Snapshot
 from psc.core.parse import parse_config
@@ -90,6 +90,10 @@ class WorkbenchSession:
         self.selection: list[SelectionItem] = []
         self.staging: list[StagedChange] = []
         self.apply_out_path: str | None = None
+        # When True, OFFLINE_APPLY writes a MINIMAL partial config (only the
+        # touched subtrees) instead of the whole rewritten document (#92). Full
+        # config stays the default — opt-in, no behaviour change otherwise.
+        self.offline_partial: bool = False
 
     def search(self, query: str) -> list[SelectionItem]:
         """Search the working snapshot by name substring and by IP/value."""
@@ -227,7 +231,15 @@ class WorkbenchSession:
                 and dest.resolve() == self.source.path.resolve()
             ):
                 raise PscError("output path must differ from the source config", ErrorType.CONFIG)
-            self._atomic_write(dest, self.working_xml)
+            if self.offline_partial:
+                # Only the touched subtrees, in final state (#92). working_xml is
+                # already the compounded apply of every staged changeset.
+                payload = partial_config_from_batch(
+                    self.working_xml, [s.changeset for s in self.staging]
+                )
+            else:
+                payload = self.working_xml
+            self._atomic_write(dest, payload)
             self.staging.clear()
             return ApplyOutcome(
                 mode=self.output_mode, ops=ops, out_path=str(dest), detail=f"wrote {dest}"
