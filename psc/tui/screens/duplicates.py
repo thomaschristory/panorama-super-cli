@@ -10,7 +10,7 @@ the config.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -25,8 +25,27 @@ from psc.core.dedup import (
 )
 from psc.core.refs import ReferenceGraph
 from psc.tui.session import WorkbenchSession
+from psc.tui.state import SelectionItem
+
+if TYPE_CHECKING:
+    from psc.tui.app import WorkbenchApp
 
 _KINDS = ("address", "service", "address-group")
+
+
+def add_bucket_to_selection(session: WorkbenchSession, bucket: DuplicateGroup) -> int:
+    """Add every member of `bucket` to the session selection (idempotent).
+
+    Each member becomes a `SelectionItem` of the *bucket's* kind
+    (`address`/`service`/`address-group`), so a scan result lands as the right
+    selection kind for downstream spokes. Members already selected are left in
+    place — re-sending a bucket never toggles one back off. Returns the count of
+    members newly added.
+    """
+    return sum(
+        session.add(SelectionItem(kind=bucket.kind, name=m.name, location=m.location))
+        for m in bucket.members
+    )
 
 
 def duplicate_buckets(session: WorkbenchSession, kind: str) -> list[DuplicateGroup]:
@@ -49,15 +68,19 @@ def duplicate_buckets(session: WorkbenchSession, kind: str) -> list[DuplicateGro
 
 class DuplicatesScreen(Screen[None]):
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
+        ("space", "select_bucket", "→ selection"),
         ("escape", "app.pop_screen", "back"),
     ]
 
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
         self.session = session
+        # Buckets currently shown, parallel to the table rows so cursor_row
+        # indexes straight into it.
+        self._buckets: list[DuplicateGroup] = []
 
     def compose(self) -> ComposeResult:
-        yield Static("Config-wide duplicate scan (read-only). Kind:")
+        yield Static("Config-wide duplicate scan. space: send bucket to selection. Kind:")
         yield Select([(k, k) for k in _KINDS], value="address", allow_blank=False, id="dup-kind")
         table: DataTable[str] = DataTable(id="dup-table")
         yield table
@@ -65,13 +88,19 @@ class DuplicatesScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#dup-table", DataTable).add_columns("value", "count", "members")
+        table = self.query_one("#dup-table", DataTable)
+        table.add_columns("value", "count", "members")
+        table.cursor_type = "row"  # highlight whole buckets, not single cells
         self._render_kind("address")
+        # Focus the table (not the kind Select) so arrows navigate buckets and
+        # `space` reaches the screen binding instead of opening the Select.
+        table.focus()
 
     def _render_kind(self, kind: str) -> None:
         table = self.query_one("#dup-table", DataTable)
         table.clear()
         buckets = duplicate_buckets(self.session, kind)
+        self._buckets = buckets
         for b in buckets:
             members = ", ".join(f"{m.name}@{m.location}" for m in b.members)
             table.add_row(b.value, str(b.count), members)
@@ -81,3 +110,23 @@ class DuplicatesScreen(Screen[None]):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "dup-kind" and isinstance(event.value, str):
             self._render_kind(event.value)
+
+    def action_select_bucket(self) -> None:
+        # Push the highlighted bucket's members onto the hub selection so a
+        # downstream spoke (d merge, a audit, x decommission, …) can act on them.
+        if not self._buckets:
+            return
+        # cursor_row is always an int (defaults to 0); on an empty table the
+        # bounds check below rejects it, so no None guard is needed.
+        row = self.query_one("#dup-table", DataTable).cursor_row
+        if not 0 <= row < len(self._buckets):
+            return
+        bucket = self._buckets[row]
+        added = add_bucket_to_selection(self.session, bucket)
+        total = len(bucket.members)
+        already = total - added
+        note = f"sent {added} of {total} to selection"
+        if already:
+            note += f" ({already} already selected)"
+        self.query_one("#dup-note", Static).update(note)
+        cast("WorkbenchApp", self.app)._refresh_selection_view()

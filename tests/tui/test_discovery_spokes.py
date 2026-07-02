@@ -13,7 +13,11 @@ from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.audit import AuditScreen
 from psc.tui.screens.diff import DiffScreen, diff_rows
-from psc.tui.screens.duplicates import DuplicatesScreen, duplicate_buckets
+from psc.tui.screens.duplicates import (
+    DuplicatesScreen,
+    add_bucket_to_selection,
+    duplicate_buckets,
+)
 from psc.tui.screens.export import ExportScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
@@ -50,6 +54,56 @@ def test_duplicate_buckets_groups(workbench_xml_scan: str) -> None:
 
 def test_duplicate_buckets_unknown_kind_is_empty(workbench_xml_scan: str) -> None:
     assert duplicate_buckets(_session(workbench_xml_scan), "tag") == []
+
+
+def test_add_bucket_to_selection_adds_all_members(workbench_xml_scan: str) -> None:
+    session = _session(workbench_xml_scan)
+    bucket = duplicate_buckets(session, "address")[0]
+    added = add_bucket_to_selection(session, bucket)
+    assert added == 2
+    # Members landed as address-kind selection items.
+    assert {(i.kind, i.name) for i in session.selection} == {
+        ("address", "a-dup1"),
+        ("address", "a-dup2"),
+    }
+
+
+def test_add_bucket_to_selection_is_idempotent(workbench_xml_scan: str) -> None:
+    session = _session(workbench_xml_scan)
+    bucket = duplicate_buckets(session, "address")[0]
+    assert add_bucket_to_selection(session, bucket) == 2
+    # Re-sending the same bucket adds nothing and never toggles a member off.
+    assert add_bucket_to_selection(session, bucket) == 0
+    assert len(session.selection) == 2
+
+
+def test_add_bucket_to_selection_uses_bucket_kind(workbench_xml_scan: str) -> None:
+    session = _session(workbench_xml_scan)
+    bucket = duplicate_buckets(session, "address-group")[0]
+    add_bucket_to_selection(session, bucket)
+    assert {i.kind for i in session.selection} == {"address-group"}
+    assert {i.name for i in session.selection} == {"grp-a", "grp-b"}
+
+
+@pytest.mark.asyncio
+async def test_duplicates_spoke_sends_bucket_to_selection(workbench_xml_scan: str) -> None:
+    app = _app(workbench_xml_scan)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # off the search Input
+        await pilot.press("D")
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicatesScreen)
+        # Highlight the (only) address bucket and send it to the selection.
+        await pilot.press("space")
+        await pilot.pause()
+        assert {(i.kind, i.name) for i in app.session.selection} == {
+            ("address", "a-dup1"),
+            ("address", "a-dup2"),
+        }
+        # The hub selection panel reflects the two new members underneath the spoke.
+        assert app.query_one("#selection", DataTable).row_count == 2
+        await pilot.press("escape")
+        await pilot.pause()
 
 
 @pytest.mark.asyncio
