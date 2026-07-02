@@ -79,6 +79,21 @@ psc -c panorama.xml set address --name h-web1 --type ip-netmask --value 10.0.0.1
 This keeps the risky operation (rewriting a live object) on a reviewable file
 rather than mutating the device candidate blind.
 
+### Bulk import from NDJSON
+
+Every `set` subcommand also takes `-f/--file <objs.ndjson>` — a bulk import of
+many objects of that kind, as emitted by [`export`](comparing-and-porting.md):
+
+```console
+psc -c target.xml set address -f addresses.ndjson               # dry-run plan
+psc -c target.xml set address -f addresses.ndjson --apply --out merged.xml
+```
+
+The whole file is planned as **one** reviewable `ChangeSet` (the same per-object
+validation, aggregated); the singular flags are ignored, and **one blocker refuses
+the whole file**. See
+[Comparing and porting configs](comparing-and-porting.md#export-import).
+
 ## Edit one rule-field member
 
 `psc rule edit-member` adds or removes **one** member of **one** rule field,

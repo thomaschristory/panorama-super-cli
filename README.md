@@ -14,11 +14,12 @@ audit object hygiene — all **dry-run by default**, with **PAN-OS `set`** and
 ```console
 $ psc --config panorama.xml find ip 10.0.0.10
 $ psc --config panorama.xml dedup addresses
-$ psc --config panorama.xml dedup merge --keep h-web1 --into web-primary --apply
+$ psc --config panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml
 ```
 
-> ⚠️ **Alpha.** The CLI surface and JSON contracts may shift before v1.0.0.
-> Writes are dry-run by default; nothing touches Panorama without `--apply`.
+> **v1.0.0.** From this release `psc` follows [SemVer](https://semver.org/): the
+> CLI surface, JSON contracts, and exit codes are stable public API. Writes are
+> dry-run by default; nothing touches Panorama without `--apply`.
 
 ## Why
 
@@ -50,18 +51,38 @@ pip install panorama-super-cli
 
 | Area | Commands |
 | --- | --- |
-| **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip -f ips.txt`, `find object <name>` |
-| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup merge`, `dedup merge-group` |
-| **Audit** | `psc audit overlaps` (overlapping/contained CIDR ranges) |
+| **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip --resolve-fqdn` (opt-in DNS), `find ip -f ips.txt`, `find object <name>` |
+| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup merge` (pairwise or `--group <value>`), `dedup merge-group` |
+| **Audit** | `psc audit overlaps` (overlapping/contained CIDR ranges), `audit services-vs-wellknown` |
+| **Diff** | `psc diff a.xml b.xml`, `diff --device-group A --against B` |
 | **Object CRUD** | `psc set address\|address-group\|service\|service-group\|tag ...` (create/update with PAN-OS validation) |
+| **Import / export** | `psc export <kind>` (NDJSON), `psc set <kind> -f objs.ndjson` (bulk import) |
 | **Rule edits** | `psc rule edit-member --rule R --field F --add/--remove M` (idempotent) |
-| **Decommission** | `psc decommission <ip\|cidr>...` (reference-safe cascading teardown) |
-| **Naming** | `psc name suggest`, `name lint`, `name apply` (opt-in templates) |
-| **References** | `psc refs <object>` (where-used), `refs unused` |
+| **Decommission / move** | `psc decommission <ip\|cidr>...` (reference-safe teardown), `psc move <kind> <name> --from --to [--cascade]` |
+| **Naming** | `psc name lint`, `name apply --object` / `--all` (opt-in templates) |
+| **References** | `psc refs used <object>`, `refs unused [--ignore-disabled]`, `refs dangling` |
+| **Workbench** | `psc workbench` (`psc w`) — interactive TUI, full CLI parity |
 | **Output** | `--output json|set|table|yaml|csv|jsonl` |
 
 See the [docs](https://thomaschristory.github.io/panorama-super-cli/) for the
 full surface, the safety model, and the agent guide.
+
+## Workbench (interactive TUI)
+
+Prefer a cockpit to one-shot commands? `psc workbench` (alias `psc w`) is a
+keyboard-driven [Textual](https://textual.textualize.io/) TUI at full CLI parity.
+Search objects, multi-select them into a persistent buffer, route the selection
+into a spoke (dedup, move, rename, decommission, rule edits, audits, naming,
+create, …), and stage plans into a git-like changelist that applies as one batch
+— as a `set` script, an offline config write, or a live candidate push (never a
+commit). Same safety model as the CLI throughout.
+
+```console
+psc --config panorama.xml workbench
+psc -p prod w --output-mode live-apply
+```
+
+See the [Workbench guide](https://thomaschristory.github.io/panorama-super-cli/guides/workbench/).
 
 ## Safety model
 
