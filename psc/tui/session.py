@@ -156,6 +156,16 @@ class WorkbenchSession:
         self.selection.append(item)
         return True
 
+    def add(self, item: SelectionItem) -> bool:
+        """Add `item` to the selection if absent (by key). Returns True when it
+        was newly added, False when already present. Unlike `toggle`, a present
+        item is left in place (never removed) — for bulk 'send to selection'
+        flows where re-sending must be idempotent, not a toggle-off."""
+        if any(existing.key == item.key for existing in self.selection):
+            return False
+        self.selection.append(item)
+        return True
+
     def selected_of_kinds(self, kinds: set[str]) -> list[SelectionItem]:
         return [i for i in self.selection if i.kind in kinds]
 
