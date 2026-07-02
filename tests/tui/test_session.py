@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from psc.core.changeset import ChangeSet
+from psc.core.changeset import ChangeSet, ObjectKind, ObjectUpsert
 from psc.core.dedup import ObjectRef, plan_merge
+from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
 from psc.core.source import OfflineSource
 from psc.output.errors import PscError
@@ -239,3 +240,55 @@ def test_apply_batch_set_mode_refuses_source_path(workbench_xml):
     sess.stage("merge web dupes", _merge_web_dupes_cs(sess))
     with pytest.raises(PscError):
         sess.apply_batch(out_path=workbench_xml)  # would clobber the source config
+
+
+def _add_host_cs() -> ChangeSet:
+    return ChangeSet(
+        title="add host",
+        upserts=[
+            ObjectUpsert(
+                kind=ObjectKind.ADDRESS,
+                name="new-host",
+                location="shared",
+                fields={"ip-netmask": "10.9.9.9/32"},
+            )
+        ],
+    )
+
+
+def test_apply_batch_offline_partial_writes_smaller_config(workbench_xml, tmp_path):
+    sess = _session(workbench_xml)
+    sess.output_mode = OutputMode.OFFLINE_APPLY
+    sess.offline_partial = True
+    sess.stage("add host", _add_host_cs())
+    dest = tmp_path / "partial.xml"
+    out = sess.apply_batch(out_path=str(dest))
+    assert dest.exists()
+    partial = dest.read_text()
+    psnap = parse_config(partial)
+    # ONLY the touched object is present — untouched siblings are excluded.
+    assert [a.name for a in psnap.addresses] == ["new-host"]
+    assert "db-gw" not in partial  # sibling not dragged along
+    # The partial is much smaller than the full-config rewrite of the same batch.
+    full = _full_offline_reference(workbench_xml)
+    assert len(partial) < len(full)
+    assert out.out_path == str(dest)
+
+
+def _full_offline_reference(workbench_xml) -> str:
+    """Render the FULL compounded config for the same single-add batch, to
+    compare sizes against the partial."""
+    sess = _session(workbench_xml)
+    sess.output_mode = OutputMode.OFFLINE_APPLY
+    sess.stage("add host", _add_host_cs())
+    return sess.working_xml
+
+
+def test_apply_batch_offline_full_is_default(workbench_xml, tmp_path):
+    sess = _session(workbench_xml)
+    sess.output_mode = OutputMode.OFFLINE_APPLY  # offline_partial defaults False
+    sess.stage("add host", _add_host_cs())
+    dest = tmp_path / "full.xml"
+    sess.apply_batch(out_path=str(dest))
+    # Default writes the whole compounded config: an untouched sibling is present.
+    assert "db-gw" in dest.read_text()
