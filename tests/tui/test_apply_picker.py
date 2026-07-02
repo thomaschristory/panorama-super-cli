@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import panos.panorama
 import pytest
 from textual.widgets import DataTable, Input, Select
 
-from psc.core.source import OfflineSource
+from psc.core.source import LiveSource, OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.apply import ApplyScreen, initial_disposition
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
+
+from .conftest import WORKBENCH_XML
 
 
 def _session(xml: str, mode: OutputMode = OutputMode.SET) -> WorkbenchSession:
@@ -136,3 +139,146 @@ async def test_picker_offline_session_hides_live_option(workbench_xml: str) -> N
         select = app.screen.query_one("#apply-mode", Select)
         values = {value for _label, value in select._options}
         assert "live-push" not in values
+
+
+# --- set-preview: an inline export that keeps the batch staged ---------------
+
+
+@pytest.mark.asyncio
+async def test_picker_set_preview_keeps_staging(workbench_xml: str) -> None:
+    app = WorkbenchApp(_session(workbench_xml))  # default disposition = set-preview
+    async with app.run_test() as pilot:
+        await _stage_one_merge(app, pilot)
+        await pilot.press("ctrl+a")
+        await pilot.pause()
+        assert app.screen.query_one("#apply-mode", Select).value == "set-preview"
+        await pilot.press("ctrl+a")  # preview: renders inline, writes nothing
+        await pilot.pause()
+        assert len(app.session.staging) == 1  # a preview is not a commit
+
+
+# --- a file/config option with no destination path is rejected ---------------
+
+
+@pytest.mark.asyncio
+async def test_picker_missing_path_is_rejected(workbench_xml: str) -> None:
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        await _stage_one_merge(app, pilot)
+        await pilot.press("ctrl+a")
+        await pilot.pause()
+        app.screen.query_one("#apply-mode", Select).value = "offline-full"
+        # leave #apply-path empty
+        await pilot.press("ctrl+a")
+        await pilot.pause()
+        # Rejected: nothing applied, staging intact, still on the apply screen.
+        assert len(app.session.staging) == 1
+        assert isinstance(app.screen, ApplyScreen)
+
+
+# --- pressing ctrl+a with nothing staged is rejected -------------------------
+
+
+@pytest.mark.asyncio
+async def test_picker_nothing_staged_is_rejected(workbench_xml: str) -> None:
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("ctrl+a")  # opens the picker even with an empty batch
+        await pilot.pause()
+        assert isinstance(app.screen, ApplyScreen)
+        await pilot.press("ctrl+a")  # nothing staged -> rejected, no crash
+        await pilot.pause()
+        assert isinstance(app.screen, ApplyScreen)
+        assert app.session.staging == []
+
+
+# --- changing the path after arming re-requires confirmation -----------------
+
+
+@pytest.mark.asyncio
+async def test_picker_confirmation_resets_on_path_change(workbench_xml: str, tmp_path) -> None:
+    a = tmp_path / "a.xml"
+    a.write_text("OLDA", encoding="utf-8")
+    b = tmp_path / "b.xml"
+    b.write_text("OLDB", encoding="utf-8")
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        await _stage_one_merge(app, pilot)
+        await pilot.press("ctrl+a")
+        await pilot.pause()
+        app.screen.query_one("#apply-mode", Select).value = "offline-full"
+        app.screen.query_one("#apply-path", Input).value = str(a)
+        await pilot.press("ctrl+a")  # arms overwrite of a.xml
+        await pilot.pause()
+        app.screen.query_one("#apply-path", Input).value = str(b)  # resets the arm
+        await pilot.press("ctrl+a")  # b exists -> must re-arm, NOT write yet
+        await pilot.pause()
+        assert b.read_text(encoding="utf-8") == "OLDB"
+        await pilot.press("ctrl+a")  # now confirms + writes b
+        await pilot.pause()
+    assert a.read_text(encoding="utf-8") == "OLDA"  # the abandoned target is untouched
+    assert b.read_text(encoding="utf-8") != "OLDB"
+
+
+# --- live session: live-push is offered and needs a second confirmation ------
+
+
+class _LiveWorkbenchPano:
+    """Fake Panorama for the workbench live path: serves the config on read and
+    records candidate writes without ever committing."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.committed = False
+        self.calls: list[str] = []
+        pano = self
+
+        class _Xapi:
+            ssl_context = None
+
+            def show(self, xpath: str, **kwargs: object) -> None: ...
+            def xml_result(self) -> str:
+                return WORKBENCH_XML
+
+            def set(self, xpath: str, element: str, **kwargs: object) -> None:
+                pano.calls.append("set")
+
+            def edit(self, xpath: str, element: str, **kwargs: object) -> None:
+                pano.calls.append("edit")
+
+            def delete(self, xpath: str, **kwargs: object) -> None:
+                pano.calls.append("delete")
+
+            def rename(self, xpath: str, newname: str, **kwargs: object) -> None:
+                pano.calls.append("rename")
+
+        self.xapi = _Xapi()
+
+    def commit(self, *args: object, **kwargs: object) -> None:
+        self.committed = True
+
+
+@pytest.mark.asyncio
+async def test_picker_live_push_requires_confirmation(monkeypatch: pytest.MonkeyPatch) -> None:
+    pano = _LiveWorkbenchPano()
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
+    session = WorkbenchSession(
+        source=LiveSource("pano.example", "LUFRPT1KEYABC123", verify=False),
+        output_mode=OutputMode.LIVE_APPLY,
+    )
+    app = WorkbenchApp(session)
+    async with app.run_test() as pilot:
+        await _stage_one_merge(app, pilot)
+        await pilot.press("ctrl+a")
+        await pilot.pause()
+        select = app.screen.query_one("#apply-mode", Select)
+        assert select.value == "live-push"  # default pre-seeded + offered on live
+        await pilot.press("ctrl+a")  # first press: arms, pushes NOTHING
+        await pilot.pause()
+        assert pano.calls == []
+        assert len(app.session.staging) == 1
+        await pilot.press("ctrl+a")  # second press: confirms + pushes to candidate
+        await pilot.pause()
+    assert pano.calls  # the batch was pushed
+    assert pano.committed is False  # never commits
+    assert app.session.staging == []  # live apply clears staging
