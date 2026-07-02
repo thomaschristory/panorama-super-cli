@@ -234,6 +234,28 @@ async def test_rename_spoke_stages_and_reconciles(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_removes_focused_item_from_selection_panel(workbench_xml: str) -> None:
+    # Focus the selection panel and press delete to drop just that one item (#91),
+    # without wiping the whole selection.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "web-srv"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.press("down")
+        await pilot.press("space")
+        await pilot.pause()
+        assert len(app.session.selection) == 2
+        # Focus the selection panel and delete the first (cursor) row.
+        app.query_one("#selection", DataTable).focus()
+        await pilot.press("delete")
+        await pilot.pause()
+        assert len(app.session.selection) == 1
+
+
+@pytest.mark.asyncio
 async def test_rename_picks_chosen_entry_not_first(workbench_xml: str) -> None:
     # Two objects selected: the rename spoke must rename the one the user PICKS
     # in the target dropdown, not silently the first (#89).
