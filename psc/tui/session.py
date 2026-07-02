@@ -12,9 +12,10 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from psc.core.apply_xml import apply_changeset, partial_config_from_batch
-from psc.core.changeset import ChangeSet
+from psc.core.changeset import ChangeSet, ObjectKind
 from psc.core.models import AddressGroup, Service, Snapshot
 from psc.core.parse import parse_config
+from psc.core.portability import export_ndjson
 from psc.core.resolve import find_ip
 from psc.core.setcmd import render_changeset
 from psc.core.source import LiveSource, OfflineSource
@@ -295,6 +296,23 @@ class WorkbenchSession:
         return ApplyOutcome(
             mode=self.output_mode, ops=ops, out_path=None, detail="pushed to candidate"
         )
+
+    def export_kind(self, kind: ObjectKind, out_path: str) -> int:
+        """Write every object of `kind` (whole config) to `out_path` as NDJSON.
+
+        A read-only export, like `psc export`: it never touches staging or the
+        working config. The same safety rail as offline apply holds — the
+        destination must differ from an offline source export, so an export can
+        never clobber the config it was taken from. Returns the object count.
+        """
+        lines = export_ndjson(self.working_snapshot, kind, scope=None)
+        dest = Path(out_path)
+        if isinstance(self.source, OfflineSource) and dest.resolve() == self.source.path.resolve():
+            raise PscError("output path must differ from the source config", ErrorType.CONFIG)
+        # Trailing newline so the file is a well-formed NDJSON stream (and empty
+        # when there are no objects of this kind, not a lone newline).
+        self._atomic_write(dest, "\n".join(lines) + "\n" if lines else "")
+        return len(lines)
 
     @staticmethod
     def _atomic_write(dest: Path, text: str) -> None:

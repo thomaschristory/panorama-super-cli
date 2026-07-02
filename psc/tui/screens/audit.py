@@ -1,4 +1,13 @@
-"""Audit spoke: address overlaps/containment involving the selection (read-only)."""
+"""Audit spoke: address overlaps or services-vs-well-known ports (read-only).
+
+Two modes, switched by a picker:
+
+- **overlaps** — address overlap/containment involving the *selection* (mirrors
+  `audit overlaps`, scoped to the selected addresses).
+- **well-known** — custom services whose single destination port duplicates a
+  predefined PAN-OS service or an IANA well-known port (mirrors
+  `audit services-vs-wellknown`, a config-wide scan that needs no selection).
+"""
 
 from __future__ import annotations
 
@@ -7,9 +16,13 @@ from typing import ClassVar
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Select, Static
 
-from psc.core.audit import OverlapPair, find_overlapping_addresses
+from psc.core.audit import (
+    OverlapPair,
+    find_overlapping_addresses,
+    find_wellknown_duplicate_services,
+)
 from psc.tui.session import WorkbenchSession
 
 
@@ -37,21 +50,55 @@ class AuditScreen(Screen[None]):
 
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
-        self._pairs = selection_overlaps(session)
+        self.session = session
 
     def compose(self) -> ComposeResult:
-        if not self._pairs:
-            yield Static("No overlaps involving the selected addresses.", id="audit-empty")
-        else:
-            table: DataTable[str] = DataTable(id="audit-table")
-            yield table
+        yield Static("Audit mode:")
+        yield Select(
+            [
+                ("address overlaps (selection)", "overlaps"),
+                ("services vs well-known ports", "wellknown"),
+            ],
+            value="overlaps",
+            allow_blank=False,
+            id="audit-mode",
+        )
+        table: DataTable[str] = DataTable(id="audit-table")
+        yield table
+        yield Static("", id="audit-note")
         yield Footer()
 
     def on_mount(self) -> None:
-        if self._pairs:
-            table = self.query_one("#audit-table", DataTable)
-            table.add_columns("relationship", "left", "left value", "right", "right value")
-            for p in self._pairs:
+        self._render_mode("overlaps")
+
+    def _render_mode(self, mode: str) -> None:
+        table = self.query_one("#audit-table", DataTable)
+        # Clear columns too: the two modes have different column sets.
+        table.clear(columns=True)
+        note = self.query_one("#audit-note", Static)
+        if mode == "wellknown":
+            matches = find_wellknown_duplicate_services(self.session.working_snapshot)
+            table.add_columns("service", "location", "port", "duplicates", "kind")
+            for m in matches:
                 table.add_row(
-                    p.relationship.value, p.left_name, p.left_value, p.right_name, p.right_value
+                    m.service_name,
+                    m.service_location,
+                    f"{m.protocol}/{m.port}",
+                    m.canonical_name,
+                    m.kind.value,
                 )
+            note.update(
+                "" if matches else "No custom services duplicate a well-known/predefined port."
+            )
+            return
+        pairs = selection_overlaps(self.session)
+        table.add_columns("relationship", "left", "left value", "right", "right value")
+        for p in pairs:
+            table.add_row(
+                p.relationship.value, p.left_name, p.left_value, p.right_name, p.right_value
+            )
+        note.update("" if pairs else "No overlaps involving the selected addresses.")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "audit-mode" and isinstance(event.value, str):
+            self._render_mode(event.value)

@@ -190,6 +190,75 @@ def workbench_xml_dangling(tmp_path):
     return str(p)
 
 
+WORKBENCH_XML_SCAN = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="a-dup1"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="a-dup2"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+      <entry name="a-solo"><ip-netmask>10.0.9.1/32</ip-netmask></entry>
+    </address>
+    <service>
+      <entry name="svc-443-a"><protocol><tcp><port>443</port></tcp></protocol></entry>
+      <entry name="svc-443-b"><protocol><tcp><port>443</port></tcp></protocol></entry>
+      <entry name="svc-8443"><protocol><tcp><port>8443</port></tcp></protocol></entry>
+    </service>
+    <address-group>
+      <entry name="grp-a"><static><member>a-dup1</member><member>a-solo</member></static></entry>
+      <entry name="grp-b"><static><member>a-dup1</member><member>a-solo</member></static></entry>
+    </address-group>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group/>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_scan(tmp_path):
+    """Config-wide duplication + well-known-port fixture for the discovery spokes:
+    two addresses share 10.0.5.10/32, two services share tcp/443 (also a
+    predefined 'service-https' match), and grp-a/grp-b share an identical member
+    set — one bucket each for the duplicates-scan and audit spokes (#95)."""
+    p = tmp_path / "config_scan.xml"
+    p.write_text(WORKBENCH_XML_SCAN, encoding="utf-8")
+    return str(p)
+
+
+WORKBENCH_XML_SHADOW = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="anchor"><ip-netmask>10.1.1.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <address>
+            <entry name="anchor"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+          </address>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_shadow(tmp_path):
+    """dg1 redefines the shared 'anchor' with a different value, so a shared-vs-dg1
+    diff reports 'anchor' as *changed* — the changed-object path for the diff spoke."""
+    p = tmp_path / "config_shadow.xml"
+    p.write_text(WORKBENCH_XML_SHADOW, encoding="utf-8")
+    return str(p)
+
+
 WORKBENCH_XML_RULE = """<?xml version="1.0"?>
 <config>
   <shared>

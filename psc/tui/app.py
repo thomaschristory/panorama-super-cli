@@ -38,8 +38,11 @@ class WorkbenchApp(App[None]):
         ("backspace", "remove_selected", "remove"),
         ("c", "create", "create"),
         ("d", "dedup", "dedup"),
+        ("D", "duplicates", "dup scan"),
         ("u", "usage", "usage"),
         ("a", "audit", "audit"),
+        ("f", "diff", "diff"),
+        ("o", "export", "export"),
         ("m", "move", "move"),
         ("x", "decommission", "decommission"),
         ("r", "rename", "rename"),
@@ -64,8 +67,11 @@ class WorkbenchApp(App[None]):
             "remove_selected",
             "create",
             "dedup",
+            "duplicates",
             "usage",
             "audit",
+            "diff",
+            "export",
             "move",
             "decommission",
             "rename",
@@ -155,6 +161,11 @@ class WorkbenchApp(App[None]):
 
         self.push_screen(DedupScreen(self.session))
 
+    def action_duplicates(self) -> None:
+        from psc.tui.screens.duplicates import DuplicatesScreen  # noqa: PLC0415 — avoid cycle
+
+        self.push_screen(DuplicatesScreen(self.session))
+
     def action_usage(self) -> None:
         from psc.tui.screens.usage import UsageScreen  # noqa: PLC0415 — avoid import cycle
 
@@ -164,6 +175,16 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.audit import AuditScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(AuditScreen(self.session))
+
+    def action_diff(self) -> None:
+        from psc.tui.screens.diff import DiffScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(DiffScreen(self.session))
+
+    def action_export(self) -> None:
+        from psc.tui.screens.export import ExportScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(ExportScreen(self.session))
 
     def action_move(self) -> None:
         from psc.tui.screens.move import MoveScreen  # noqa: PLC0415 — avoid import cycle
