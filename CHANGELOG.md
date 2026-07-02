@@ -9,6 +9,12 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ### Added
 
+- **Switch the active source from within the workbench** (#121) — the profiles
+  spoke can now `ctrl+r` reload the running session onto a different profile (a
+  live connection) or an offline export path, without relaunching.
+  `WorkbenchSession.reload(source)` rebuilds the working snapshot and discards
+  the selection + staged batch, so it asks for a second `ctrl+r` to confirm when
+  a batch is staged; a live connection error is surfaced, not crashed.
 - **Interactive apply-time output picker** (#122) — `ctrl+a` now opens an apply
   screen where you choose the output format + destination *after* seeing the
   staged batch, instead of committing to it at launch. Options: print the set
