@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import Footer, Input, Select, Static
 
@@ -143,5 +144,8 @@ class ApplyScreen(Screen[None]):
         # OFFLINE/LIVE apply clears staging; keep the hub's counter in sync.
         cast("WorkbenchApp", self.app)._refresh_selection_view()
         # For a SET preview `detail` is the whole script; for the rest it's a
-        # one-line summary. Show it here so the operator sees the result.
-        self._status(outcome.detail or f"applied {outcome.ops} change(s)")
+        # one-line summary. Render as plain Content so the set-script `[ ... ]`
+        # member lists aren't eaten by Textual's markup engine (#129).
+        self.query_one("#apply-status", Static).update(
+            Content(outcome.detail or f"applied {outcome.ops} change(s)")
+        )

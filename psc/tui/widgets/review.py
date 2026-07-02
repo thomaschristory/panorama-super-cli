@@ -17,16 +17,29 @@ def can_apply(cs: ChangeSet) -> bool:
     return not cs.is_blocked
 
 
+def _esc(text: str) -> str:
+    """Escape Textual markup in dynamic text.
+
+    Textual's console-markup engine treats ``[ ... ]`` as a tag and drops it, so
+    a rendered `set` member list like ``[ addr-a addr-b ]`` would display as an
+    empty ``... destination`` with the members swallowed (#129, a display-only
+    bug — the emitted script/file is correct). Backslash-escaping every opening
+    bracket makes the members render literally. Applied only to *content* woven
+    into markup strings, never to the intentional ``[b]``/``[red]`` tags.
+    """
+    return text.replace("[", r"\[")
+
+
 def review_lines(cs: ChangeSet) -> list[str]:
-    lines = [f"[b]{cs.title}[/b]"]
+    lines = [f"[b]{_esc(cs.title)}[/b]"]
     for w in cs.warnings:
-        lines.append(f"  [yellow]! {w}[/yellow]")
+        lines.append(f"  [yellow]! {_esc(w)}[/yellow]")
     if cs.is_blocked:
         lines.append("[red]BLOCKED — will not apply:[/red]")
-        lines.extend(f"  [red]- {b}[/red]" for b in cs.blockers)
+        lines.extend(f"  [red]- {_esc(b)}[/red]" for b in cs.blockers)
         return lines
     for line in render_changeset(cs):
-        lines.append(f"  {line}")
+        lines.append(f"  {_esc(line)}")
     return lines
 
 

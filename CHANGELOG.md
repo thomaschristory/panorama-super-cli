@@ -7,6 +7,18 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.1.2 — 2026-07-02
+
+### Fixed
+
+- **Workbench: `set`-script member lists were swallowed in plan previews** (#129)
+  — Textual's console-markup engine treats `[ ... ]` as a tag, so a rendered
+  `set … destination [ addr-a addr-b ]` showed as an empty `… destination` with
+  the members eaten. Display-only: the emitted `set` script / config file was
+  always correct. The plan preview (dedup/move/create/… review panel), the
+  staged-changelist detail, and the apply-time set preview now render the member
+  lists literally.
+
 ## v1.1.1 — 2026-07-02
 
 ### Changed

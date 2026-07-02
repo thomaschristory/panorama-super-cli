@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.content import Content
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Static
 
@@ -73,7 +74,9 @@ class StagedScreen(Screen[None]):
             return
         table = self.query_one("#staged-table", DataTable)
         row = table.cursor_row if table.cursor_row is not None else 0
-        detail.update(staged_detail(self.session, row))
+        # Render as plain Content: the set-script text contains `[ ... ]` member
+        # lists that Textual's markup engine would otherwise eat (#129).
+        detail.update(Content(staged_detail(self.session, row)))
 
     def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         # Inspect: the detail panel tracks the highlighted change's full set-script.
