@@ -7,23 +7,13 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
-### Added
+## v1.1.0 — 2026-07-02
 
-- **Switch the active source from within the workbench** (#121) — the profiles
-  spoke can now `ctrl+r` reload the running session onto a different profile (a
-  live connection) or an offline export path, without relaunching.
-  `WorkbenchSession.reload(source)` rebuilds the working snapshot and discards
-  the selection + staged batch, so it asks for a second `ctrl+r` to confirm when
-  a batch is staged; a live connection error is surfaced, not crashed.
-- **Interactive apply-time output picker** (#122) — `ctrl+a` now opens an apply
-  screen where you choose the output format + destination *after* seeing the
-  staged batch, instead of committing to it at launch. Options: print the set
-  script, save a `.set` file, save a full or minimal-partial XML config, or push
-  to the live candidate (offered only for live sessions). The `--output-mode` /
-  `--apply-out` launch flags still work — they just pre-seed the default now. A
-  live push and an overwrite of an existing file each require an explicit second
-  confirmation. Same safety model (blocker gate, never overwrite the source,
-  never commit live).
+Workbench (TUI) parity + UX release. Every change is in the interactive
+workbench; the CLI surface, the JSON output contracts, and the exit codes are
+unchanged, so this is a backward-compatible minor bump.
+
+### Added
 
 - **Workbench discovery spokes** (#95) — the TUI now reaches the config-wide
   *discovery* commands the selection-scoped spokes never covered:
@@ -36,6 +26,21 @@ project will follow [Semantic Versioning](https://semver.org/). While on
     `psc export`; a read-only export that never overwrites the source config.
   - the `a` **audit** spoke gained a mode toggle for the
     `audit services-vs-wellknown` scan alongside address overlaps.
+- **Interactive apply-time output picker** (#122) — `ctrl+a` now opens an apply
+  screen where you choose the output format + destination *after* seeing the
+  staged batch, instead of committing to it at launch. Options: print the set
+  script, save a `.set` file, save a full or minimal-partial XML config, or push
+  to the live candidate (offered only for live sessions). The `--output-mode` /
+  `--apply-out` launch flags still work — they just pre-seed the default now. A
+  live push and an overwrite of an existing file each require an explicit second
+  confirmation. Same safety model (blocker gate, never overwrite the source,
+  never commit live).
+- **Switch the active source from within the workbench** (#121) — the profiles
+  spoke can now `ctrl+r` reload the running session onto a different profile (a
+  live connection) or an offline export path, without relaunching.
+  `WorkbenchSession.reload(source)` rebuilds the working snapshot and discards
+  the selection + staged batch, so it asks for a second `ctrl+r` to confirm when
+  a batch is staged; a live connection error is surfaced, not crashed.
 
 ## v1.0.0 — 2026-07-02
 
