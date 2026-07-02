@@ -91,6 +91,40 @@ def workbench_xml_dg(tmp_path):
     return str(p)
 
 
+WORKBENCH_XML_TWO_DG = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="anchor"><ip-netmask>10.1.1.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <address>
+            <entry name="dg-only"><ip-netmask>10.2.2.2/32</ip-netmask></entry>
+          </address>
+        </entry>
+        <entry name="dg2">
+          <address/>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_two_dg(tmp_path):
+    """Two sibling device-groups (dg1 holds 'dg-only', dg2 is empty). dg2 is a
+    non-ancestor of dg1, so a move dg1 -> dg2 is a blocked, wrong-direction move."""
+    p = tmp_path / "config_two_dg.xml"
+    p.write_text(WORKBENCH_XML_TWO_DG, encoding="utf-8")
+    return str(p)
+
+
 WORKBENCH_XML_RULE = """<?xml version="1.0"?>
 <config>
   <shared>

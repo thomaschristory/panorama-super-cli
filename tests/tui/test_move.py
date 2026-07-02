@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from psc.core.source import OfflineSource
-from psc.tui.screens.move import movable_items, plan_move_item
+from psc.tui.screens.move import movable_items, move_destinations, plan_move_item
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode, SelectionItem
+from psc.tui.widgets.review import can_apply
 
 
 def _session(path: str) -> WorkbenchSession:
@@ -29,3 +30,18 @@ def test_plan_move_item_to_shared_is_not_blocked(workbench_xml_dg: str) -> None:
     cs = plan_move_item(sess, item, "shared")
     assert not cs.is_blocked
     assert not cs.is_empty
+
+
+def test_plan_move_item_to_non_ancestor_dg_is_blocked(workbench_xml_two_dg: str) -> None:
+    # dg2 is a sibling of dg1, not an ancestor: promoting only goes toward shared,
+    # so the wrong-direction move must be a blocked (zero-op) plan.
+    sess = _session(workbench_xml_two_dg)
+    item = SelectionItem(kind="address", name="dg-only", location="dg1")
+    cs = plan_move_item(sess, item, "dg2")
+    assert cs.is_blocked
+    assert not can_apply(cs)
+
+
+def test_destinations_lists_shared_and_device_groups(workbench_xml_two_dg: str) -> None:
+    sess = _session(workbench_xml_two_dg)
+    assert move_destinations(sess) == ["shared", "dg1", "dg2"]
