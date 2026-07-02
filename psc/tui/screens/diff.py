@@ -59,7 +59,7 @@ def diff_rows(session: WorkbenchSession, base: str, other: str) -> list[tuple[st
         kd = getattr(d, attr)
         rows.extend((kind, "added", o.name, "") for o in kd.added)
         rows.extend((kind, "removed", o.name, "") for o in kd.removed)
-        rows.extend((kind, "changed", c.name, ", ".join(c.changed_fields())) for c in kd.changed)
+        rows.extend((kind, "changed", c.name, ", ".join(c.changed_fields)) for c in kd.changed)
     return rows
 
 

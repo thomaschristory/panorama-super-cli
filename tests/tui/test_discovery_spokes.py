@@ -81,6 +81,30 @@ def test_diff_rows_reports_dg_only_object(workbench_xml_two_dg: str) -> None:
     assert ("address", "added", "dg-only", "") in added
 
 
+def test_diff_rows_reports_changed_object(workbench_xml_shadow: str) -> None:
+    # dg1 redefines shared 'anchor' with a different value -> reported as changed.
+    # Guards against calling the `changed_fields` property as a method.
+    rows = diff_rows(_session(workbench_xml_shadow), "shared", "dg1")
+    changed = [r for r in rows if r[0] == "address" and r[1] == "changed" and r[2] == "anchor"]
+    assert len(changed) == 1
+    assert changed[0][3]  # non-empty detail listing the differing field(s)
+
+
+@pytest.mark.asyncio
+async def test_diff_spoke_single_scope_shows_guard(workbench_xml: str) -> None:
+    # A config with no device-groups has only the 'shared' scope: the diff spoke
+    # must render its guard message instead of crashing.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("f")
+        await pilot.pause()
+        assert isinstance(app.screen, DiffScreen)
+        app.screen.query_one("#diff-empty")  # raises if the guard did not render
+        await pilot.press("escape")
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
 async def test_diff_spoke_opens_and_lists(workbench_xml_two_dg: str) -> None:
     app = _app(workbench_xml_two_dg)
@@ -117,6 +141,23 @@ async def test_export_spoke_writes_ndjson(workbench_xml: str, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_export_kind_toggle_writes_services(workbench_xml_scan: str, tmp_path) -> None:
+    out = tmp_path / "services.ndjson"
+    app = _app(workbench_xml_scan)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("o")
+        await pilot.pause()
+        app.screen.query_one("#export-kind", Select).value = "services"
+        app.screen.query_one("#export-path", Input).value = str(out)
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3  # svc-443-a, svc-443-b, svc-8443
+    assert all("protocol" in json.loads(line) for line in lines)
+
+
+@pytest.mark.asyncio
 async def test_export_refuses_to_overwrite_source(workbench_xml: str) -> None:
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
@@ -132,6 +173,31 @@ async def test_export_refuses_to_overwrite_source(workbench_xml: str) -> None:
 
 
 # --- audit well-known-ports mode ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_audit_overlaps_mode_renders_with_selection(workbench_xml_refs: str) -> None:
+    # net-10-0-5 (10.0.5.0/24) contains web-srv-01 (10.0.5.10/32). Select both and
+    # open audit in its default overlaps mode: the containment pair must render.
+    app = _app(workbench_xml_refs)
+    async with app.run_test() as pilot:
+        # 10.0.5.10 matches web-srv-01 (/32) and the containing net-10-0-5 (/24).
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")
+        results.move_cursor(row=1)
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert isinstance(app.screen, AuditScreen)
+        table = app.screen.query_one("#audit-table", DataTable)
+        assert table.row_count >= 1  # the containment pair, in the default overlaps mode
+        await pilot.press("escape")
+        await pilot.pause()
 
 
 @pytest.mark.asyncio

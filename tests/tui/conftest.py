@@ -228,6 +228,37 @@ def workbench_xml_scan(tmp_path):
     return str(p)
 
 
+WORKBENCH_XML_SHADOW = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="anchor"><ip-netmask>10.1.1.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <address>
+            <entry name="anchor"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+          </address>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_shadow(tmp_path):
+    """dg1 redefines the shared 'anchor' with a different value, so a shared-vs-dg1
+    diff reports 'anchor' as *changed* — the changed-object path for the diff spoke."""
+    p = tmp_path / "config_shadow.xml"
+    p.write_text(WORKBENCH_XML_SHADOW, encoding="utf-8")
+    return str(p)
+
+
 WORKBENCH_XML_RULE = """<?xml version="1.0"?>
 <config>
   <shared>
