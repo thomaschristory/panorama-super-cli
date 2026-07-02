@@ -129,6 +129,9 @@ class WorkbenchApp(App[None]):
         resync the (now empty) selection + staging strip."""
         self._results = []
         self.query_one("#results", DataTable).clear()
+        # The old query no longer matches the new config; clear it so the empty
+        # results table isn't misread as "no matches for this search".
+        self.query_one("#search", Input).value = ""
         self._refresh_selection_view()
 
     def _refresh_selection_view(self) -> None:

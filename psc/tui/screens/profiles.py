@@ -149,6 +149,11 @@ class ProfilesScreen(Screen[None]):
         if event.input.id == "reload-path":
             self._reload_armed = False
 
+    def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
+        # Moving the profile cursor changes what a path-less reload would target,
+        # so a pending discard confirmation must not carry over to a new profile.
+        self._reload_armed = False
+
     def action_reload_source(self) -> None:
         if self.session is None:
             self.app.bell()

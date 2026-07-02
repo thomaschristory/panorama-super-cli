@@ -2,18 +2,46 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import panos.panorama
 import pytest
 from textual.widgets import DataTable, Input
 
-from psc.core.source import OfflineSource
+from psc.config.loader import save_config
+from psc.config.models import Config, Profile
+from psc.core.source import LiveSource, OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.profiles import ProfilesScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode, SelectionItem
 
+from .conftest import WORKBENCH_XML_DG
+
 
 def _session(xml: str) -> WorkbenchSession:
     return WorkbenchSession(source=OfflineSource(xml), output_mode=OutputMode.SET)
+
+
+def _write_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *names: str) -> None:
+    """Point PSC_CONFIG at a temp file holding the given profiles."""
+    monkeypatch.setenv("PSC_CONFIG", str(tmp_path / "psc" / "config.yaml"))
+    profiles = [Profile(name=n, hostname=f"{n}.example", api_key="LUFRPT1KEY") for n in names]
+    save_config(Config(profiles=profiles))
+
+
+class _DgPano:
+    """Fake Panorama that serves WORKBENCH_XML_DG on read (no real device)."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        class _Xapi:
+            ssl_context = None
+
+            def show(self, xpath: str, **kwargs: object) -> None: ...
+            def xml_result(self) -> str:
+                return WORKBENCH_XML_DG
+
+        self.xapi = _Xapi()
 
 
 # --- engine: reload rebuilds the snapshot and clears session state -----------
@@ -96,3 +124,87 @@ async def test_profiles_reload_discard_requires_confirmation(
         await pilot.pause()
     assert app.session.staging == []
     assert {a.name for a in app.session.working_snapshot.addresses} == {"anchor", "dg-only"}
+
+
+# --- TUI: reload onto a focused live profile ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_profiles_spoke_reloads_live_profile(
+    workbench_xml: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_config(monkeypatch, tmp_path, "prod")
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: _DgPano())
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("p")
+        await pilot.pause()
+        app.screen.query_one("#profile-table", DataTable).focus()  # focus the profile row
+        # No reload-path -> targets the focused profile as a live source.
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+    assert isinstance(app.session.source, LiveSource)
+    assert {a.name for a in app.session.working_snapshot.addresses} == {"anchor", "dg-only"}
+
+
+# --- TUI: no profile focused + empty path is rejected ------------------------
+
+
+@pytest.mark.asyncio
+async def test_profiles_reload_no_target_is_rejected(
+    workbench_xml: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_config(monkeypatch, tmp_path)  # no profiles at all
+    original = OfflineSource(workbench_xml).path
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("p")
+        await pilot.pause()
+        # empty reload-path, no profile to focus
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, ProfilesScreen)  # stayed put, no crash
+    assert isinstance(app.session.source, OfflineSource)
+    assert app.session.source.path == original  # source unchanged
+
+
+# --- TUI: moving the profile cursor re-requires confirmation -----------------
+
+
+@pytest.mark.asyncio
+async def test_profiles_reload_confirmation_resets_on_cursor_move(
+    workbench_xml: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _write_config(monkeypatch, tmp_path, "p1", "p2")
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        # Stage a batch so a reload would discard it.
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")
+        results.move_cursor(row=1)
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+
+        await pilot.press("p")
+        await pilot.pause()
+        table = app.screen.query_one("#profile-table", DataTable)
+        table.focus()
+        await pilot.press("ctrl+r")  # arms, targeting p1
+        await pilot.pause()
+        table.move_cursor(row=1)  # cursor -> p2 resets the arm
+        await pilot.pause()
+        await pilot.press("ctrl+r")  # must re-arm, NOT reload
+        await pilot.pause()
+        # Never reloaded: the staged batch and the offline source are intact.
+        assert len(app.session.staging) == 1
+        assert isinstance(app.session.source, OfflineSource)
