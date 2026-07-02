@@ -101,6 +101,42 @@ async def test_dedup_spoke_stages_merge_and_reconciles(workbench_xml: str) -> No
 
 
 @pytest.mark.asyncio
+async def test_dedup_spoke_collapses_three_toward_chosen_survivor(
+    workbench_xml_triple: str,
+) -> None:
+    # Select three duplicate addresses, open dedup, pick a survivor in the Select,
+    # confirm -> ONE staged change that keeps the survivor and removes the others.
+    sess = WorkbenchSession(source=OfflineSource(workbench_xml_triple), output_mode=OutputMode.SET)
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")  # row 0
+        results.move_cursor(row=1)
+        await pilot.press("space")  # row 1
+        results.move_cursor(row=2)
+        await pilot.press("space")  # row 2
+        await pilot.pause()
+        assert len(app.session.selection) == 3
+        await pilot.press("d")  # open dedup screen
+        await pilot.pause()
+        # Pick web-srv-02 as the survivor via the keep Select.
+        keep_select = app.screen.query_one("#dedup-keep", Select)
+        idx = next(i for i, (label, _v) in enumerate(keep_select._options) if "web-srv-02" in label)
+        keep_select.value = keep_select._options[idx][1]
+        await pilot.pause()
+        await pilot.press("ctrl+y")  # stage the collapse
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        names = {a.name for a in app.session.working_snapshot.addresses}
+        assert "web-srv-02" in names  # survivor remains
+        assert "web-srv-01" not in names and "web-srv-03" not in names  # others gone
+
+
+@pytest.mark.asyncio
 async def test_apply_batch_offline_writes_file(workbench_xml: str, tmp_path) -> None:
     sess = WorkbenchSession(
         source=OfflineSource(workbench_xml), output_mode=OutputMode.OFFLINE_APPLY
