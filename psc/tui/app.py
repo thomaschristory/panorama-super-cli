@@ -44,6 +44,10 @@ class WorkbenchApp(App[None]):
         ("x", "decommission", "decommission"),
         ("r", "rename", "rename"),
         ("e", "rule_edit", "rule"),
+        ("i", "unused", "unused"),
+        ("g", "dangling", "dangling"),
+        ("l", "name_lint", "lint"),
+        ("n", "name_apply", "name apply"),
         ("p", "profiles", "profiles"),
         ("s", "staged", "staged"),
         ("ctrl+a", "apply_batch", "apply"),
@@ -66,6 +70,10 @@ class WorkbenchApp(App[None]):
             "decommission",
             "rename",
             "rule_edit",
+            "unused",
+            "dangling",
+            "name_lint",
+            "name_apply",
             "profiles",
             "staged",
             "apply_batch",
@@ -176,6 +184,26 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.rule import RuleScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(RuleScreen(self.session))
+
+    def action_unused(self) -> None:
+        from psc.tui.screens.unused import UnusedScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(UnusedScreen(self.session))
+
+    def action_dangling(self) -> None:
+        from psc.tui.screens.dangling import DanglingScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(DanglingScreen(self.session))
+
+    def action_name_lint(self) -> None:
+        from psc.tui.screens.lint import LintScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(LintScreen(self.session))
+
+    def action_name_apply(self) -> None:
+        from psc.tui.screens.name_apply import NameApplyScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(NameApplyScreen(self.session))
 
     def action_profiles(self) -> None:
         from psc.tui.screens.profiles import ProfilesScreen  # noqa: PLC0415 — avoid import cycle
