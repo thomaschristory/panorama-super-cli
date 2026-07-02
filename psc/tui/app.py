@@ -34,6 +34,8 @@ class WorkbenchApp(App[None]):
     TITLE = "psc workbench"
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         ("space", "toggle_row", "select"),
+        ("delete", "remove_selected", "remove"),
+        ("backspace", "remove_selected", "remove"),
         ("d", "dedup", "dedup"),
         ("u", "usage", "usage"),
         ("a", "audit", "audit"),
@@ -52,6 +54,7 @@ class WorkbenchApp(App[None]):
     _HUB_ACTIONS: ClassVar[frozenset[str]] = frozenset(
         {
             "toggle_row",
+            "remove_selected",
             "dedup",
             "usage",
             "audit",
@@ -86,6 +89,9 @@ class WorkbenchApp(App[None]):
         results.cursor_type = "row"
         sel = self.query_one("#selection", DataTable)
         sel.add_columns("kind", "name", "location")
+        # Focusable + row cursor so a single selected item can be dropped
+        # directly from the selection panel (delete/backspace), #91.
+        sel.cursor_type = "row"
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "search":
@@ -113,6 +119,17 @@ class WorkbenchApp(App[None]):
             return
         self.session.toggle(self._results[row])
         self._refresh_selection_view()
+
+    def action_remove_selected(self) -> None:
+        # Drop the focused row directly from the selection panel (#91). Only acts
+        # when the selection table is focused, so delete/backspace elsewhere is a
+        # no-op rather than removing a surprise item. The selection rows are built
+        # in `session.selection` order, so cursor_row indexes it directly.
+        sel = self.query_one("#selection", DataTable)
+        if self.focused is not sel or not self.session.selection:
+            return
+        if self.session.remove_at(sel.cursor_row):
+            self._refresh_selection_view()
 
     def action_dedup(self) -> None:
         from psc.tui.screens.dedup import DedupScreen  # noqa: PLC0415 — avoid import cycle
