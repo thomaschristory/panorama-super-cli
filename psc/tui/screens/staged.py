@@ -37,6 +37,7 @@ def staged_detail(session: WorkbenchSession, index: int) -> str:
 class StagedScreen(Screen[None]):
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         ("d", "drop", "drop change"),
+        ("ctrl+a", "apply", "apply"),
         ("escape", "app.pop_screen", "back"),
     ]
 
@@ -77,6 +78,19 @@ class StagedScreen(Screen[None]):
     def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         # Inspect: the detail panel tracks the highlighted change's full set-script.
         self._show_detail()
+
+    def on_screen_resume(self) -> None:
+        # Returning from the apply screen: a committing apply may have cleared or
+        # changed the batch, so rebuild the list to reflect the current staging.
+        self._refresh()
+
+    def action_apply(self) -> None:
+        # Apply is reachable ONLY from here (#127): the batch must be reviewed on
+        # the staged changelist before it can be emitted. The ApplyScreen owns the
+        # format/destination choice and the actual apply_batch call.
+        from psc.tui.screens.apply import ApplyScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.app.push_screen(ApplyScreen(self.session))
 
     def action_drop(self) -> None:
         table = self.query_one("#staged-table", DataTable)

@@ -105,7 +105,7 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | `l` | **name-lint** | Report objects that drift from the configured naming scheme. |
 | `n` | **name-apply** | Rename drifting object(s) to their scheme name; choose an entry to apply. |
 | `p` | **profiles** | CRUD live connection profiles, persisted to `~/.psc/config.yaml`. Also switches the active source (`ctrl+r`) — reload the session onto the focused profile or an offline export path; discards the selection + staged batch (with a confirm when a batch is staged). |
-| `s` | **staged** | Inspect the staged changelist (see below). |
+| `s` | **staged** | Inspect the staged changelist, drop individual changes, and **apply** (`ctrl+a`) — the only place apply is reachable (see below). |
 
 The mutating spokes are the same engines as their CLI counterparts, so the
 behaviour — and the [blockers](safety.md#blockers-are-a-hard-gate) that refuse an
@@ -120,7 +120,9 @@ Every stage compounds into a git-like changelist. The hub shows only a
 - inspect any staged change to see its complete rendered `set`-script,
 - **drop a single change** (`d`) without discarding the rest of the batch (if the
   dropped change is a dependency of a later one, the drop is refused and the batch
-  is kept intact).
+  is kept intact),
+- **apply the batch** (`ctrl+a`) — the only place apply is reachable, so you
+  always review what's staged before emitting it (see below).
 
 Because each plan is built against the working config *with the prior stages
 already applied*, the batch is internally consistent — no stage silently
@@ -128,8 +130,10 @@ invalidates another.
 
 ## Applying the batch
 
-`ctrl+a` opens the **apply screen**, where you choose the output format and
-destination *after* reviewing the batch — no need to decide at launch. Pick one:
+Apply is reached **only from the staged changelist** (`s`), so you can't emit a
+batch you haven't looked at: open the staged spoke, then `ctrl+a` opens the
+**apply screen**, where you choose the output format and destination *after*
+reviewing the batch — no need to decide at launch. Pick one:
 
 - **Print the set script here** — the combined PAN-OS `set` script, shown inline.
 - **Save a set-command file (`.set`)** — the same script written to a file.

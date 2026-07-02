@@ -53,7 +53,6 @@ class WorkbenchApp(App[None]):
         ("n", "name_apply", "name apply"),
         ("p", "profiles", "profiles"),
         ("s", "staged", "staged"),
-        ("ctrl+a", "apply_batch", "apply"),
         ("q", "quit", "quit"),
     ]
 
@@ -82,7 +81,6 @@ class WorkbenchApp(App[None]):
             "name_apply",
             "profiles",
             "staged",
-            "apply_batch",
         }
     )
 
@@ -246,11 +244,3 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.staged import StagedScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(StagedScreen(self.session))
-
-    def action_apply_batch(self) -> None:
-        # Output format + destination are chosen interactively at apply time
-        # (#122); the launch flags only pre-seed the picker's default. The
-        # ApplyScreen owns the actual apply_batch call.
-        from psc.tui.screens.apply import ApplyScreen  # noqa: PLC0415 — avoid import cycle
-
-        self.push_screen(ApplyScreen(self.session))

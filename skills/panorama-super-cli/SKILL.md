@@ -300,9 +300,11 @@ psc -p prod w --output-mode live-apply            # live (never commits)
 
 `psc workbench` (alias `psc w`) is a keyboard-driven TUI at full CLI parity:
 search → multi-select into a buffer → route into a spoke → stage plans into a
-git-like changelist → `ctrl+a` opens an apply screen to choose the output at
-apply time: a `set` script (inline or `.set` file), a full or minimal-partial
-offline config write, or a live candidate push (live sessions only). The
+git-like changelist → review it in the staged spoke (`s`) and `ctrl+a` there
+opens an apply screen to choose the output at apply time: a `set` script (inline
+or `.set` file), a full or minimal-partial offline config write, or a live
+candidate push (live sessions only). Apply is reachable only from the staged
+changelist, so a batch is always reviewed before it's emitted. The
 `--output-mode` / `--apply-out` launch flags just pre-seed that default. Same
 dry-run/stage, blocker gate, and repoint-before-delete safety as the CLI.
 Alongside the
