@@ -36,6 +36,7 @@ class WorkbenchApp(App[None]):
         ("space", "toggle_row", "select"),
         ("delete", "remove_selected", "remove"),
         ("backspace", "remove_selected", "remove"),
+        ("c", "create", "create"),
         ("d", "dedup", "dedup"),
         ("u", "usage", "usage"),
         ("a", "audit", "audit"),
@@ -56,6 +57,7 @@ class WorkbenchApp(App[None]):
         {
             "toggle_row",
             "remove_selected",
+            "create",
             "dedup",
             "usage",
             "audit",
@@ -132,6 +134,11 @@ class WorkbenchApp(App[None]):
             return
         if self.session.remove_at(sel.cursor_row):
             self._refresh_selection_view()
+
+    def action_create(self) -> None:
+        from psc.tui.screens.create import CreateScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(CreateScreen(self.session))
 
     def action_dedup(self) -> None:
         from psc.tui.screens.dedup import DedupScreen  # noqa: PLC0415 — avoid import cycle
