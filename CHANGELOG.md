@@ -7,6 +7,17 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.1.1 — 2026-07-02
+
+### Changed
+
+- **Workbench apply is now reachable only from the staged changelist** (#127) —
+  the hub-level `ctrl+a` apply binding is removed. Open the staged spoke (`s`),
+  then `ctrl+a` there opens the apply screen. This forces a review of the exact
+  staged batch before it can be emitted (offline write or live push), narrowing
+  the blast radius of a stray keypress. No engine change — the apply screen and
+  its confirmations are unchanged; only its entry point moved.
+
 ## v1.1.0 — 2026-07-02
 
 Workbench (TUI) parity + UX release. Every change is in the interactive

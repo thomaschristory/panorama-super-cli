@@ -36,6 +36,15 @@ async def _stage_one_merge(app: WorkbenchApp, pilot) -> None:
     await pilot.pause()
 
 
+async def _open_apply(app: WorkbenchApp, pilot) -> None:
+    """Open the apply picker the supported way (#127): via the staged changelist."""
+    app.query_one("#results", DataTable).focus()  # off the search Input
+    await pilot.press("s")  # staged changelist
+    await pilot.pause()
+    await pilot.press("ctrl+a")  # -> apply picker
+    await pilot.pause()
+
+
 # --- default disposition from launch flags -----------------------------------
 
 
@@ -50,17 +59,32 @@ def test_initial_disposition_tracks_launch_mode(workbench_xml: str) -> None:
     assert initial_disposition(set_file) == "set-file"
 
 
-# --- ctrl+a opens the picker instead of applying directly --------------------
+# --- apply is reachable only from the staged changelist (#127) ---------------
 
 
 @pytest.mark.asyncio
-async def test_ctrl_a_opens_apply_picker(workbench_xml: str) -> None:
+async def test_apply_picker_opens_from_staged(workbench_xml: str) -> None:
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("s")  # staged changelist first
+        await pilot.pause()
+        await pilot.press("ctrl+a")  # then apply
         await pilot.pause()
         assert isinstance(app.screen, ApplyScreen)
+
+
+@pytest.mark.asyncio
+async def test_ctrl_a_on_hub_does_not_open_apply(workbench_xml: str) -> None:
+    app = WorkbenchApp(_session(workbench_xml))
+    async with app.run_test() as pilot:
+        await _stage_one_merge(app, pilot)
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("ctrl+a")  # hub has no apply binding anymore
+        await pilot.pause()
+        assert not isinstance(app.screen, ApplyScreen)
+        assert len(app.session.staging) == 1  # nothing applied
 
 
 # --- choosing offline-full in-app, overriding the launched SET default -------
@@ -72,8 +96,7 @@ async def test_picker_writes_offline_config_chosen_in_app(workbench_xml: str, tm
     app = WorkbenchApp(_session(workbench_xml))  # launched in SET mode
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         app.screen.query_one("#apply-mode", Select).value = "offline-full"
         app.screen.query_one("#apply-path", Input).value = str(dest)
         await pilot.press("ctrl+a")  # dest does not exist -> applies immediately
@@ -93,8 +116,7 @@ async def test_picker_set_file_keeps_staging(workbench_xml: str, tmp_path) -> No
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         app.screen.query_one("#apply-mode", Select).value = "set-file"
         app.screen.query_one("#apply-path", Input).value = str(dest)
         await pilot.press("ctrl+a")
@@ -114,8 +136,7 @@ async def test_picker_overwrite_requires_confirmation(workbench_xml: str, tmp_pa
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         app.screen.query_one("#apply-mode", Select).value = "offline-full"
         app.screen.query_one("#apply-path", Input).value = str(dest)
         await pilot.press("ctrl+a")  # first press: arms, does NOT write
@@ -134,8 +155,7 @@ async def test_picker_offline_session_hides_live_option(workbench_xml: str) -> N
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         select = app.screen.query_one("#apply-mode", Select)
         values = {value for _label, value in select._options}
         assert "live-push" not in values
@@ -149,8 +169,7 @@ async def test_picker_set_preview_keeps_staging(workbench_xml: str) -> None:
     app = WorkbenchApp(_session(workbench_xml))  # default disposition = set-preview
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         assert app.screen.query_one("#apply-mode", Select).value == "set-preview"
         await pilot.press("ctrl+a")  # preview: renders inline, writes nothing
         await pilot.pause()
@@ -165,8 +184,7 @@ async def test_picker_missing_path_is_rejected(workbench_xml: str) -> None:
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         app.screen.query_one("#apply-mode", Select).value = "offline-full"
         # leave #apply-path empty
         await pilot.press("ctrl+a")
@@ -183,9 +201,7 @@ async def test_picker_missing_path_is_rejected(workbench_xml: str) -> None:
 async def test_picker_nothing_staged_is_rejected(workbench_xml: str) -> None:
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
-        app.query_one("#results", DataTable).focus()
-        await pilot.press("ctrl+a")  # opens the picker even with an empty batch
-        await pilot.pause()
+        await _open_apply(app, pilot)  # via the (empty) staged changelist
         assert isinstance(app.screen, ApplyScreen)
         await pilot.press("ctrl+a")  # nothing staged -> rejected, no crash
         await pilot.pause()
@@ -205,8 +221,7 @@ async def test_picker_confirmation_resets_on_path_change(workbench_xml: str, tmp
     app = WorkbenchApp(_session(workbench_xml))
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         app.screen.query_one("#apply-mode", Select).value = "offline-full"
         app.screen.query_one("#apply-path", Input).value = str(a)
         await pilot.press("ctrl+a")  # arms overwrite of a.xml
@@ -269,8 +284,7 @@ async def test_picker_live_push_requires_confirmation(monkeypatch: pytest.Monkey
     app = WorkbenchApp(session)
     async with app.run_test() as pilot:
         await _stage_one_merge(app, pilot)
-        await pilot.press("ctrl+a")
-        await pilot.pause()
+        await _open_apply(app, pilot)
         select = app.screen.query_one("#apply-mode", Select)
         assert select.value == "live-push"  # default pre-seeded + offered on live
         await pilot.press("ctrl+a")  # first press: arms, pushes NOTHING
