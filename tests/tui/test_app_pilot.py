@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import DataTable, Input
+from textual.widgets import DataTable, Input, Select
 
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
@@ -251,3 +251,57 @@ async def test_move_spoke_stages_and_reconciles(workbench_xml_dg: str) -> None:
         assert len(app.session.staging) == 1
         # dg-only moved dg1 -> shared; the dg1 identity drops out of the selection
         assert app.session.selection == []
+
+
+@pytest.mark.asyncio
+async def test_move_dest_select_defaults_shared_and_lists_dgs(workbench_xml_two_dg: str) -> None:
+    sess = WorkbenchSession(source=OfflineSource(workbench_xml_two_dg), output_mode=OutputMode.SET)
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "dg-only"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        assert isinstance(app.screen, MoveScreen)
+        select = app.screen.query_one("#move-dest", Select)
+        assert select.value == "shared"
+        options = [value for _label, value in select._options]  # (prompt, value) pairs
+        assert options == ["shared", "dg1", "dg2"]
+
+
+@pytest.mark.asyncio
+async def test_move_to_chosen_dg_stages_that_destination(workbench_xml_two_dg: str) -> None:
+    # A DG that IS an ancestor of the source is a valid promote target. With only
+    # sibling DGs here, shared is the sole valid non-source dest; choosing dg2
+    # (non-ancestor) must bell and stage nothing. Verify the dest threads through:
+    # picking shared explicitly stages a move to shared.
+    sess = WorkbenchSession(source=OfflineSource(workbench_xml_two_dg), output_mode=OutputMode.SET)
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "dg-only"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("m")
+        await pilot.pause()
+        # Set a non-ancestor dest programmatically: the move is blocked -> bell,
+        # nothing staged, still on the move screen.
+        app.screen.query_one("#move-dest", Select).value = "dg2"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert isinstance(app.screen, MoveScreen)
+        assert app.session.staging == []
+        # Now pick shared and confirm: the dest threads through and stages.
+        app.screen.query_one("#move-dest", Select).value = "shared"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        assert app.session.staging[0].label == "move dg-only -> shared"
