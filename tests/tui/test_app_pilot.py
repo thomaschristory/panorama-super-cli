@@ -234,6 +234,33 @@ async def test_rename_spoke_stages_and_reconciles(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rename_picks_chosen_entry_not_first(workbench_xml: str) -> None:
+    # Two objects selected: the rename spoke must rename the one the user PICKS
+    # in the target dropdown, not silently the first (#89).
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "web-srv"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")  # select web-srv-01 (row 0)
+        await pilot.press("down")
+        await pilot.press("space")  # select web-srv-02 (row 1)
+        await pilot.pause()
+        assert len(app.session.selection) == 2
+        await pilot.press("r")
+        await pilot.pause()
+        app.screen.query_one("#rename-target", Select).value = 1  # choose the 2nd
+        app.screen.query_one("#rename-input", Input).value = "web-server-02"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        assert "web-srv-02" in app.session.staging[0].label
+        # the un-renamed first object is still selected
+        assert any(i.name == "web-srv-01" for i in app.session.selection)
+
+
+@pytest.mark.asyncio
 async def test_move_spoke_stages_and_reconciles(workbench_xml_dg: str) -> None:
     sess = WorkbenchSession(source=OfflineSource(workbench_xml_dg), output_mode=OutputMode.SET)
     app = WorkbenchApp(sess)
