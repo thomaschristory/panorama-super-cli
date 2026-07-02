@@ -181,10 +181,13 @@ class WorkbenchSession:
     def apply_batch(self, *, out_path: str | None) -> ApplyOutcome:
         """Apply the staged batch per `output_mode`. Read-only until here.
 
-        SET is a preview (renders the script, changes nothing, keeps staging).
-        OFFLINE_APPLY / LIVE_APPLY commit the batch and then CLEAR staging, so a
-        second apply can't replay the same changes (a repeated live push would
-        otherwise re-apply renames against already-renamed objects and fail).
+        SET is a preview (renders the script, changes nothing, keeps staging) —
+        or, when an out path is given, writes the combined set script to that
+        file and still keeps staging (writing a script is an export, not a
+        commit). OFFLINE_APPLY / LIVE_APPLY commit the batch and then CLEAR
+        staging, so a second apply can't replay the same changes (a repeated live
+        push would otherwise re-apply renames against already-renamed objects and
+        fail).
         """
         # Number of staged *changes* applied (not raw XML op count — this is a
         # TUI-facing tally, distinct from ApplyResult.ops).
@@ -196,7 +199,20 @@ class WorkbenchSession:
 
         if self.output_mode is OutputMode.SET:
             script = self.combined_set_script()
-            return ApplyOutcome(mode=self.output_mode, ops=ops, out_path=None, detail=script)
+            if out_path is None:
+                return ApplyOutcome(mode=self.output_mode, ops=ops, out_path=None, detail=script)
+            dest = Path(out_path)
+            if (
+                isinstance(self.source, OfflineSource)
+                and dest.resolve() == self.source.path.resolve()
+            ):
+                raise PscError("output path must differ from the source config", ErrorType.CONFIG)
+            # Trailing newline so the file is a well-formed script; staging is
+            # deliberately kept (an exported script is a preview, not a commit).
+            self._atomic_write(dest, script + "\n" if script else script)
+            return ApplyOutcome(
+                mode=self.output_mode, ops=ops, out_path=str(dest), detail=f"wrote {dest}"
+            )
 
         if self.output_mode is OutputMode.OFFLINE_APPLY:
             if out_path is None:
