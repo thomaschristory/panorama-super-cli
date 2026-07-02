@@ -43,7 +43,7 @@ class ObjectRef(BaseModel):
 
 
 class DuplicateGroup(BaseModel):
-    kind: str  # "address" | "service"
+    kind: str  # "address" | "service" | "address-group"
     value: str  # canonical, human-readable
     members: list[ObjectRef] = Field(default_factory=list)
 

@@ -116,8 +116,10 @@ class DuplicatesScreen(Screen[None]):
         # downstream spoke (d merge, a audit, x decommission, …) can act on them.
         if not self._buckets:
             return
+        # cursor_row is always an int (defaults to 0); on an empty table the
+        # bounds check below rejects it, so no None guard is needed.
         row = self.query_one("#dup-table", DataTable).cursor_row
-        if row is None or not 0 <= row < len(self._buckets):
+        if not 0 <= row < len(self._buckets):
             return
         bucket = self._buckets[row]
         added = add_bucket_to_selection(self.session, bucket)
