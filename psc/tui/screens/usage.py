@@ -72,11 +72,23 @@ class UsageScreen(Screen[None]):
     def on_mount(self) -> None:
         if self._rows:
             table = self.query_one("#usage-table", DataTable)
-            table.add_columns("kind", "object", "referrer kind", "referrer", "location", "field")
+            # The owning object is identified by kind/name/location so rows for two
+            # same-named selected objects at different scopes stay distinguishable
+            # (#86); referrer columns are labelled distinctly to avoid confusion.
+            table.add_columns(
+                "obj kind",
+                "object",
+                "obj location",
+                "referrer kind",
+                "referrer",
+                "referrer location",
+                "field",
+            )
             for r in self._rows:
                 table.add_row(
                     r.object_kind,
                     r.object_name,
+                    r.object_location,
                     r.referrer_kind,
                     r.referrer_name,
                     r.referrer_location,
