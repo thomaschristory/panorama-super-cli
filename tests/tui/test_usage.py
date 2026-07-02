@@ -32,3 +32,33 @@ def test_where_used_empty_for_unreferenced(workbench_xml_refs: str) -> None:
 def test_where_used_only_considers_selection(workbench_xml_refs: str) -> None:
     sess = _session(workbench_xml_refs)
     assert selection_where_used(sess) == []
+
+
+_TWO_OWNERS_XML = """<?xml version="1.0"?>
+<config><shared>
+  <address>
+    <entry name="a1"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+    <entry name="a2"><ip-netmask>10.0.0.2/32</ip-netmask></entry>
+  </address>
+  <address-group>
+    <entry name="g1"><static><member>a1</member></static></entry>
+    <entry name="g2"><static><member>a2</member></static></entry>
+  </address-group>
+</shared></config>
+"""
+
+
+def test_where_used_lists_all_selected_with_owner_and_location(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Two selected objects, each referenced by a different group: every selected
+    # object's usage is listed and each row is attributed to its OWNING object,
+    # location included, so same-named objects at different scopes stay distinct (#86).
+    p = tmp_path / "two.xml"
+    p.write_text(_TWO_OWNERS_XML, encoding="utf-8")
+    sess = _session(str(p))
+    sess.toggle(SelectionItem(kind="address", name="a1", location="shared"))
+    sess.toggle(SelectionItem(kind="address", name="a2", location="shared"))
+    rows = selection_where_used(sess)
+    owners = {(r.object_name, r.object_location, r.referrer_name) for r in rows}
+    assert ("a1", "shared", "g1") in owners
+    assert ("a2", "shared", "g2") in owners
+    assert all(r.object_location for r in rows)  # owner location always populated
