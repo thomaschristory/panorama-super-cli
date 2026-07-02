@@ -67,6 +67,28 @@ Every reference the [reference graph](references-and-audit.md) knows about:
 References are rewritten **before** the object is deleted, and duplicate members
 are collapsed (a group that listed both names ends up with just the survivor).
 
+### Merge a whole bucket at once
+
+Pairwise `--keep/--remove` collapses two objects. When a value has *three or more*
+duplicate names, `--group <value>` collapses the **entire bucket** toward one
+survivor in a single plan — every non-survivor is repointed onto the survivor and
+deleted:
+
+```console
+psc -c panorama.xml dedup merge --group 10.0.0.10/32                 # dry-run
+psc -c panorama.xml dedup merge --group 10.0.0.10/32 --keep h-web1   # pick the survivor
+psc -c panorama.xml dedup merge --group 10.0.0.10/32 --apply --out fixed.xml
+```
+
+- The value is a **bucket** from `dedup addresses` (run it first to see them).
+- `--keep NAME` chooses the survivor; omit it to keep the first bucket member.
+- `--group` and `--remove` are mutually exclusive.
+- `--not-strict` matches the bucket under host-bit masking (see
+  [Strict by default](#strict-by-default)).
+
+The safety gate below applies unchanged — a bucket whose members differ in value
+still needs `--allow-value-change`.
+
 ## The safety gate
 
 `psc` **refuses** (exit `6`) a merge that would change meaning or that it can't

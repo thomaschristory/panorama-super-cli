@@ -7,6 +7,94 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.0.0 — 2026-07-02
+
+First stable release. From this version `panorama-super-cli` follows
+[Semantic Versioning](https://semver.org/): the CLI surface, the JSON output
+contracts, and the exit codes are public API and won't change incompatibly
+without a major bump.
+
+### Added
+
+- **`psc find ip --resolve-fqdn`** (#3) — opt-in DNS. FQDN address objects are
+  resolved (cached, timeout-bounded) and match when their A/AAAA records include
+  the queried IP. The offline default never touches DNS, so hermetic/CI runs are
+  unchanged; objects whose lookup fails are skipped with a count on stderr.
+- **`psc dedup merge --group <value> [--keep <name>]`** (#4) — collapse an
+  ENTIRE duplicate-address bucket (every object sharing that value, as listed by
+  `dedup addresses`) toward one survivor in a single plan, alongside the existing
+  pairwise `--keep/--remove`. `--keep` picks the survivor (defaults to the first
+  bucket member); `--group` and `--remove` are mutually exclusive; `--not-strict`
+  matches the bucket under host-bit masking. Same repoint-before-delete engine and
+  value-change gate as pairwise merge.
+- **`psc name apply --all`** (#15) — bulk reference-aware rename-to-scheme. Renames
+  every non-compliant object (everything `name lint` reports) to its scheme name
+  in one reviewed, all-or-nothing plan, blocking any rename that would collide or
+  shadow. `name apply` now takes exactly one of `--object NAME` or `--all`.
+- **`psc move … --cascade`** (#76) — promote an object's transitive DG-local
+  dependency closure (group members, tags) to the destination in one deepest-first
+  ordered plan. Without `--cascade`, an unresolved dependency still blocks the move
+  and is listed to promote first; a dependency also needed by an object left behind
+  is promoted but its source copy is retained (with a warning).
+- **`psc diff a.xml b.xml`** and **`psc diff --device-group A --against B`** (#13)
+  — a pure-read drift report. File mode compares two exported configs (pre/post
+  review); DG mode compares the effective visible object sets of two device-groups
+  in one config. Reports added/removed/changed objects, groups, and rules, grouped
+  by kind. A difference is data, so it exits `0` even when the sides differ.
+- **`psc export <kind>`** and **bulk import via `psc set <kind> -f objs.ndjson`**
+  (#14) — object portability as NDJSON (one canonical JSON object per line, ordered
+  by `(location, name)`). `export` covers addresses / address-groups / services /
+  service-groups / tags; `set -f` plans the whole file as one reviewable
+  `ChangeSet` (the same crud validation, aggregated), through the identical
+  dry-run-default + `--apply` gate — one blocker refuses the whole file.
+- **`psc refs unused --ignore-disabled`** (#9) — treat disabled rules as
+  non-references, surfacing objects used *only* by disabled rules (a cleanup target
+  once a rule set is retired).
+- **`psc audit services-vs-wellknown`** (#11) — flag custom service objects whose
+  single destination port duplicates a predefined PAN-OS service (e.g.
+  `service-http`) or an IANA well-known port (e.g. `ssh`). The `kind` column
+  distinguishes a real predefined object from a bare well-known port number; ranges
+  and multi-port objects are never flagged. Pure read; honours device-group scope.
+- **`psc refs unused --caveat/--no-caveat`** (#56) — the scan-scope blind-spot
+  notice (printed to stderr so stdout stays pure machine output) is now
+  suppressible with `--no-caveat` for callers who've internalised the coverage
+  limits.
+- **Workbench TUI now at full CLI parity** — the interactive `psc workbench`
+  (alias `psc w`) shipped in v0.5.0 with seven spokes; it now covers every engine.
+  New spokes: **create** (`c`, object creation), **profiles** (`p`, persisted
+  profile CRUD), **refs-unused** (`i`), **dangling** (`g`), **name-lint** (`l`),
+  **name-apply** (`n`), plus a **staged-changelist** view (`s`, inspect one
+  change's full set-script and drop a single change without discarding the batch)
+  and direct **remove-from-selection** (`delete`/`backspace`). The dedup spoke
+  gained a whole-bucket merge with a survivor picker; move gained a destination
+  drop-down; rename/name-apply let you choose the entry. Output modes — SET
+  (preview or write the script to a file), OFFLINE_APPLY (full or partial config
+  via `--apply-out`), LIVE_APPLY (candidate push, never commits) — apply the whole
+  staged batch at once (`ctrl+a`) under the same safety model as the CLI.
+
+### Security
+
+- **Security hardening and `SECURITY.md`** (#78). A v1.0.0 security review found
+  no High/Critical issues; the code-level findings are addressed. Every GitHub
+  Actions `uses:` is pinned to a full commit SHA (Dependabot keeps them current);
+  CI workflows declare least-privilege `permissions`. `~/.psc/config.yaml` (which
+  may hold an API key) is now created `0600` **atomically** (via
+  `os.open(..., O_CREAT|O_TRUNC, 0o600)`, no world-readable window) with the parent
+  `~/.psc` at `0700`; a pre-existing looser file is repaired on write. A new
+  **`PSC_API_KEY`** environment variable overrides the profile's stored key
+  (precedence env > file), keeping the secret off disk. Running a profile with
+  `--insecure` (`verify_ssl=false`) now emits a loud `InsecureTLSWarning` on every
+  live connection — especially the password-bearing key-fetch — since credentials
+  would then cross the wire MITM-able. A security disclosure policy is documented
+  in `SECURITY.md`.
+
+### Documentation
+
+- New **Workbench** guide and a **Comparing and porting configs** guide (diff +
+  NDJSON export/import), both added to the docs nav. Existing guides and the CLI
+  reference updated for every new command/flag; the bundled Agent Skill and README
+  reflect the full v1.0.0 surface.
+
 ## v0.5.0 — 2026-07-01
 
 ### Added

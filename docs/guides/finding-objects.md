@@ -31,6 +31,20 @@ psc -c panorama.xml find ip 10.0.0.50-10.0.0.60
 psc -c panorama.xml find ip example.com      # FQDN objects (exact name match)
 ```
 
+### Resolving FQDN objects (opt-in DNS)
+
+By default `find ip` never touches the network — an FQDN object only matches when
+you query its literal name. Pass `--resolve-fqdn` to **DNS-resolve** FQDN objects
+and match those whose A/AAAA records include the queried IP:
+
+```console
+psc -c panorama.xml find ip 93.184.216.34 --resolve-fqdn
+```
+
+Resolution is cached and timeout-bounded; objects whose lookup fails are skipped
+with a count on stderr (stdout stays clean). This is strictly opt-in — the
+offline default stays hermetic and reproducible, so leave it off in CI.
+
 ### A whole list
 
 ```console

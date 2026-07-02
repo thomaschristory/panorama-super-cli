@@ -36,12 +36,15 @@ See [Writes and safety](../guides/safety.md).
 ### find
 
 ```
-psc find ip <target>... [-f FILE]
+psc find ip <target>... [-f FILE] [-e/--exact] [--resolve-fqdn]
 psc find object <name>
 ```
 
 Resolve an IP/CIDR/range/FQDN (or a file of them) to objects; or locate an
-object by exact name. See [Finding objects](../guides/finding-objects.md).
+object by exact name. `-e/--exact` keeps only equal-value matches. `--resolve-fqdn`
+opts into DNS: FQDN objects are resolved (cached, timeout-bounded) and match when
+their A/AAAA records include the queried IP; the default never touches DNS
+(offline-safe). See [Finding objects](../guides/finding-objects.md).
 
 ### dedup
 
@@ -52,6 +55,8 @@ psc dedup groups [--location LOC]
 psc dedup merge --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
                [--allow-value-change] [--apply] [--out PATH] [-of xml|set]
+psc dedup merge --group VALUE [--keep NAME] [--not-strict]
+               [--allow-value-change] [--apply] [--out PATH] [-of xml|set]
 psc dedup merge-group --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
                [--apply] [--out PATH] [-of xml|set]
@@ -59,30 +64,44 @@ psc dedup merge-group --keep NAME --remove NAME [--location LOC]
 
 Find duplicate objects (`addresses`/`services`) or address-groups with identical
 effective member sets (`groups`); merge one object (`merge`) or address-group
-(`merge-group`) into another, repointing all references. `merge-group` has **no**
-value-change override — it refuses unless the groups expand to the same set. See
-[Duplicates and merging](../guides/duplicates-and-merging.md).
+(`merge-group`) into another, repointing all references. `dedup merge` has two
+modes: pairwise (`--keep X --remove Y`) collapses one object, and group
+(`--group <value> [--keep NAME]`) collapses the *entire* duplicate bucket sharing
+that value into one survivor in a single plan (`--group`/`--remove` are mutually
+exclusive; `--keep` is optional and defaults to the first bucket member;
+`--not-strict` matches the bucket under host-bit masking). `merge-group` has
+**no** value-change override — it refuses unless the groups expand to the same
+set. See [Duplicates and merging](../guides/duplicates-and-merging.md).
 
 ### audit
 
 ```
 psc audit overlaps
+psc audit services-vs-wellknown
 ```
 
-Report address objects whose IP ranges contain or overlap one another
-(`ip-netmask`/`ip-range` only). Pure read; honours the global `-d/--device-group`
-scope and `--strict` (exit `5` when nothing overlaps). See
+`overlaps` reports address objects whose IP ranges contain or overlap one another
+(`ip-netmask`/`ip-range` only). `services-vs-wellknown` flags custom services
+whose single destination port duplicates a predefined PAN-OS service (e.g.
+`service-http`) or an IANA well-known port (e.g. `ssh`) — the `kind` column
+distinguishes a real predefined object from a bare well-known port number; ranges
+and multi-port objects are never flagged. Both are pure reads; both honour the
+global `-d/--device-group` scope and `--strict` (exit `5` when nothing matches).
+See
 [References and audit](../guides/references-and-audit.md#overlapping-and-contained-ranges).
 
 ### refs
 
 ```
 psc refs used <name> [--kind KIND] [--location LOC]
-psc refs unused [--kind KIND]
+psc refs unused [--kind KIND] [--ignore-disabled] [--caveat/--no-caveat]
 psc refs dangling
 ```
 
-Where-used, recursive unused, and dangling-reference audit. See
+Where-used, recursive unused, and dangling-reference audit. `--ignore-disabled`
+treats disabled rules as non-references, so it surfaces objects used *only* by
+disabled rules. `refs unused` prints a scan-scope blind-spot caveat on stderr by
+default; `--no-caveat` suppresses it (stdout is unaffected either way). See
 [References and audit](../guides/references-and-audit.md).
 
 ### name
@@ -90,11 +109,13 @@ Where-used, recursive unused, and dangling-reference audit. See
 ```
 psc name lint [--all]
 psc name rename --object OLD --to NEW [--kind KIND] [--location LOC] [--apply] [--out PATH] [-of xml|set]
-psc name apply  --object NAME            [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc name apply (--object NAME | --all)   [--location LOC] [--apply] [--out PATH] [-of xml|set]
 ```
 
-Opt-in naming-template lint and reference-aware rename. See
-[Naming templates](../guides/naming.md).
+Opt-in naming-template lint and reference-aware rename. `name apply` takes exactly
+one of `--object NAME` (rename one object to its scheme name) or `--all` (rename
+*every* non-compliant object to its scheme name in a single reviewed plan, blocking
+any that would collide or shadow). See [Naming templates](../guides/naming.md).
 
 ### set
 
@@ -108,9 +129,14 @@ psc set service       --name N --protocol tcp|udp --dest-port P [--source-port P
 psc set service-group --name N --member M... [--tag T]... [--location LOC] [--apply] [--out PATH] [-of xml|set]
 psc set tag           --name N [--color color1..color42] [--comments C]
                       [--location LOC] [--apply] [--out PATH] [-of xml|set]
+psc set <kind> -f OBJS.ndjson [--apply] [--out PATH] [-of xml|set]   # bulk import
 ```
 
-Create or update a single object with PAN-OS validation. `address` needs exactly
+Create or update a single object with PAN-OS validation. Every subcommand also
+accepts `-f/--file <objs.ndjson>` — a **bulk import** that parses NDJSON (one JSON
+object per line, as emitted by [`export`](#export)) and plans the whole batch as
+one reviewable `ChangeSet`; the singular flags are ignored in this mode and one
+blocker refuses the whole file. `address` needs exactly
 one `--type`/`--value`; `address-group` needs exactly one of `--member`/`--filter`;
 `service` requires `--dest-port` (PAN-OS mandates a destination port); `--source-port` is optional. Validation errors
 exit `4`; a cross-kind name collision or an in-place type/mode change on update is
@@ -154,7 +180,7 @@ deletions are warnings. See
 
 ```
 psc move <address|address-group|service|service-group|tag> <name>
-         --from <shared|DG> --to <shared|DG> [--apply] [--out PATH] [-of xml|set]
+         --from <shared|DG> --to <shared|DG> [--cascade] [--apply] [--out PATH] [-of xml|set]
 ```
 
 Promote one object from a device-group toward `shared` (create at the
@@ -166,6 +192,38 @@ shadow), the object's own dependencies (members/tags) not being visible at the
 destination, or a collision with a different-valued object already there. An
 identical-valued collision drops the source copy. Single object per run;
 dry-run by default.
+
+Pass `--cascade` to also promote the object's transitive DG-local dependencies
+(group members, tags) to the same destination, deepest-first, in one ordered
+plan — otherwise an unresolved dependency blocks the move and is listed to move
+first. A dependency still needed by an object left behind is promoted but its
+source copy is retained (with a warning).
+
+### diff
+
+```
+psc diff <a.xml> <b.xml>
+psc -c cfg.xml diff --device-group A --against B
+```
+
+Read-only drift report. File mode compares two exported configs; DG mode compares
+the *effective visible object sets* of two device-groups in the loaded config
+(the two modes are mutually exclusive). Reports added / removed / changed objects,
+groups, and rules, grouped by kind. A difference is *data* — it exits `0` even
+when the sides differ. See
+[Comparing and porting configs](../guides/comparing-and-porting.md#diff-what-changed).
+
+### export
+
+```
+psc export <addresses|address-groups|services|service-groups|tags> [--out PATH]
+```
+
+Dump objects of one kind as **NDJSON** (one JSON object per line), ordered by
+`(location, name)`. Honours the global `-d/--device-group` scope. Output goes to
+stdout, or to `--out <file>` (a plain artifact write, never a mutation). Feed the
+result into [`set <kind> -f`](#set) to bulk-import into another config. See
+[Comparing and porting configs](../guides/comparing-and-porting.md#export-import).
 
 ### init
 
@@ -220,3 +278,18 @@ psc version check
 `--version` flag). `psc version check` queries PyPI and reports whether a newer
 release is available; it exits 0 either way and emits a typed `transport` error
 if PyPI is unreachable.
+
+### workbench
+
+```
+psc workbench [--output-mode set|offline-apply|live-apply] [--apply-out PATH]
+psc w         ...   # short alias
+```
+
+Launch the interactive [workbench TUI](../guides/workbench.md) — a keyboard-driven
+cockpit over a persistent selection buffer and a git-like staged changelist, at
+full CLI parity. The source is chosen with the global `-c/--config` or
+`-p/--profile`. `--output-mode` decides how a staged batch applies: `set` (the
+default) renders the combined PAN-OS script, `offline-apply` writes the compounded
+config to `--apply-out`, `live-apply` pushes the candidate (never commits).
+Passing `--apply-out` implies `offline-apply`.

@@ -40,9 +40,32 @@ psc -p prod find ip 10.0.0.10 -o json
 `psc` fetches the running config over the PAN-OS XML API (via
 `pan-os-python`) and builds the same snapshot the offline parser would.
 
-Profiles live in `~/.psc/config.yaml` (created `0600`, since it holds the API
-key). A profile can set a default `device_group` scope. See
-[Configuration](../reference/config.md).
+Profiles live in `~/.psc/config.yaml` (created `0600` atomically, since it holds
+the API key; the parent `~/.psc` is `0700`). A profile can set a default
+`device_group` scope. See [Configuration](../reference/config.md).
+
+### Keeping the key off disk
+
+Set **`PSC_API_KEY`** in the environment to override a profile's stored `api_key`
+(precedence: env > config file), so the secret need never be written to disk — a
+good fit for CI secrets and short-lived shells:
+
+```console
+PSC_API_KEY="$PANOS_KEY" psc -p prod find ip 10.0.0.10 -o json
+```
+
+### TLS and `--insecure`
+
+TLS certificates are verified by default. For a self-signed Panorama you can pass
+`--insecure` to `psc init` (recorded as the profile's `verify_ssl: false` and
+reused by later live commands) — but psc then emits a loud `InsecureTLSWarning`
+on **every** live connection, because credentials cross the wire MITM-able.
+
+!!! warning "Never `--insecure` against production"
+    `--insecure` disables certificate verification, including on the
+    password-bearing key-fetch during `init`. Use it only against a lab Panorama
+    with a self-signed cert, never against production. `--no-verify` is unrelated:
+    it skips the reachability *probe*, not certificate checking.
 
 Live `--apply` pushes the plan to Panorama's **candidate** config over the XML
 API and **never commits** — you review the candidate and commit yourself, the

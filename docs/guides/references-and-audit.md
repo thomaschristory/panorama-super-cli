@@ -37,6 +37,28 @@ are its members if nothing else reaches them.
 
 `--kind` accepts `address`, `address-group`, `service`, `service-group`, `tag`.
 
+### Objects used only by disabled rules
+
+By default a disabled rule still counts as a reference (it can be re-enabled at
+any time). Pass `--ignore-disabled` to treat disabled rules as *non*-references —
+surfacing objects that are used **only** by disabled rules, a common cleanup
+target once a rule set is retired:
+
+```console
+psc -c panorama.xml refs unused --kind address --ignore-disabled
+```
+
+### The blind-spot caveat
+
+`refs unused` prints a one-line scan-scope caveat on **stderr** by default (stdout
+stays pure machine output), restating that the list is *candidates*, not a
+kill-list. Suppress it with `--no-caveat` once you've internalised the coverage
+limits:
+
+```console
+psc -c panorama.xml refs unused --kind address --no-caveat -o json
+```
+
 !!! danger "`unused` means *unused by policy* — not *safe to delete*"
     psc only scans device-group objects and policy rulebases. Objects referenced
     from **templates / network / device config** (IKE gateways, GlobalProtect,
@@ -99,6 +121,32 @@ psc -c panorama.xml --strict audit overlaps || echo "address ranges overlap"
 Overlaps are not automatically wrong — a host inside its subnet is normal — but
 the report surfaces accidental duplicates and shadowed objects worth folding
 together with [`dedup`](duplicates-and-merging.md).
+
+## Services duplicating well-known ports
+
+`audit services-vs-wellknown` flags **custom** service objects that just re-invent
+a port PAN-OS already ships or that IANA reserves:
+
+```console
+psc -c panorama.xml audit services-vs-wellknown
+```
+
+Each row is a custom service whose *single* destination port matches either a
+predefined PAN-OS service (e.g. `service-http`) or an IANA well-known port (e.g.
+`ssh`). The `kind` column tells the two apart — a real predefined object versus a
+bare well-known port number — so you can consolidate onto the predefined service
+where one exists. Ranges and multi-port objects are never flagged.
+
+```json
+{
+  "service_name": "my-ssh", "service_location": "shared",
+  "protocol": "tcp", "port": "22",
+  "canonical_name": "ssh", "kind": "well-known-port"
+}
+```
+
+Like `overlaps` it's a **pure read** — scope with `-d/--device-group` and use the
+global `--strict` to exit `5` when nothing matches.
 
 ## Scope and scripting
 
