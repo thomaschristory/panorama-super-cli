@@ -7,10 +7,14 @@ from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.audit import AuditScreen
 from psc.tui.screens.create import CreateScreen
+from psc.tui.screens.dangling import DanglingScreen
+from psc.tui.screens.lint import LintScreen
 from psc.tui.screens.move import MoveScreen
+from psc.tui.screens.name_apply import NameApplyScreen
 from psc.tui.screens.rename import RenameScreen
 from psc.tui.screens.rule import RuleScreen
 from psc.tui.screens.staged import StagedScreen
+from psc.tui.screens.unused import UnusedScreen
 from psc.tui.screens.usage import UsageScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
@@ -196,6 +200,63 @@ async def test_audit_spoke_opens_from_hub(workbench_xml: str) -> None:
         assert isinstance(app.screen, AuditScreen)
         await pilot.press("escape")
         await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_unused_spoke_opens_and_lists(workbench_xml_refs: str) -> None:
+    app = _app(workbench_xml_refs)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # focus off the search Input
+        await pilot.press("i")  # open the unused spoke
+        await pilot.pause()
+        assert isinstance(app.screen, UnusedScreen)
+        table = app.screen.query_one("#unused-table", DataTable)
+        assert table.row_count >= 1  # db-gw / net-10-0-5 are unused
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_dangling_spoke_opens_and_lists(workbench_xml_dangling: str) -> None:
+    app = _app(workbench_xml_dangling)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("g")  # open the dangling spoke
+        await pilot.pause()
+        assert isinstance(app.screen, DanglingScreen)
+        table = app.screen.query_one("#dangling-table", DataTable)
+        assert table.row_count == 1  # web-pool -> ghost-host
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_lint_spoke_opens_and_lists(workbench_xml_refs: str) -> None:
+    app = _app(workbench_xml_refs)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("l")  # open the name-lint spoke
+        await pilot.pause()
+        assert isinstance(app.screen, LintScreen)
+        table = app.screen.query_one("#lint-table", DataTable)
+        assert table.row_count >= 1  # db-gw drifts from H-10.0.9.1
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_name_apply_spoke_stages_scheme(workbench_xml_refs: str) -> None:
+    app = _app(workbench_xml_refs)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("n")  # open the name-apply spoke
+        await pilot.pause()
+        assert isinstance(app.screen, NameApplyScreen)
+        await pilot.press("ctrl+y")  # stage the bulk rename-to-scheme
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        new_names = {a.name for a in app.session.working_snapshot.addresses}
+        assert "H-10.0.9.1" in new_names  # db-gw renamed to its scheme name
 
 
 @pytest.mark.asyncio

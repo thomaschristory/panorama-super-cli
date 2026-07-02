@@ -162,6 +162,34 @@ def workbench_xml_two_dg(tmp_path):
     return str(p)
 
 
+WORKBENCH_XML_DANGLING = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="web-srv-01"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="web-pool">
+        <static>
+          <member>web-srv-01</member>
+          <member>ghost-host</member>
+        </static>
+      </entry>
+    </address-group>
+  </shared>
+  <devices><entry name="localhost.localdomain"><device-group/></entry></devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_dangling(tmp_path):
+    """Group 'web-pool' names a missing 'ghost-host' member (a dangling ref)."""
+    p = tmp_path / "config_dangling.xml"
+    p.write_text(WORKBENCH_XML_DANGLING, encoding="utf-8")
+    return str(p)
+
+
 WORKBENCH_XML_RULE = """<?xml version="1.0"?>
 <config>
   <shared>
