@@ -6,6 +6,7 @@ from textual.widgets import DataTable, Input, Select, Static
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.audit import AuditScreen
+from psc.tui.screens.create import CreateScreen
 from psc.tui.screens.move import MoveScreen
 from psc.tui.screens.rename import RenameScreen
 from psc.tui.screens.rule import RuleScreen
@@ -355,6 +356,48 @@ async def test_move_to_chosen_dg_stages_that_destination(workbench_xml_two_dg: s
         await pilot.pause()
         assert len(app.session.staging) == 1
         assert app.session.staging[0].label == "move dg-only -> shared"
+
+
+@pytest.mark.asyncio
+async def test_create_spoke_stages_new_address(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # move focus off the search Input
+        await pilot.press("c")  # open the create spoke
+        await pilot.pause()
+        assert isinstance(app.screen, CreateScreen)
+        app.screen.query_one("#create-kind", Select).value = "address"
+        app.screen.query_one("#create-name", Input).value = "new-host"
+        app.screen.query_one("#create-type", Input).value = "ip-netmask"
+        app.screen.query_one("#create-value", Input).value = "10.9.9.9/32"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        # Staging compounds onto working_xml: the new object is now in the snapshot.
+        names = {a.name for a in app.session.working_snapshot.addresses}
+        assert "new-host" in names
+
+
+@pytest.mark.asyncio
+async def test_create_spoke_blocked_does_not_stage(workbench_xml: str) -> None:
+    # Creating an address whose name collides with an existing service-group... use
+    # an address-group over an existing address name for the cross-kind clash.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # move focus off the search Input
+        await pilot.press("c")
+        await pilot.pause()
+        assert isinstance(app.screen, CreateScreen)
+        app.screen.query_one("#create-kind", Select).value = "address-group"
+        # "web-srv-01" already exists as an address -> cross-kind collision blocker.
+        app.screen.query_one("#create-name", Input).value = "web-srv-01"
+        app.screen.query_one("#create-members", Input).value = "db-gw"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert app.session.staging == []
+        assert isinstance(app.screen, CreateScreen)  # stays open after the bell
 
 
 @pytest.mark.asyncio
