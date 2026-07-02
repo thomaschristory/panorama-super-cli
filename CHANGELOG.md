@@ -7,6 +7,18 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.2.0 — 2026-07-02
+
+### Added
+
+- **Workbench: send a duplicate-scan bucket to the selection** (#131) — the
+  config-wide duplicate scan spoke (`D`) was pure discovery with no way to act
+  on a result. Highlight a bucket and press `space` to push its members onto the
+  hub selection (idempotent, kind-aware), so a scan result flows straight into
+  any downstream spoke (`d` merge, `a` audit, `x` decommission, …). The scan
+  itself still mutates nothing — merging stays in the `d` spoke / `dedup merge`
+  CLI. Backward-compatible feature addition.
+
 ## v1.1.2 — 2026-07-02
 
 ### Fixed
