@@ -36,3 +36,6 @@ site/
 secrets.*
 *.config.xml
 !tests/**/*.xml
+
+# superpowers / agent scratch — never commit
+docs/superpowers/
