@@ -436,6 +436,15 @@ class ReferenceGraph:
         inheritance) — used by shadow guards to find cross-level name clashes."""
         return self._idx_for(namespace).defined_at(name, location)
 
+    def dag_members(self, target: Target) -> list[Target]:
+        """The tag-matched member addresses of a dynamic address-group `target`.
+
+        Empty for a static group, a leaf object, or a DAG whose filter matches
+        nothing. Membership is snapshot-derived (resolved in `_resolve_dags`),
+        not the device's runtime evaluation, so it reflects only objects present
+        in this config."""
+        return list(self._dag_members.get(target, []))
+
     def where_used(self, kind: str, name: str, location: Location) -> list[Reference]:
         return list(self._by_target.get(Target(kind, name, location), []))
 

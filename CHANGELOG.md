@@ -7,6 +7,28 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.3.0 — 2026-07-09
+
+### Added
+
+- **Open an object to see what it contains** (#136) — a new inspect capability
+  over one engine (`psc/core/inspect.py`), exposed three ways:
+  - `psc show <name>` and `psc find object <name> --expand/-x` — expand any
+    object by name. Addresses/services print their value; address-groups and
+    service-groups expand recursively into a member **tree** plus
+    **`effective_leaves`** (the deduped, flattened leaf addresses/ports the
+    object resolves to). Tags list every carrier; rules group resolved
+    `source`/`destination`/`service` members by field.
+  - **Workbench TUI**: press `v` on a search result to open a read-only inspect
+    spoke showing the same tree + effective-leaf set.
+
+  Member resolution reuses the reference graph (PAN-OS name shadowing, dynamic
+  address-group membership, cycle-safe). Unresolvable members are always shown
+  and flagged — `dynamic` filters, `dangling` references, and `cycle`s each mark
+  their node, and `effective_complete: false` (plus a stderr warning) signals a
+  partial flat set. Pure read: nothing is staged, mutated, or written.
+  Backward-compatible — `find object` without `-x` is unchanged.
+
 ## v1.2.0 — 2026-07-02
 
 ### Added
