@@ -34,6 +34,7 @@ class WorkbenchApp(App[None]):
     TITLE = "psc workbench"
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         ("space", "toggle_row", "select"),
+        ("v", "inspect", "view"),
         ("delete", "remove_selected", "remove"),
         ("backspace", "remove_selected", "remove"),
         ("c", "create", "create"),
@@ -63,6 +64,7 @@ class WorkbenchApp(App[None]):
     _HUB_ACTIONS: ClassVar[frozenset[str]] = frozenset(
         {
             "toggle_row",
+            "inspect",
             "remove_selected",
             "create",
             "dedup",
@@ -148,6 +150,20 @@ class WorkbenchApp(App[None]):
             return
         self.session.toggle(self._results[row])
         self._refresh_selection_view()
+
+    def action_inspect(self) -> None:
+        # 'Open' the focused results row read-only: show its member tree and
+        # effective leaf set. Acts on the cursor row (like toggle_row), not the
+        # selection, so you can inspect without first selecting.
+        from psc.tui.screens.inspect import InspectScreen  # noqa: PLC0415 — avoid cycle
+
+        table = self.query_one("#results", DataTable)
+        if not self._results:
+            return
+        row = table.cursor_row
+        if row >= len(self._results):
+            return
+        self.push_screen(InspectScreen(self.session, self._results[row]))
 
     def action_remove_selected(self) -> None:
         # Drop the focused row directly from the selection panel (#91). Only acts

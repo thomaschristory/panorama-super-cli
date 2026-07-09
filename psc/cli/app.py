@@ -24,6 +24,7 @@ from psc.cli import (
     refs_cmds,
     rule_cmds,
     set_cmds,
+    show_cmds,
     version_cmds,
     workbench_cmds,
 )
@@ -177,6 +178,10 @@ app.command(
     "login",
     help="Verify a profile's API key — and rotate it with --user.",
 )(auth_cmds.login)
+app.command(
+    "show",
+    help="Open an object: show its member tree and effective leaf addresses.",
+)(show_cmds.show)
 app.command("workbench", help="Launch the interactive workbench TUI.")(workbench_cmds.workbench)
 app.command("w", hidden=True, help="Alias for workbench.")(workbench_cmds.workbench)
 

@@ -6,7 +6,9 @@ from pathlib import Path
 
 import typer
 
+from psc.cli._inspect_render import render_object_views
 from psc.cli.runtime import Runtime
+from psc.core.inspect import inspect_object
 from psc.core.resolve import find_ips, find_object
 from psc.core.resolver import Resolver, default_resolver
 from psc.output.errors import ErrorType, PscError
@@ -108,9 +110,27 @@ def ip(
 def obj(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Exact object name to locate."),
+    expand: bool = typer.Option(
+        False,
+        "--expand",
+        "-x",
+        help="Open the object: show its member tree and effective leaf addresses.",
+    ),
 ) -> None:
-    """Find every object (any kind, any location) with this exact name."""
+    """Find every object (any kind, any location) with this exact name.
+
+    With --expand, each match is 'opened' instead of one-line-summarised: its
+    member tree is drawn (nested groups recurse) alongside the deduped set of
+    effective leaf addresses/ports it resolves to. Dynamic filters, dangling
+    members and cycles are shown and flagged, never silently dropped.
+    """
     rt: Runtime = ctx.obj
+    if expand:
+        views = inspect_object(rt.snapshot(), name, scope=rt.scope())
+        if rt.strict and not views:
+            raise PscError(f"no object named '{name}'", ErrorType.NOT_FOUND)
+        render_object_views(rt.stdout, rt.stderr, rt.output, views)
+        return
     hits = find_object(rt.snapshot(), name)
     rows = [
         {"kind": h.kind, "name": h.name, "location": h.location, "detail": h.detail} for h in hits

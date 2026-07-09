@@ -72,6 +72,7 @@ psc -c cfg.xml -o json find ip 10.0.0.0/24        # everything inside the /24
 psc -c cfg.xml -o json find ip -f ips.txt         # a whole list (array result)
 psc -c cfg.xml -o json find ip 1.2.3.4 --resolve-fqdn   # opt-in DNS: match FQDN objects too
 psc -c cfg.xml -o json find object grp-web        # locate by exact name
+psc -c cfg.xml -o json find object grp-web -x      # OPEN it: member tree + effective leaves
 ```
 
 `exists: true` means there's an exact-match object. `matches[].match` is one of
@@ -81,6 +82,25 @@ like `10.0.0.0/8` would otherwise drown out the host you asked for.
 `--resolve-fqdn` opts into DNS: FQDN objects are resolved and match when their
 A/AAAA include the IP (cached, timeout-bounded; failures counted on stderr). The
 default never touches DNS — leave it off for hermetic/offline runs.
+
+### show — open an object to see what it contains
+
+```bash
+psc -c cfg.xml show grp-web                        # tree + effective leaf addresses
+psc -c cfg.xml -o json show grp-web                # ObjectView model (tree, effective_leaves, …)
+psc -c cfg.xml find object grp-web -x              # identical — `show` is the alias
+```
+
+`show <name>` (a.k.a. `find object <name> --expand/-x`) expands any object by
+name. A plain address/service prints its value; an **address-group** or
+**service-group** expands recursively into a member `tree` plus
+`effective_leaves` — the deduped, flattened set of leaf addresses/ports it
+resolves to. A **tag** lists every object carrying it; a **rule** groups its
+resolved `source`/`destination`/`service` members by field. Unresolvable members
+are shown and flagged, never dropped: dynamic filters (`dynamic`), dangling
+references (`dangling`), and nested cycles (`cycle`) each mark their node, and
+`effective_complete: false` (with a stderr warning) signals the flat set is
+partial. Pure read — nothing is staged or written.
 
 ### dedup — duplicates and merging
 
