@@ -20,9 +20,7 @@ def _node_by_name(nodes, name):
 
 
 def test_address_leaf() -> None:
-    snap = Snapshot(
-        addresses=[Address(name="h", type=AddressType.IP_NETMASK, value="10.0.0.1")]
-    )
+    snap = Snapshot(addresses=[Address(name="h", type=AddressType.IP_NETMASK, value="10.0.0.1")])
     (view,) = inspect_object(snap, "h")
     assert view.kind == "address"
     assert view.tree.detail == "10.0.0.1"
@@ -32,9 +30,7 @@ def test_address_leaf() -> None:
 
 
 def test_service_leaf() -> None:
-    snap = Snapshot(
-        services=[Service(name="web", protocol="tcp", destination_port="443")]
-    )
+    snap = Snapshot(services=[Service(name="web", protocol="tcp", destination_port="443")])
     (view,) = inspect_object(snap, "web")
     assert view.kind == "service"
     assert view.effective_leaves == ["tcp/443"]
@@ -108,9 +104,7 @@ def test_dangling_member_flagged_and_incomplete() -> None:
 def test_dynamic_group_lists_dag_members_but_incomplete() -> None:
     snap = Snapshot(
         addresses=[
-            Address(
-                name="a", type=AddressType.IP_NETMASK, value="10.0.0.1", tags=["web"]
-            ),
+            Address(name="a", type=AddressType.IP_NETMASK, value="10.0.0.1", tags=["web"]),
         ],
         address_groups=[AddressGroup(name="dag", dynamic_filter="'web'")],
         tags=[Tag(name="web")],
@@ -119,8 +113,39 @@ def test_dynamic_group_lists_dag_members_but_incomplete() -> None:
     assert view.tree.status is NodeStatus.DYNAMIC
     assert view.tree.detail == "'web'"
     assert {c.name for c in view.tree.children} == {"a"}
+    # The snapshot-matched member is indicative but still surfaces as a leaf...
+    assert view.effective_leaves == ["10.0.0.1"]
+    # ...while completeness stays False (the device may match more at runtime).
     assert view.effective_complete is False
     assert any("dynamic" in w.lower() for w in view.warnings)
+
+
+def test_tag_used_only_in_dag_filter_lists_the_group() -> None:
+    # A tag referenced solely by a dynamic address-group's filter (never carried
+    # directly) must still show that group as a carrier — matching `refs`.
+    snap = Snapshot(
+        address_groups=[AddressGroup(name="dag", dynamic_filter="'prod'")],
+        tags=[Tag(name="prod")],
+    )
+    (view,) = inspect_object(snap, "prod")
+    assert view.kind == "tag"
+    dag = _node_by_name(view.tree.children, "dag")
+    assert dag.kind == "address-group"
+    assert dag.status is NodeStatus.DYNAMIC
+
+
+def test_rule_member_with_malformed_value_is_flagged() -> None:
+    # A rule references a real address object whose value can't be parsed: it
+    # must be flagged (dangling), not shown as a healthy empty-detail node.
+    snap = Snapshot(
+        addresses=[Address(name="bad", type=AddressType.IP_NETMASK, value="10.0.0.0/33")],
+        security_rules=[SecurityRule(name="r1", source=["bad"], destination=["any"])],
+    )
+    (view,) = inspect_object(snap, "r1")
+    src = _node_by_name(view.tree.children, "source")
+    bad = _node_by_name(src.children, "bad")
+    assert bad.status is NodeStatus.DANGLING
+    assert any("bad" in w for w in view.warnings)
 
 
 def test_shadowing_resolves_local_over_shared() -> None:
@@ -128,9 +153,7 @@ def test_shadowing_resolves_local_over_shared() -> None:
     snap = Snapshot(
         addresses=[
             Address(name="h", type=AddressType.IP_NETMASK, value="10.0.0.1"),
-            Address(
-                name="h", type=AddressType.IP_NETMASK, value="10.9.9.9", location=dg
-            ),
+            Address(name="h", type=AddressType.IP_NETMASK, value="10.9.9.9", location=dg),
         ],
         address_groups=[AddressGroup(name="g", static_members=["h"], location=dg)],
         device_groups=["prod"],
@@ -159,9 +182,7 @@ def test_service_group_nested_dedups() -> None:
 def test_tag_reverse_lookup_lists_carriers() -> None:
     snap = Snapshot(
         addresses=[
-            Address(
-                name="a", type=AddressType.IP_NETMASK, value="10.0.0.1", tags=["web"]
-            ),
+            Address(name="a", type=AddressType.IP_NETMASK, value="10.0.0.1", tags=["web"]),
             Address(name="b", type=AddressType.IP_NETMASK, value="10.0.0.2"),
         ],
         address_groups=[AddressGroup(name="g", static_members=["a"], tags=["web"])],
@@ -178,9 +199,7 @@ def test_security_rule_expands_fields() -> None:
         addresses=[Address(name="a", type=AddressType.IP_NETMASK, value="10.0.0.1")],
         services=[Service(name="web", protocol="tcp", destination_port="443")],
         security_rules=[
-            SecurityRule(
-                name="r1", source=["a"], destination=["any"], service=["web"]
-            )
+            SecurityRule(name="r1", source=["a"], destination=["any"], service=["web"])
         ],
     )
     (view,) = inspect_object(snap, "r1")
@@ -209,9 +228,7 @@ def test_name_matching_multiple_objects_yields_multiple_views() -> None:
     snap = Snapshot(
         addresses=[
             Address(name="x", type=AddressType.IP_NETMASK, value="10.0.0.1"),
-            Address(
-                name="x", type=AddressType.IP_NETMASK, value="10.9.9.9", location=dg
-            ),
+            Address(name="x", type=AddressType.IP_NETMASK, value="10.9.9.9", location=dg),
         ],
         device_groups=["prod"],
     )

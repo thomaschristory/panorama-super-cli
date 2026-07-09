@@ -42,18 +42,14 @@ def _rows(views: list[ObjectView]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for v in views:
         if v.effective_leaves is None:
-            rows.append(
-                {"object": v.name, "kind": v.kind, "location": v.location, "leaf": ""}
-            )
+            rows.append({"object": v.name, "kind": v.kind, "location": v.location, "leaf": ""})
             continue
         if not v.effective_leaves:
             rows.append(
                 {"object": v.name, "kind": v.kind, "location": v.location, "leaf": "(empty)"}
             )
         for leaf in v.effective_leaves:
-            rows.append(
-                {"object": v.name, "kind": v.kind, "location": v.location, "leaf": leaf}
-            )
+            rows.append({"object": v.name, "kind": v.kind, "location": v.location, "leaf": leaf})
     return rows
 
 

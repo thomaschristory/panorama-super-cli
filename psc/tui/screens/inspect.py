@@ -87,13 +87,9 @@ def _attach(branch: TreeNode[None], node: InspectNode) -> None:
         _attach(branch.add(_node_label(child), expand=True), child)
 
 
-def inspect_object_for(
-    session: WorkbenchSession, item: SelectionItem
-) -> list[ObjectView]:
+def inspect_object_for(session: WorkbenchSession, item: SelectionItem) -> list[ObjectView]:
     """Expand the object named by `item` against the session's working snapshot,
     scoped to the item's location (its device-group ancestry + shared)."""
     from psc.core.inspect import inspect_object  # noqa: PLC0415 — avoid import cycle
 
-    return inspect_object(
-        session.working_snapshot, item.name, scope=_loc(item.location)
-    )
+    return inspect_object(session.working_snapshot, item.name, scope=_loc(item.location))
