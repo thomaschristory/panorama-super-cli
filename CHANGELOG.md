@@ -7,6 +7,31 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.5.0 — 2026-07-10
+
+### Added
+
+- **`psc group edit-member` — idempotent group-membership edits** — add or
+  remove one member of an **address-group** or **service-group**, the group
+  analogue of `rule edit-member`. Renders delete-field + re-set (PAN-OS `set` on
+  a member field appends), so every op is idempotent. `--kind` disambiguates a
+  name that is both an address- and service-group; `--location` a name in
+  several scopes. A dynamic (filter-based) address-group has no static member
+  list and is rejected. Same dry-run-by-default + `--apply` gate as every other
+  mutation.
+- **Workbench: add the selection to a group (`G`)** — pick objects in the hub,
+  press `G`, name a target address-/service-group, and each selected object is
+  added to its membership (idempotent, over the same engine). Add-only in the
+  TUI; removal lives in `psc group edit-member --remove`.
+
+### Changed
+
+- **Workbench create form is now dynamic** — the create spoke (`c`) shows only
+  the fields the selected kind actually uses (e.g. `type`/`value` for an address,
+  `members`/`filter` for an address-group, `color`/`comments` for a tag),
+  updating live as you change the kind, instead of presenting every field at
+  once.
+
 ## v1.4.0 — 2026-07-10
 
 ### Added

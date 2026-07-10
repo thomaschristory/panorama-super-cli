@@ -42,6 +42,33 @@ CREATE_KINDS: tuple[str, ...] = (
 SERVICE_PROTOCOLS: tuple[str, ...] = ("tcp", "udp")
 TAG_COLORS: tuple[str, ...] = tuple(f"color{i}" for i in range(1, 43))  # color1..color42
 
+# Every optional (kind-specific) field widget, by its id suffix. `name` /
+# `location` / `kind` apply to every kind and are always shown.
+_OPTIONAL_FIELDS: tuple[str, ...] = (
+    "type",
+    "value",
+    "protocol",
+    "dest-port",
+    "source-port",
+    "members",
+    "filter",
+    "color",
+    "comments",
+    "description",
+    "tags",
+)
+
+# Which optional fields each kind actually uses (mirrors the per-kind reads in
+# `plan_create`). The create form shows only these for the selected kind, so it
+# is guided rather than a wall of mostly-irrelevant inputs.
+_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "address": ("type", "value", "description", "tags"),
+    "address-group": ("members", "filter", "description", "tags"),
+    "service": ("protocol", "dest-port", "source-port", "description", "tags"),
+    "service-group": ("members", "tags"),
+    "tag": ("color", "comments"),
+}
+
 
 def location_options(session: WorkbenchSession) -> list[str]:
     """Locations an object may be created in: 'shared' plus every device-group.
@@ -202,7 +229,19 @@ class CreateScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._sync_field_visibility()
         self.query_one("#create-name", Input).focus()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        # Re-show only the fields the newly-chosen kind uses. Other Select
+        # widgets (location/type/protocol/color) don't drive visibility.
+        if event.select.id == "create-kind":
+            self._sync_field_visibility()
+
+    def _sync_field_visibility(self) -> None:
+        visible = set(_FIELDS_BY_KIND.get(self._kind(), ()))
+        for key in _OPTIONAL_FIELDS:
+            self.query_one(f"#create-{key}").display = key in visible
 
     def _kind(self) -> str:
         value = self.query_one("#create-kind", Select).value

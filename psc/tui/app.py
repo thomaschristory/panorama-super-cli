@@ -48,6 +48,7 @@ class WorkbenchApp(App[None]):
         ("x", "decommission", "decommission"),
         ("r", "rename", "rename"),
         ("e", "rule_edit", "rule"),
+        ("G", "group_add", "add to group"),
         ("i", "unused", "unused"),
         ("g", "dangling", "dangling"),
         ("l", "name_lint", "lint"),
@@ -77,6 +78,7 @@ class WorkbenchApp(App[None]):
             "decommission",
             "rename",
             "rule_edit",
+            "group_add",
             "unused",
             "dangling",
             "name_lint",
@@ -230,6 +232,11 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.rule import RuleScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(RuleScreen(self.session))
+
+    def action_group_add(self) -> None:
+        from psc.tui.screens.group import GroupScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(GroupScreen(self.session))
 
     def action_unused(self) -> None:
         from psc.tui.screens.unused import UnusedScreen  # noqa: PLC0415 — avoid import cycle

@@ -527,6 +527,39 @@ async def test_create_service_via_protocol_dropdown(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_menu_is_dynamic_per_kind(workbench_xml: str) -> None:
+    # The form shows only the fields the selected kind uses, and updates live
+    # when the kind changes.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("c")
+        await pilot.pause()
+
+        def shown(key: str) -> bool:
+            return bool(app.screen.query_one(f"#create-{key}").display)
+
+        # address (default): type/value shown; members/color/protocol hidden.
+        assert shown("type") and shown("value")
+        assert not shown("members") and not shown("color") and not shown("protocol")
+        # switch to tag: color/comments shown; type/value hidden.
+        app.screen.query_one("#create-kind", Select).value = "tag"
+        await pilot.pause()
+        assert shown("color") and shown("comments")
+        assert not shown("type") and not shown("value")
+        # switch to service: protocol/ports shown; members hidden.
+        app.screen.query_one("#create-kind", Select).value = "service"
+        await pilot.pause()
+        assert shown("protocol") and shown("dest-port") and shown("source-port")
+        assert not shown("members")
+        # switch to address-group: members/filter shown; type hidden.
+        app.screen.query_one("#create-kind", Select).value = "address-group"
+        await pilot.pause()
+        assert shown("members") and shown("filter")
+        assert not shown("type")
+
+
+@pytest.mark.asyncio
 async def test_create_tag_color_dropdown_and_blank(workbench_xml: str) -> None:
     # A picked color flows through; an untouched (blank) color stays unset — the
     # is_blank() path, not a stringified sentinel.
