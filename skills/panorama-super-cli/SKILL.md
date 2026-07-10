@@ -226,6 +226,23 @@ application; `--rulebase` defaults `pre`. Removal renders delete-field + re-set
 `service` is scalar → **blocked**; `application` on a non-security rule →
 validation. Unknown rule → exit `5`; ambiguous → exit `4`.
 
+### group edit-member — idempotent group-membership edits
+
+```bash
+psc -c cfg.xml group edit-member --group web-pool --add web-srv-09
+psc -c cfg.xml group edit-member --group web-pool --remove web-srv-02
+psc -c cfg.xml group edit-member --group dup --add x --kind service-group
+```
+
+The group analogue of `rule edit-member`: add/remove one member of an
+**address-group** or **service-group**, idempotently (delete-field + re-set, so
+re-running is a no-op). Exactly one of `--add`/`--remove`. The group is resolved
+by name; `--kind` (address-group|service-group) disambiguates a name that is
+both, `--location` a name in several scopes. A **dynamic** (filter-based)
+address-group has no static member list → validation error. Unknown group → exit
+`5`; bad input/ambiguous → exit `4`. To *create* a group (not edit members) use
+`set address-group` / `set service-group`.
+
 ### decommission — reference-safe teardown
 
 ```bash
@@ -330,8 +347,12 @@ dry-run/stage, blocker gate, and repoint-before-delete safety as the CLI.
 Alongside the
 selection-scoped action spokes are config-wide *discovery* spokes: `D`
 duplicates scan, `f` device-group diff, `o` NDJSON export, and a well-known-port
-mode on the `a` audit spoke. For scripting/agents prefer the one-shot commands
-above; the workbench is for interactive sessions.
+mode on the `a` audit spoke. `v` opens a read-only inspect view of the focused
+object (member tree + effective leaves); `G` adds the current selection as
+members of a named group; `c` opens the create form, whose fields adapt to the
+chosen kind (predefined values — address type, service protocol, tag color — are
+dropdowns). For scripting/agents prefer the one-shot commands above; the
+workbench is for interactive sessions.
 
 ## Output formats
 
