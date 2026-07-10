@@ -7,6 +7,17 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.3.1 — 2026-07-10
+
+### Fixed
+
+- **Workbench inspect (`v`): start with nested groups collapsed** — the inspect
+  tree previously force-expanded every node, dumping a deep group's entire
+  subtree at once and drawing an expand arrow on leaf rows that couldn't expand.
+  Now the opened object is the tree root (no redundant duplicate heading) with
+  its direct members shown; nested groups start collapsed (drill in with
+  enter/click) and true leaves render without an arrow.
+
 ## v1.3.0 — 2026-07-09
 
 ### Added
