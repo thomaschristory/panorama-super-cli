@@ -7,6 +7,18 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.4.0 — 2026-07-10
+
+### Added
+
+- **Workbench create: predefined fields are now dropdowns** — the create spoke's
+  **type** (address: `ip-netmask`/`ip-range`/`ip-wildcard`/`fqdn`), **protocol**
+  (service: `tcp`/`udp`), and **color** (tag: `color1`..`color42`, optional)
+  fields were free-text Inputs you could fill with an invalid value; they are now
+  `Select` dropdowns, so only valid values can be chosen. `crud` remains the
+  validator — the dropdowns just prevent typos up front. Value/name/port/member
+  fields stay free-text.
+
 ## v1.3.1 — 2026-07-10
 
 ### Fixed

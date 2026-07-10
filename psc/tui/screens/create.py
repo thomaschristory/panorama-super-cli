@@ -37,6 +37,11 @@ CREATE_KINDS: tuple[str, ...] = (
     "tag",
 )
 
+# Predefined value sets get a dropdown instead of a free-text Input — you can't
+# type an invalid one. `crud` remains the validator; these only drive the UI.
+SERVICE_PROTOCOLS: tuple[str, ...] = ("tcp", "udp")
+TAG_COLORS: tuple[str, ...] = tuple(f"color{i}" for i in range(1, 43))  # color1..color42
+
 
 def location_options(session: WorkbenchSession) -> list[str]:
     """Locations an object may be created in: 'shared' plus every device-group.
@@ -160,12 +165,21 @@ class CreateScreen(Screen[None]):
             id="create-location",
         )
         yield Input(placeholder="name", id="create-name")
-        yield Input(
-            placeholder="type (address): ip-netmask | ip-range | ip-wildcard | fqdn",
+        # type (address) — predefined AddressType values, so a dropdown.
+        yield Select(
+            [(t.value, t.value) for t in AddressType],
+            value=AddressType.IP_NETMASK.value,
+            allow_blank=False,
             id="create-type",
         )
         yield Input(placeholder="value (address)", id="create-value")
-        yield Input(placeholder="protocol (service): tcp | udp", id="create-protocol")
+        # protocol (service) — predefined tcp/udp, so a dropdown.
+        yield Select(
+            [(p, p) for p in SERVICE_PROTOCOLS],
+            value="tcp",
+            allow_blank=False,
+            id="create-protocol",
+        )
         yield Input(placeholder="dest-port (service)", id="create-dest-port")
         yield Input(placeholder="source-port (service, optional)", id="create-source-port")
         yield Input(
@@ -173,7 +187,14 @@ class CreateScreen(Screen[None]):
             id="create-members",
         )
         yield Input(placeholder="filter (address-group, dynamic)", id="create-filter")
-        yield Input(placeholder="color (tag): color1..color42", id="create-color")
+        # color (tag) — predefined color1..color42 and optional, so a dropdown
+        # that can be left blank.
+        yield Select(
+            [(c, c) for c in TAG_COLORS],
+            prompt="color (tag, optional)",
+            allow_blank=True,
+            id="create-color",
+        )
         yield Input(placeholder="comments (tag)", id="create-comments")
         yield Input(placeholder="description (optional)", id="create-description")
         yield Input(placeholder="tags (comma-separated, optional)", id="create-tags")
@@ -195,16 +216,21 @@ class CreateScreen(Screen[None]):
         def val(widget_id: str) -> str:
             return self.query_one(widget_id, Input).value
 
+        def sel(widget_id: str) -> str:
+            # A dropdown left blank (optional color) reads as "" like an empty Input.
+            widget = self.query_one(widget_id, Select)
+            return "" if widget.is_blank() else str(widget.value)
+
         return {
             "name": val("#create-name"),
-            "type": val("#create-type"),
+            "type": sel("#create-type"),
             "value": val("#create-value"),
-            "protocol": val("#create-protocol"),
+            "protocol": sel("#create-protocol"),
             "dest-port": val("#create-dest-port"),
             "source-port": val("#create-source-port"),
             "members": val("#create-members"),
             "filter": val("#create-filter"),
-            "color": val("#create-color"),
+            "color": sel("#create-color"),
             "comments": val("#create-comments"),
             "description": val("#create-description"),
             "tags": val("#create-tags"),
