@@ -3,10 +3,11 @@ from __future__ import annotations
 import pytest
 from textual.widgets import DataTable, Input, Select, Static
 
+from psc.core.models import AddressType
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.audit import AuditScreen
-from psc.tui.screens.create import CreateScreen
+from psc.tui.screens.create import SERVICE_PROTOCOLS, CreateScreen
 from psc.tui.screens.dangling import DanglingScreen
 from psc.tui.screens.lint import LintScreen
 from psc.tui.screens.move import MoveScreen
@@ -470,7 +471,7 @@ async def test_create_spoke_stages_new_address(workbench_xml: str) -> None:
         assert isinstance(app.screen, CreateScreen)
         app.screen.query_one("#create-kind", Select).value = "address"
         app.screen.query_one("#create-name", Input).value = "new-host"
-        app.screen.query_one("#create-type", Input).value = "ip-netmask"
+        app.screen.query_one("#create-type", Select).value = "ip-netmask"
         app.screen.query_one("#create-value", Input).value = "10.9.9.9/32"
         await pilot.pause()
         await pilot.press("ctrl+y")
@@ -479,6 +480,78 @@ async def test_create_spoke_stages_new_address(workbench_xml: str) -> None:
         # Staging compounds onto working_xml: the new object is now in the snapshot.
         names = {a.name for a in app.session.working_snapshot.addresses}
         assert "new-host" in names
+
+
+@pytest.mark.asyncio
+async def test_create_type_and_protocol_are_dropdowns(workbench_xml: str) -> None:
+    # Predefined value sets are dropdowns (not free-text): you can't type an
+    # invalid address type or service protocol.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("c")
+        await pilot.pause()
+        type_sel = app.screen.query_one("#create-type", Select)
+        proto_sel = app.screen.query_one("#create-protocol", Select)
+        color_sel = app.screen.query_one("#create-color", Select)
+        assert [v for _, v in type_sel._options if v is not Select.BLANK] == [
+            t.value for t in AddressType
+        ]
+        assert [v for _, v in proto_sel._options if v is not Select.BLANK] == list(
+            SERVICE_PROTOCOLS
+        )
+        # Optional color can be left blank; type/protocol default to a real value.
+        assert color_sel.is_blank()
+        assert type_sel.value == "ip-netmask"
+        assert proto_sel.value == "tcp"
+
+
+@pytest.mark.asyncio
+async def test_create_service_via_protocol_dropdown(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("c")
+        await pilot.pause()
+        app.screen.query_one("#create-kind", Select).value = "service"
+        app.screen.query_one("#create-name", Input).value = "svc-https"
+        app.screen.query_one("#create-protocol", Select).value = "udp"
+        app.screen.query_one("#create-dest-port", Input).value = "443"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        svc = next(s for s in app.session.working_snapshot.services if s.name == "svc-https")
+        assert svc.protocol == "udp"
+        assert svc.destination_port == "443"
+
+
+@pytest.mark.asyncio
+async def test_create_tag_color_dropdown_and_blank(workbench_xml: str) -> None:
+    # A picked color flows through; an untouched (blank) color stays unset — the
+    # is_blank() path, not a stringified sentinel.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("c")
+        await pilot.pause()
+        app.screen.query_one("#create-kind", Select).value = "tag"
+        app.screen.query_one("#create-name", Input).value = "t-red"
+        app.screen.query_one("#create-color", Select).value = "color5"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("c")
+        await pilot.pause()
+        app.screen.query_one("#create-kind", Select).value = "tag"
+        app.screen.query_one("#create-name", Input).value = "t-plain"
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+    tags = {t.name: t for t in app.session.working_snapshot.tags}
+    assert tags["t-red"].color == "color5"
+    assert tags["t-plain"].color is None
 
 
 @pytest.mark.asyncio
