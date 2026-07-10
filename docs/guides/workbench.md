@@ -95,11 +95,13 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | `a` | **audit** | Read-only, with a mode toggle: address overlap/containment involving the selection, or custom services duplicating a well-known / predefined port. |
 | `f` | **diff** | Device-group-vs-device-group drift (read-only): added/removed/changed objects between two scopes, picked from dropdowns. |
 | `o` | **export** | Write objects of one kind to an NDJSON file (read-only export; never overwrites the source config). |
+| `v` | **inspect** | Open the focused results row read-only: its member tree and effective leaves (the TUI form of [`show`](finding-objects.md#open-an-object)). Nested groups start collapsed — drill in with enter. Acts on the highlighted row, no selection needed. |
 | `m` | **move** | Promote selected objects toward `shared`; a destination drop-down offers the valid ancestors. |
 | `x` | **decommission** | Reference-safe cascading teardown of the selected addresses. |
 | `r` | **rename** | Reference-aware rename; choose which selected entry to rename and its new name. |
 | `e` | **rule** | Add the selected objects as members of an existing rule field. |
-| `c` | **create** | Object creation (address / group / service / service-group / tag), the TUI form for `psc set`. |
+| `G` | **group** | Add the selected objects as members of an existing address-/service-group (the TUI form of [`group edit-member --add`](editing-objects.md#edit-group-membership); removal is CLI-only). |
+| `c` | **create** | Object creation (address / group / service / service-group / tag), the TUI form for `psc set`. The form is **dynamic** — it shows only the fields the chosen kind uses, and predefined values (address type, service protocol, tag color) are **dropdowns**. |
 | `i` | **refs-unused** | List objects no rule reaches (read-only). |
 | `g` | **dangling** | List references to names that resolve to nothing (read-only). |
 | `l` | **name-lint** | Report objects that drift from the configured naming scheme. |

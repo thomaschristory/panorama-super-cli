@@ -64,6 +64,40 @@ psc -c panorama.xml find object grp-web
 Finds every object with that exact name, across all kinds and locations. Useful
 when the same name exists in `shared` and a device-group.
 
+## Open an object
+
+A one-line summary (`static[7]`) tells you a group exists but not what's *in* it.
+Add `-x/--expand`, or use the `show` alias, to open it:
+
+```console
+psc -c panorama.xml show grp-web
+psc -c panorama.xml find object grp-web -x     # identical
+```
+
+For a plain address or service you get its value. For an **address-group** or
+**service-group** you get the nested member **tree** and the **effective leaves**
+— the deduped, flattened set of addresses/ports the group actually resolves to,
+expanding nested groups recursively:
+
+```console
+address-group grp-web @shared
+├── address h-web1 @shared = 10.0.0.10/32
+└── address-group grp-web-extra @shared
+    └── address h-web2 @shared = 10.0.0.11/32
+effective: 2 leaf value(s)
+  • 10.0.0.10/32
+  • 10.0.0.11/32
+```
+
+A **tag** lists every object carrying it; a **rule** groups its resolved
+`source`/`destination`/`service` members by field. Unresolvable members are shown
+and flagged, never dropped — `dynamic` (filter-based group), `dangling`
+(unresolved reference), `cycle` (nested-group loop) — and in `-o json` an
+`effective_complete: false` (plus a stderr warning) marks a partial leaf set.
+It's a pure read: nothing is staged or written.
+
+In the [workbench](workbench.md), press `v` on a search result for the same view.
+
 ## Scope
 
 Restrict to one device-group (plus inherited `shared`) with `-d/--device-group`:

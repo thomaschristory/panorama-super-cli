@@ -7,6 +7,8 @@ objects outright:
 - [`psc set …`](#create-or-update-an-object) — create or update one object.
 - [`psc rule edit-member`](#edit-one-rule-field-member) — idempotently add or
   remove one member of a rule field.
+- [`psc group edit-member`](#edit-group-membership) — idempotently add or remove
+  one member of an address-/service-group.
 - [`psc decommission`](#decommission-an-address) — reference-safe teardown of
   the address objects matching an IP/CIDR.
 
@@ -131,6 +133,53 @@ that changes nothing.
 - An **unknown rule** exits `5` (`not_found`); an **ambiguous** rule (matching
   in more than one place) exits `4` (`validation`) — disambiguate with
   `--rulebase`/`--location`.
+
+## Edit group membership
+
+`psc group edit-member` is the group counterpart of `rule edit-member`: it adds
+or removes **one** member of an existing **address-group** or **service-group**,
+idempotently. Use it to grow or shrink a group without re-sending its whole
+member list.
+
+```console
+psc -c panorama.xml group edit-member --group web-pool --add web-srv-09
+psc -c panorama.xml group edit-member --group web-pool --remove web-srv-02
+psc -c panorama.xml group edit-member --group svc-web --add tcp-8443 --kind service-group
+```
+
+- `--group` (required): the group name to edit.
+- exactly one of `--add` / `--remove`.
+- `--kind`: `address-group` \| `service-group` — only needed to disambiguate a
+  name that exists as *both* kinds.
+- `--location`: `shared` or a device-group (default: the global
+  `-d/--device-group`, else `shared`).
+- plus `--apply`, `--out`, `-of/--output-format`.
+
+Removal renders the same **delete-of-field + re-set** as a rule edit (PAN-OS
+`set … static [ member ]` appends), so every op is idempotent — adding a member
+already present, or removing one already absent, is a no-op.
+
+!!! note "Create vs. edit membership"
+    `group edit-member` changes the membership of a group that already exists.
+    To **create** a group, use [`set address-group`/`set service-group`](#create-or-update-an-object).
+    `set address-group --member …` also *replaces* the whole member list in one
+    shot — reach for `group edit-member` when you want a surgical, idempotent
+    single-member change instead.
+
+### Validation and limits
+
+- A **dynamic** (filter-based) address-group has no static member list, so
+  editing its members is a validation error (exit `4`) — change its `--filter`
+  with `set address-group` instead.
+- A group **cannot contain itself** — a self-referential `--add` is rejected.
+- An **unknown group** exits `5` (`not_found`); a name that is **both** an
+  address- and service-group, or exists in **several locations**, exits `4` —
+  disambiguate with `--kind` / `--location`.
+- Members aren't required to exist yet (PAN-OS permits forward references), same
+  as `rule edit-member`.
+
+In the [workbench](workbench.md), select objects and press `G` to add them to a
+named group in one step.
 
 ## Decommission an address
 

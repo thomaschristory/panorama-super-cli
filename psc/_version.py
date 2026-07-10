@@ -4,4 +4,4 @@
 Keep this in sync with `[project].version` in `pyproject.toml`.
 """
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"

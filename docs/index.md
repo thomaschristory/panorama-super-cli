@@ -12,9 +12,10 @@ $ psc --config panorama.xml dedup addresses
 $ psc --config panorama.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml
 ```
 
-!!! warning "Alpha"
-    `psc` is `0.x`. The CLI surface and JSON contracts may shift before v1.0.0.
-    Writes are dry-run by default; nothing changes a config without `--apply`.
+!!! note "Stability"
+    `psc` is past `1.0` and follows [semantic versioning](https://semver.org/):
+    exit codes and JSON contracts are stable within a major version. Writes are
+    dry-run by default; nothing changes a config without `--apply`.
 
 ## Why
 
@@ -37,10 +38,12 @@ See [Concepts](getting-started/concepts.md) for the mental model, or jump to
 
 | Area | Commands |
 | --- | --- |
-| Find / resolve | `find ip`, `find object` |
+| Find / resolve | `find ip`, `find object`, `show` (open an object) |
 | Duplicates | `dedup addresses`, `dedup services`, `dedup merge` |
 | References | `refs used`, `refs unused`, `refs dangling` |
+| Edit | `set`, `rule edit-member`, `group edit-member`, `move`, `decommission` |
 | Naming | `name lint`, `name rename`, `name apply` |
+| Interactive | `workbench` (`w`) — TUI over every engine |
 | Profiles | `profile list/add/remove` |
 
 Everything is built on a [safety model](guides/safety.md) you can trust.

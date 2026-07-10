@@ -7,6 +7,17 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.5.1 — 2026-07-10
+
+### Docs
+
+- Documented the recent features on the docs site: `show` / `find object
+  --expand` (open an object), `group edit-member`, and the workbench `v`
+  (inspect) / `G` (add-to-group) spokes and dynamic, dropdown-driven create
+  form. Refreshed the home-page command table and corrected the stale "alpha
+  0.x" stability note (the project is past 1.0 and follows SemVer).
+- Synced `uv.lock` to the current package version.
+
 ## v1.5.0 — 2026-07-10
 
 ### Added
