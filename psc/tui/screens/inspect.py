@@ -76,15 +76,28 @@ class InspectScreen(Screen[None]):
         if not self._views:
             return
         tree: Tree[None] = self.query_one("#inspect-tree", Tree)
+        # Expand the object itself (show its direct members) but leave nested
+        # groups collapsed so a deep tree doesn't dump everything at once — drill
+        # in with enter/click. True leaves are added as leaves (no expand arrow).
+        if len(self._views) == 1:
+            # A single match: the object *is* the root — no redundant heading.
+            view = self._views[0]
+            tree.root.set_label(_node_label(view.tree))
+            tree.root.expand()
+            _attach(tree.root, view.tree)
+            return
+        # Same name at several locations/kinds: one expanded object per branch.
         tree.root.expand()
         for view in self._views:
-            branch = tree.root.add(_node_label(view.tree), expand=True)
-            _attach(branch, view.tree)
+            _attach(tree.root.add(_node_label(view.tree), expand=True), view.tree)
 
 
 def _attach(branch: TreeNode[None], node: InspectNode) -> None:
     for child in node.children:
-        _attach(branch.add(_node_label(child), expand=True), child)
+        if child.children:
+            _attach(branch.add(_node_label(child), expand=False), child)
+        else:
+            branch.add_leaf(_node_label(child))
 
 
 def inspect_object_for(session: WorkbenchSession, item: SelectionItem) -> list[ObjectView]:
