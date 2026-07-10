@@ -37,14 +37,31 @@ See [Writes and safety](../guides/safety.md).
 
 ```
 psc find ip <target>... [-f FILE] [-e/--exact] [--resolve-fqdn]
-psc find object <name>
+psc find object <name> [-x/--expand]
 ```
 
 Resolve an IP/CIDR/range/FQDN (or a file of them) to objects; or locate an
 object by exact name. `-e/--exact` keeps only equal-value matches. `--resolve-fqdn`
 opts into DNS: FQDN objects are resolved (cached, timeout-bounded) and match when
 their A/AAAA records include the queried IP; the default never touches DNS
-(offline-safe). See [Finding objects](../guides/finding-objects.md).
+(offline-safe). `-x/--expand` "opens" each match — see [`show`](#show) below,
+which is the same expansion. See [Finding objects](../guides/finding-objects.md).
+
+### show
+
+```
+psc show <name>
+```
+
+Open an object and show what it contains: a member **tree** plus its
+**effective leaves** (the deduped, flattened addresses/ports it resolves to).
+Equivalent to `find object <name> --expand`. Addresses/services print their
+value; address-/service-groups expand recursively; a tag lists every carrier; a
+rule groups its resolved `source`/`destination`/`service` members by field.
+Unresolvable members are shown and flagged — `dynamic` (filter-based group),
+`dangling` (unresolved reference), `cycle` (nested-group loop) — and
+`effective_complete: false` signals a partial flat set. Pure read: nothing is
+staged or written. See [Finding objects](../guides/finding-objects.md#open-an-object).
 
 ### dedup
 
@@ -158,6 +175,23 @@ Idempotently add or remove one member of a rule field (`--rulebase` default
 `application` on a non-security rule is a validation error. An unknown rule exits
 `5`, an ambiguous rule exits `4`. See
 [Editing objects](../guides/editing-objects.md#edit-one-rule-field-member).
+
+### group
+
+```
+psc group edit-member --group G (--add M | --remove M)
+                      [--kind address-group|service-group] [--location LOC]
+                      [--apply] [--out PATH] [-of xml|set]
+```
+
+The group analogue of [`rule edit-member`](#rule): idempotently add or remove one
+member of an **address-group** or **service-group** (delete-of-field plus a
+re-set of the remaining list, so re-running is a no-op). The group is resolved by
+name; `--kind` disambiguates a name that is both group kinds, `--location` a name
+in several scopes. A **dynamic** (filter-based) address-group has no static member
+list and is rejected (exit `4`). An unknown group exits `5`. This edits
+*membership*; to **create** a group use [`set address-group`/`set service-group`](#set).
+See [Editing objects](../guides/editing-objects.md#edit-group-membership).
 
 ### decommission
 
@@ -293,3 +327,10 @@ full CLI parity. The source is chosen with the global `-c/--config` or
 default) renders the combined PAN-OS script, `offline-apply` writes the compounded
 config to `--apply-out`, `live-apply` pushes the candidate (never commits).
 Passing `--apply-out` implies `offline-apply`.
+
+Read-only helpers alongside the action spokes: `v` opens an [inspect](#show) view
+of the focused object (member tree + effective leaves); `G` adds the current
+selection as members of a named group ([`group edit-member`](#group), add-only);
+and the create form (`c`) is dynamic — it shows only the fields the chosen kind
+uses, and predefined values (address type, service protocol, tag color) are
+dropdowns.
