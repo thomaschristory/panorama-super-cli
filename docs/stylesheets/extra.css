@@ -1,0 +1,17 @@
+/* Soften the default black-on-white / white-on-black extremes into a warmer,
+   lower-glare "paper" pair. Only background/foreground surfaces are touched;
+   the indigo primary/accent from mkdocs.yml is left intact. */
+
+/* Light mode — warm off-white paper, soft near-black ink */
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #faf8f4;
+  --md-default-fg-color: #37352f;
+  --md-code-bg-color: #f3f0ea;
+}
+
+/* Dark mode — warm charcoal, soft off-white ink */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #1c1b1a;
+  --md-default-fg-color: #e6e3dd;
+  --md-code-bg-color: #24221f;
+}
