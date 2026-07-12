@@ -42,8 +42,8 @@ sync-agents:
 
 # Serve docs locally
 docs:
-    uv run mkdocs serve
+    uv run zensical serve
 
-# Build docs (strict — fails on broken links / missing nav)
+# Build docs (strict — fails on broken links / missing anchors)
 docs-build:
-    uv run mkdocs build --strict
+    uv run zensical build --strict

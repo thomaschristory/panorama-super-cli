@@ -19,7 +19,7 @@ dist/
 htmlcov/
 coverage.xml
 
-# mkdocs
+# zensical build output
 site/
 
 # editors / OS
