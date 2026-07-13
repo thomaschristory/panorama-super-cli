@@ -359,9 +359,12 @@ selection-scoped action spokes are config-wide *discovery* spokes: `D`
 duplicates scan, `f` device-group diff, `o` NDJSON export, and a well-known-port
 mode on the `a` audit spoke. `v` opens a read-only inspect view of the focused
 object (member tree + effective leaves); `G` adds the current selection as
-members of a named group; `c` opens the create form, whose fields adapt to the
-chosen kind (predefined values — address type, service protocol, tag color — are
-dropdowns). For scripting/agents prefer the one-shot commands above; the
+members of a named group, and `N` builds a **new** group out of the selection
+(kind derived from what's selected; the location picker defaults to the narrowest
+location that sees every member, and a member the group's location can't see — or
+whose name is shadowed there — is a blocker); `c` opens the create form, whose
+fields adapt to the chosen kind (predefined values — address type, service
+protocol, tag color — are dropdowns). For scripting/agents prefer the one-shot commands above; the
 workbench is for interactive sessions.
 
 ## Output formats

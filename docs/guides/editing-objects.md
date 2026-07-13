@@ -179,7 +179,11 @@ already present, or removing one already absent, is a no-op.
   as `rule edit-member`.
 
 In the [workbench](workbench.md), select objects and press `G` to add them to a
-named group in one step.
+named group in one step — or press [`N`](workbench.md#n-a-group-from-the-selection)
+to build a **new** group out of the selection. Because the workbench knows which
+objects you pointed at (not just their names), `N` can refuse a member the group's
+location cannot see, or one whose name is shadowed there. `set address-group` takes
+bare names and cannot make that check.
 
 ## Decommission an address
 
