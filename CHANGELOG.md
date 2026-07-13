@@ -7,6 +7,8 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.7.0 — 2026-07-13
+
 ### Added
 
 - **Workbench: build a group from the selection (`N`)**
