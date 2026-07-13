@@ -121,10 +121,20 @@ psc -c cfg.xml dedup merge-group --keep grp-a --remove grp-b --apply --out fixed
 a reference lives. Per-object locations: `--keep-location` / `--remove-location`
 (default: `--device-group` or `shared`).
 
+Visibility is judged against the config **as the plan leaves it**. Collapsing a
+device-group's local copy into an identical `shared` object of the same name is
+allowed: the copy is deleted and the device-group's rules re-resolve upward to
+the survivor, so the plan carries only the delete (`psc` warns that the
+references moved). It still blocks when an *intermediate* device-group carries
+the same name and would intercept that upward walk — merge that copy too. Merges
+that drop a tag the survivor lacks warn, naming any dynamic address-group whose
+membership the lost tag would change.
+
 `--group <value>` collapses the WHOLE duplicate-address bucket sharing that value
 (from `dedup addresses`) toward one survivor in a single plan — `--keep` picks the
-survivor (defaults to the first bucket member); `--group` and `--remove` are
-mutually exclusive.
+survivor, defaulting to the **most visible** member (`shared`, else the
+device-group nearest the root, skipping any the other members' rules could not
+resolve); `--group` and `--remove` are mutually exclusive.
 
 `dedup groups` buckets address-groups by the canonical leaf-address set they
 expand to (nested groups flattened); dynamic/unresolvable groups are skipped and

@@ -7,6 +7,49 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+## v1.6.0 — 2026-07-13
+
+### Fixed
+
+- **`dedup merge` no longer refuses to collapse a device-group's local shadow**
+  ([#144](https://github.com/thomaschristory/panorama-super-cli/issues/144)) —
+  merging `'web'@DG-EDGE` into an identical `'web'@shared` was blocked with
+  *"kept object 'web' is not visible there"*. It was: the visibility gate
+  resolved the kept name against the config as it stands *today*, in which the
+  object being dropped is itself the shadow standing between the referrer and
+  the survivor. The gate now resolves against the config **as the plan leaves
+  it**, so the upward walk reaches the survivor. Blockers that are real still
+  fire — an *intermediate* device-group carrying the same name (in `shared` →
+  `DG-EMEA` → `DG-EDGE`) still stops the walk short of the survivor and is
+  refused.
+- A bucket merge (`--group`) now hides **every** object it deletes from name
+  resolution, not just the one pair being planned, so a sibling duplicate on its
+  way out is no longer mistaken for a blocking shadow.
+- Addresses and address-groups share one PAN-OS namespace, so a merge now refuses
+  when the kept *or* the dropped name is occupied by an object of the **other
+  kind**: deleting the address `web`@DG-A leaves an address-group of that name
+  standing, and it goes on shadowing everything above it. Repointing a rule onto
+  that name would have aimed it at a different object.
+- A **blocked** plan no longer carries warnings describing what it "will" do. It
+  cannot run; `blockers` is the whole message.
+
+### Changed
+
+- **`dedup merge --group` picks a different default survivor.** Omitting
+  `--keep` now keeps the member **highest in the device-group hierarchy**
+  (`shared`, else the device-group nearest the root), where it previously sorted
+  location names alphabetically and so kept a device-group copy over the `shared`
+  one. Collapsing upward is what makes a duplicate disappear for every
+  device-group at once. A member sitting in an unrelated device-group branch,
+  which the other members' rules could never resolve, is skipped however high it
+  sits — keeping it would only block the merge. Pass `--keep` to override.
+- A same-name collapse now plans **only the delete** — the referring rules keep
+  the same name and simply re-resolve upward — and warns that they have moved
+  (`N reference(s) will re-resolve from … (inheritance collapse)`).
+- A merge that drops tags or a description the survivor lacks now warns, naming
+  any **dynamic address-group** whose membership a lost tag would change. Values
+  still gate; attributes only warn.
+
 ## v1.5.1 — 2026-07-10
 
 ### Docs
