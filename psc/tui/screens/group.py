@@ -19,7 +19,7 @@ from psc.core.changeset import ChangeSet
 from psc.core.group_edit import plan_group_member_edit
 from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
-from psc.tui.widgets.review import can_apply
+from psc.tui.widgets.review import can_apply, escape_markup
 
 if TYPE_CHECKING:
     from psc.tui.app import WorkbenchApp
@@ -48,8 +48,9 @@ class GroupScreen(Screen[None]):
         if not self._members:
             yield Static("Select objects to add to a group first.", id="group-empty")
         else:
-            names = ", ".join(self._members)
-            yield Static(f"Add [{names}] to an address- or service-group.")
+            # Unescaped, a bracketed name list is parsed as markup and dropped (#129).
+            names = escape_markup(", ".join(self._members))
+            yield Static(f"Add {names} to an address- or service-group.")
             yield Input(placeholder="group name", id="group-name")
             yield Static("Enter on the group box to stage.", id="group-hint")
         yield Footer()
