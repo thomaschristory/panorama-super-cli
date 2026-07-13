@@ -349,3 +349,100 @@ def test_identical_shadow_warns_only_about_re_resolution(siblings: Snapshot) -> 
         drop=ObjectRef(name="web", location="dg-b"),
     )
     assert not any("tags" in w for w in cs.warnings), cs.warnings
+
+
+# --- the default survivor must be reachable, not merely high ----------------
+
+
+def test_bucket_default_keep_skips_a_member_no_referrer_can_see() -> None:
+    """Rank alone is not enough: the survivor must be on the referrers' walk.
+
+    `shared -> aa -> bb` and `shared -> cc` are unrelated branches. `'y'@cc` is
+    nearer the root than `'x'@bb`, so it outranks it — but nothing in `bb` can
+    resolve a name in `cc`, so keeping `'y'` strands rule `r`. `'x'@bb` is the
+    only survivor that costs nothing: `'y'` has no referrers to strand.
+    """
+    bb, cc = Location.dg("bb"), Location.dg("cc")
+    snap = Snapshot(
+        device_groups=["aa", "bb", "cc"],
+        device_group_parents={"bb": "aa"},
+        addresses=[addr("x", bb), addr("y", cc)],
+        security_rules=[rule("r", bb, source=["x"])],
+    )
+    cs = plan_merge_bucket(
+        snap,
+        ReferenceGraph.build(snap),
+        members=[ObjectRef(name="x", location="bb"), ObjectRef(name="y", location="cc")],
+    )
+    assert not cs.is_blocked, cs.blockers
+    assert "'x'@bb" in cs.title
+    assert [(d.name, d.location) for d in cs.deletes] == [("y", "cc")]
+
+
+# --- addresses and address-groups share ONE namespace -----------------------
+
+
+def test_group_squatting_on_the_dropped_name_blocks_the_merge() -> None:
+    """A dropped address must only be hidden from resolution if *it* owns the slot.
+
+    `'web'@dg-a` names an address-GROUP here, not the address being dropped —
+    addresses and groups share the `address` namespace. Deleting the address
+    leaves that group standing, so `dg-a` still resolves `web` to the group, and
+    repointing `r`'s source onto `web` would aim it at an entirely different
+    object. Block instead.
+    """
+    snap = Snapshot(
+        device_groups=["dg-a"],
+        addresses=[addr("web", SHARED), addr("web", DG_A), addr("old", DG_A), addr("m", DG_A)],
+        address_groups=[AddressGroup(name="web", location=DG_A, static_members=["m"])],
+        security_rules=[rule("r", DG_A, source=["old"])],
+    )
+    cs = plan_merge_bucket(
+        snap,
+        ReferenceGraph.build(snap),
+        members=[
+            ObjectRef(name="web", location="shared"),
+            ObjectRef(name="web", location="dg-a"),
+            ObjectRef(name="old", location="dg-a"),
+        ],
+        keep=ObjectRef(name="web", location="shared"),
+    )
+    assert cs.is_blocked, cs.summaries()
+    assert cs.is_empty
+
+
+def test_group_squatting_on_the_kept_name_blocks_the_merge() -> None:
+    # Mirror image: the *survivor's* slot is owned by a same-named address-group,
+    # so `web` at the referrer binds to that group, not to the kept address.
+    snap = Snapshot(
+        device_groups=["dg-a"],
+        addresses=[addr("web", SHARED), addr("old", DG_A), addr("m", SHARED)],
+        address_groups=[AddressGroup(name="web", location=SHARED, static_members=["m"])],
+        security_rules=[rule("r", DG_A, source=["old"])],
+    )
+    cs = plan_merge(
+        snap,
+        ReferenceGraph.build(snap),
+        keep=ObjectRef(name="web", location="shared"),
+        drop=ObjectRef(name="old", location="dg-a"),
+    )
+    assert cs.is_blocked, cs.summaries()
+    assert cs.is_empty
+
+
+# --- a blocked plan describes nothing ---------------------------------------
+
+
+def test_blocked_plan_claims_no_re_resolution(nested: Snapshot) -> None:
+    # The one reference here is *blocked* by the intermediate shadow, so it will
+    # not re-resolve to anything — and the plan cannot run at all. Counting it in
+    # a "will re-resolve" warning tells the operator the opposite of the truth.
+    cs = plan_merge(
+        nested,
+        ReferenceGraph.build(nested),
+        keep=ObjectRef(name="web", location="shared"),
+        drop=ObjectRef(name="web", location="dg-child"),
+    )
+    assert cs.is_blocked
+    assert cs.is_empty
+    assert cs.warnings == [], cs.warnings

@@ -84,7 +84,9 @@ psc -c panorama.xml dedup merge --group 10.0.0.10/32 --apply --out fixed.xml
 - `--keep NAME` chooses the survivor; omit it and the **most visible** member wins
   — the one highest in the device-group hierarchy (`shared`, else the
   device-group nearest the root). Collapsing upward is what makes a duplicate
-  disappear for every device-group at once.
+  disappear for every device-group at once. A member the other members' rules
+  could never resolve — one in an unrelated device-group branch — is skipped
+  however high it sits, since keeping it would only block the merge.
 - `--group` and `--remove` are mutually exclusive.
 - `--not-strict` matches the bucket under host-bit masking (see
   [Strict by default](#strict-by-default)).

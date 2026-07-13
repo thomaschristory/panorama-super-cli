@@ -133,7 +133,8 @@ membership the lost tag would change.
 `--group <value>` collapses the WHOLE duplicate-address bucket sharing that value
 (from `dedup addresses`) toward one survivor in a single plan — `--keep` picks the
 survivor, defaulting to the **most visible** member (`shared`, else the
-device-group nearest the root); `--group` and `--remove` are mutually exclusive.
+device-group nearest the root, skipping any the other members' rules could not
+resolve); `--group` and `--remove` are mutually exclusive.
 
 `dedup groups` buckets address-groups by the canonical leaf-address set they
 expand to (nested groups flattened); dynamic/unresolvable groups are skipped and

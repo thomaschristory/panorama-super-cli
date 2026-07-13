@@ -25,6 +25,13 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 - A bucket merge (`--group`) now hides **every** object it deletes from name
   resolution, not just the one pair being planned, so a sibling duplicate on its
   way out is no longer mistaken for a blocking shadow.
+- Addresses and address-groups share one PAN-OS namespace, so a merge now refuses
+  when the kept *or* the dropped name is occupied by an object of the **other
+  kind**: deleting the address `web`@DG-A leaves an address-group of that name
+  standing, and it goes on shadowing everything above it. Repointing a rule onto
+  that name would have aimed it at a different object.
+- A **blocked** plan no longer carries warnings describing what it "will" do. It
+  cannot run; `blockers` is the whole message.
 
 ### Changed
 
@@ -33,7 +40,9 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   (`shared`, else the device-group nearest the root), where it previously sorted
   location names alphabetically and so kept a device-group copy over the `shared`
   one. Collapsing upward is what makes a duplicate disappear for every
-  device-group at once. Pass `--keep` explicitly to override.
+  device-group at once. A member sitting in an unrelated device-group branch,
+  which the other members' rules could never resolve, is skipped however high it
+  sits — keeping it would only block the merge. Pass `--keep` to override.
 - A same-name collapse now plans **only the delete** — the referring rules keep
   the same name and simply re-resolve upward — and warns that they have moved
   (`N reference(s) will re-resolve from … (inheritance collapse)`).

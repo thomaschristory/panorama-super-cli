@@ -101,12 +101,22 @@ class _NamespaceIndex:
         return name in self._by_loc.get(location.name, {})
 
     def resolve(
-        self, name: str, chain: list[Location], ignoring: frozenset[tuple[str, str]] = frozenset()
+        self,
+        name: str,
+        chain: list[Location],
+        ignoring: frozenset[tuple[str, str, str]] = frozenset(),
     ) -> Target | None:
         for loc in chain:
             here = self._by_loc.get(loc.name)
-            if here is not None and name in here and (name, loc.name) not in ignoring:
-                return Target(here[name], name, loc)
+            if here is None or name not in here:
+                continue
+            # The KIND must match: one namespace holds both addresses and
+            # address-groups, so a caller deleting the address `web`@dg-a must
+            # not be told an address-GROUP of that name at dg-a is gone too — it
+            # survives, and still shadows everything above it.
+            if (here[name], name, loc.name) in ignoring:
+                continue
+            return Target(here[name], name, loc)
         return None
 
 
@@ -434,15 +444,17 @@ class ReferenceGraph:
         name: str,
         ref_location: Location,
         *,
-        ignoring: frozenset[tuple[str, str]] = frozenset(),
+        ignoring: frozenset[tuple[str, str, str]] = frozenset(),
     ) -> Target | None:
         """Resolve a bare name in a referrer's scope (closest DG up the chain,
         then ancestors, then shared).
 
-        `ignoring` holds `(object name, location name)` pairs to treat as absent,
-        so a caller planning deletions can ask where a name lands *after* its plan
-        applies. Without it, an object a plan is about to delete still shadows the
-        object beneath it and the walk stops one level too early.
+        `ignoring` holds `(kind, object name, location name)` triples to treat as
+        absent, so a caller planning deletions can ask where a name lands *after*
+        its plan applies. Without it, an object a plan is about to delete still
+        shadows the object beneath it and the walk stops one level too early. The
+        `kind` is load-bearing, not decoration: it keeps a deleted address from
+        also hiding a same-named address-group that this plan leaves in place.
         """
         return self._idx_for(namespace).resolve(
             name, self.snapshot.ancestors(ref_location), ignoring
