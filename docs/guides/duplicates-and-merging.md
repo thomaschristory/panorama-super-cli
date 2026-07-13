@@ -81,7 +81,12 @@ psc -c panorama.xml dedup merge --group 10.0.0.10/32 --apply --out fixed.xml
 ```
 
 - The value is a **bucket** from `dedup addresses` (run it first to see them).
-- `--keep NAME` chooses the survivor; omit it to keep the first bucket member.
+- `--keep NAME` chooses the survivor; omit it and the **most visible** member wins
+  — the one highest in the device-group hierarchy (`shared`, else the
+  device-group nearest the root). Collapsing upward is what makes a duplicate
+  disappear for every device-group at once. A member the other members' rules
+  could never resolve — one in an unrelated device-group branch — is skipped
+  however high it sits, since keeping it would only block the merge.
 - `--group` and `--remove` are mutually exclusive.
 - `--not-strict` matches the bucket under host-bit masking (see
   [Strict by default](#strict-by-default)).
@@ -97,7 +102,7 @@ perform safely:
 - **Different values.** Merging objects with different values changes what rules
   match. Blocked unless you pass `--allow-value-change`.
 - **Invisible survivor.** If the kept object isn't visible where a reference
-  lives (e.g. it's in another device-group), the merge is blocked rather than
+  lives (e.g. it's in a sibling device-group), the merge is blocked rather than
   creating a dangling reference.
 
 ```console
@@ -105,6 +110,45 @@ $ psc -c panorama.xml -o json dedup merge --keep net-10 --remove local-only --re
 {"error": "plan blocked (unsafe): value mismatch: ...", "type": "conflict", ...}
 $ echo $?
 6
+```
+
+Visibility is judged against the config **as the plan leaves it**, not as it
+stands now. PAN-OS resolves a name by walking upward only — the referrer's own
+device-group, then its parent, and so on up to `shared`; a sibling device-group
+is never consulted.
+
+### Collapsing a device-group's local copy
+
+The most common cleanup is a device-group holding its own copy of an object that
+already exists in `shared` under the same name. The local copy *shadows* the
+shared one, so every rule in that device-group binds to the local object today.
+Merging them deletes the local copy and lets those rules re-resolve upward to the
+survivor. No member list changes — the rules keep the same name — so the plan
+carries **only the delete**, and `psc` warns about what silently moved:
+
+```console
+$ psc -c panorama.xml dedup merge --keep web --keep-location shared --remove web --remove-location DG-EDGE
+  ! 2 reference(s) will re-resolve from 'web'@DG-EDGE to 'web'@shared (inheritance collapse)
+  • delete address 'web' @DG-EDGE
+```
+
+This still blocks when an **intermediate** device-group sits on the upward walk
+with an object of the same name. In `shared` → `DG-EMEA` → `DG-EDGE`, dropping
+`'web'@DG-EDGE` in favour of `'web'@shared` makes `DG-EDGE` stop at
+`'web'@DG-EMEA` — not the survivor. Merge the intermediate copy too (a `--group`
+bucket merge collapses all of them in one plan), or the plan is refused.
+
+### Attribute drift
+
+The merge gate compares **values**. A dropped device-group copy can still carry
+tags or a description the survivor lacks, and losing those changes what that
+device-group sees. Tags are the sharp edge — they decide **dynamic address-group
+membership**, so a dropped tag changes what traffic a DAG matches. `psc` warns
+rather than blocks; the plan is yours to approve:
+
+```console
+  ! dropped 'web'@DG-EDGE has tags not on 'web'@shared: prod
+  ! tag 'prod' is used by dynamic address-group 'dag-prod'@DG-EDGE — its membership will change
 ```
 
 ## Applying

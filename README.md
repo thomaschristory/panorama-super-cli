@@ -73,7 +73,8 @@ Prefer a cockpit to one-shot commands? `psc workbench` (alias `psc w`) is a
 keyboard-driven [Textual](https://textual.textualize.io/) TUI at full CLI parity.
 Search objects, multi-select them into a persistent buffer, route the selection
 into a spoke (dedup, move, rename, decommission, rule edits, audits, naming,
-create, …), and stage plans into a git-like changelist that applies as one batch
+create, group the selection with `N`, …), and stage plans into a git-like
+changelist that applies as one batch
 — as a `set` script, an offline config write, or a live candidate push (never a
 commit). Same safety model as the CLI throughout.
 

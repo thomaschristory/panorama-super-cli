@@ -12,6 +12,8 @@ objects that mean different things silently changes what rules match.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel, Field
 
 from psc.core.changeset import (
@@ -21,7 +23,8 @@ from psc.core.changeset import (
     ReferenceEdit,
     gate_unmappable_reference_edits,
 )
-from psc.core.models import Location, Snapshot
+from psc.core.dagfilter import FilterParseError, filter_tags
+from psc.core.models import Address, Location, Snapshot
 from psc.core.normalize import normalize_address, service_key
 from psc.core.refs import Reference, ReferenceGraph
 from psc.core.rulebases import rule_container
@@ -264,6 +267,185 @@ def _addr_value_key(snapshot: Snapshot, ref: ObjectRef) -> str | None:
     return None
 
 
+def _find_address(snapshot: Snapshot, ref: ObjectRef) -> Address | None:
+    return next(
+        (a for a in snapshot.addresses if a.name == ref.name and a.location == ref.loc), None
+    )
+
+
+def _post_merge_namespace(
+    kind: str, drop: ObjectRef, also_dropping: Sequence[ObjectRef] | None
+) -> frozenset[tuple[str, str, str]]:
+    """The objects this plan deletes, as `(kind, name, location)` triples to hide
+    from name resolution — see `ReferenceGraph.resolve(ignoring=...)`.
+
+    `kind` distinguishes an address from an address-group: they share one
+    namespace, so a slot may be occupied by the *other* kind, which this plan does
+    not delete and which therefore keeps shadowing.
+    """
+    return frozenset((kind, r.name, r.location) for r in (drop, *(also_dropping or ())))
+
+
+def _dags_matching_tag(snapshot: Snapshot, tag: str) -> list[str]:
+    """Dynamic address-groups whose filter mentions `tag`. An unparseable filter
+    is skipped rather than guessed at — `refs` already warns about those."""
+    hits: list[str] = []
+    for g in snapshot.address_groups:
+        if not g.dynamic_filter:
+            continue
+        try:
+            if tag in filter_tags(g.dynamic_filter):
+                hits.append(f"'{g.name}'@{g.location.name}")
+        except FilterParseError:
+            continue
+    return hits
+
+
+def _attribute_drift_warnings(snapshot: Snapshot, keep: ObjectRef, drop: ObjectRef) -> list[str]:
+    """Attributes the dropped object carries that the survivor does not.
+
+    The merge gate compares *values* only, so a device-group shadow can differ in
+    tags or description and still be a legitimate duplicate. Tags are the sharp
+    edge: they decide dynamic address-group membership, so losing one changes what
+    traffic a DAG matches. Warn — the operator, not the tool, decides.
+    """
+    keep_obj = _find_address(snapshot, keep)
+    drop_obj = _find_address(snapshot, drop)
+    if keep_obj is None or drop_obj is None:
+        return []
+
+    out: list[str] = []
+    lost_tags = sorted(set(drop_obj.tags) - set(keep_obj.tags))
+    if lost_tags:
+        # No square brackets: warnings render through rich, which would swallow
+        # `[prod, dmz]` as a markup tag and print an empty list.
+        out.append(
+            f"dropped '{drop.name}'@{drop.location} has tags not on "
+            f"'{keep.name}'@{keep.location}: {', '.join(lost_tags)}"
+        )
+    for tag in lost_tags:
+        for dag in _dags_matching_tag(snapshot, tag):
+            out.append(
+                f"tag '{tag}' is used by dynamic address-group {dag} — its membership will change"
+            )
+    if drop_obj.description and drop_obj.description != keep_obj.description:
+        out.append(
+            f"dropped '{drop.name}'@{drop.location} has a description that "
+            f"'{keep.name}'@{keep.location} does not carry"
+        )
+    return out
+
+
+def _reachable_by_referrers_of(
+    snapshot: Snapshot, graph: ReferenceGraph, candidate: ObjectRef, members: list[ObjectRef]
+) -> bool:
+    """Can every reference to the *other* bucket members see `candidate`?
+
+    A referrer resolves a bare name up its own container chain, so a survivor
+    outside that chain can never be repointed to. This is the necessary half of
+    the visibility gate in `_plan_repoints` (it cannot know about surviving
+    shadows), used only to pick a default survivor that does not needlessly
+    strand another member's rules.
+    """
+    for m in members:
+        if (m.name, m.location) == (candidate.name, candidate.location):
+            continue
+        for ref in graph.where_used("address", m.name, m.loc):
+            if candidate.loc not in snapshot.ancestors(ref.referrer_location):
+                return False
+    return True
+
+
+def _clear_if_blocked(cs: ChangeSet) -> None:
+    """A blocked plan carries zero ops — and makes no claims.
+
+    The ops go so that no consumer can execute a partial rewrite by iterating them
+    without checking `is_blocked`. The warnings go with them: they describe what
+    applying *would* do, and this plan will never be applied (`complete()` puts
+    them straight into the CONFLICT error envelope, where "N reference(s) will
+    re-resolve" beside "plan blocked" reads as a contradiction). `blockers` is the
+    whole message.
+    """
+    if not cs.blockers:
+        return
+    cs.reference_edits.clear()
+    cs.deletes.clear()
+    cs.warnings.clear()
+
+
+def _plan_repoints(
+    cs: ChangeSet,
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    kind: str,
+    keep: ObjectRef,
+    drop: ObjectRef,
+    refs: list[Reference],
+    ignoring: frozenset[tuple[str, str, str]],
+) -> None:
+    """Repoint every referrer of `drop` onto `keep`, or block where it can't be.
+
+    Shared by the address and address-group planners — both resolve in the
+    `address` namespace and rewrite flat member lists identically. `kind`
+    (`address` / `address-group`) is what tells them apart *inside* that one
+    namespace.
+    """
+    collapsing = 0
+    for ref in refs:
+        # The kept name must resolve to the kept object in the referrer's scope
+        # *once this plan has applied* — the objects being deleted are exactly the
+        # shadows that would otherwise stop the upward walk short of the survivor.
+        # The kind is part of the identity: a same-named object of the *other*
+        # kind at the keep's own slot is a different object, not the survivor.
+        target = graph.resolve(ADDR_NS, keep.name, ref.referrer_location, ignoring=ignoring)
+        if target is None or (target.kind, target.name, target.location) != (
+            kind,
+            keep.name,
+            keep.loc,
+        ):
+            cs.blockers.append(
+                f"cannot repoint {ref.referrer_kind} '{ref.referrer_name}'@"
+                f"{ref.referrer_location.name} {ref.field}: kept object "
+                f"'{keep.name}' is not visible there"
+            )
+            continue
+        collapsing += 1
+        before = field_members(snapshot, ref)
+        after = _rewrite_members(before, drop.name, keep.name)
+        if after == before:
+            # Same-name collapse: the member list is untouched and the reference
+            # simply re-resolves upward to the survivor. Emitting a no-op edit
+            # would write the field back unchanged — and, worse, drag fields the
+            # appliers cannot rewrite (a NAT translation, a PBF next-hop) into the
+            # unmappable-reference gate, blocking a merge that needs no rewrite.
+            continue
+        cs.reference_edits.append(
+            ReferenceEdit(
+                referrer_kind=ref.referrer_kind,
+                referrer_name=ref.referrer_name,
+                referrer_location=ref.referrer_location.name,
+                field=ref.field,
+                rulebase=ref.rulebase.value if ref.rulebase else None,
+                before=before,
+                after=after,
+            )
+        )
+        if ref.field in ("source", "destination") and not after:
+            cs.warnings.append(
+                f"{ref.referrer_kind} '{ref.referrer_name}' {ref.field} would be emptied"
+            )
+
+    if keep.name == drop.name and collapsing:
+        # Only the references that cleared the gate re-resolve; a blocked one goes
+        # nowhere (and takes the whole plan with it), so counting it here would
+        # tell the operator the opposite of what happens.
+        cs.warnings.append(
+            f"{collapsing} reference(s) will re-resolve from '{drop.name}'@{drop.location} "
+            f"to '{keep.name}'@{keep.location} (inheritance collapse)"
+        )
+
+
 def plan_merge(
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -271,8 +453,15 @@ def plan_merge(
     drop: ObjectRef,
     *,
     allow_value_change: bool = False,
+    also_dropping: Sequence[ObjectRef] | None = None,
 ) -> ChangeSet:
-    """Plan collapsing the address `drop` into `keep` (repoint then delete)."""
+    """Plan collapsing the address `drop` into `keep` (repoint then delete).
+
+    `also_dropping` names the other objects a *composite* plan deletes (see
+    `plan_merge_bucket`). They are hidden from name resolution alongside `drop`,
+    so a sibling duplicate that is itself on its way out cannot be mistaken for a
+    shadow blocking the survivor.
+    """
     cs = ChangeSet(
         title=f"merge address '{drop.name}'@{drop.location} -> '{keep.name}'@{keep.location}"
     )
@@ -297,34 +486,17 @@ def plan_merge(
         )
         return cs
 
-    refs = graph.where_used("address", drop.name, drop.loc)
-    for ref in refs:
-        # The kept name must resolve to the kept object in the referrer's scope.
-        target = graph.resolve("address", keep.name, ref.referrer_location)
-        if target is None or (target.name, target.location) != (keep.name, keep.loc):
-            cs.blockers.append(
-                f"cannot repoint {ref.referrer_kind} '{ref.referrer_name}'@"
-                f"{ref.referrer_location.name} {ref.field}: kept object "
-                f"'{keep.name}' is not visible there"
-            )
-            continue
-        before = field_members(snapshot, ref)
-        after = _rewrite_members(before, drop.name, keep.name)
-        cs.reference_edits.append(
-            ReferenceEdit(
-                referrer_kind=ref.referrer_kind,
-                referrer_name=ref.referrer_name,
-                referrer_location=ref.referrer_location.name,
-                field=ref.field,
-                rulebase=ref.rulebase.value if ref.rulebase else None,
-                before=before,
-                after=after,
-            )
-        )
-        if ref.field in ("source", "destination") and not after:
-            cs.warnings.append(
-                f"{ref.referrer_kind} '{ref.referrer_name}' {ref.field} would be emptied"
-            )
+    _plan_repoints(
+        cs,
+        snapshot,
+        graph,
+        kind="address",
+        keep=keep,
+        drop=drop,
+        refs=graph.where_used("address", drop.name, drop.loc),
+        ignoring=_post_merge_namespace("address", drop, also_dropping),
+    )
+    cs.warnings.extend(_attribute_drift_warnings(snapshot, keep, drop))
 
     cs.deletes.append(ObjectDelete(kind=ObjectKind.ADDRESS, name=drop.name, location=drop.location))
     # Refuse any repoint the appliers would silently skip (e.g. a NAT translation
@@ -332,11 +504,7 @@ def plan_merge(
     # dangling reference. Mirrors `plan_rename`; offline and live share the gate.
     gate_unmappable_reference_edits(cs)
 
-    if cs.blockers:
-        # Invariant: a blocked plan carries zero ops, so no consumer can execute
-        # a partial rewrite by iterating ops without checking `is_blocked`.
-        cs.reference_edits.clear()
-        cs.deletes.clear()
+    _clear_if_blocked(cs)
     return cs
 
 
@@ -385,16 +553,35 @@ def plan_merge_bucket(
     warnings aggregate across members, and the same unmappable-reference gate
     applies — a single un-repointable reference gates the whole plan (zero ops).
 
-    `keep` must be one of `members`; omitting it selects the deterministic default
-    survivor — the sorted-first member, matching the order `find_duplicate_*`
-    already emit. A `keep` outside the bucket is an INPUT error.
+    `keep` must be one of `members`; omitting it selects the *most visible* member
+    — the one highest in the container hierarchy (`shared`, else the device-group
+    nearest the root), ties broken by location then name, but skipping any member
+    the other members' referrers could not reach (see `_reachable_by_referrers_of`).
+    Collapsing a bucket upward is what makes the duplicates disappear for every
+    device-group at once; keeping a leaf device-group's copy instead would leave
+    the survivor invisible to its siblings. A `keep` outside the bucket is an INPUT
+    error.
     """
     if not members:
         raise PscError("empty duplicate bucket", ErrorType.INPUT)
 
-    ordered = sorted(members, key=lambda m: (m.location, m.name))
+    def rank(m: ObjectRef) -> tuple[int, str, str]:
+        # Depth from `shared`: ancestors() is [self, ...parents, shared], so
+        # `shared` itself is depth 0 and sorts first.
+        return (len(snapshot.ancestors(m.loc)) - 1, m.location, m.name)
+
+    ordered = sorted(members, key=rank)
     if keep is None:
-        keep = ordered[0]
+        # Height is not the whole story: the nearest-to-root member may sit in an
+        # unrelated branch that the other members' rules can never resolve into,
+        # which would block the whole bucket for a merge a lower-ranked member can
+        # complete. Take the best-ranked member that every other member's referrers
+        # can actually see, else fall back to the top rank so the operator is shown
+        # the strongest candidate's blockers.
+        keep = next(
+            (m for m in ordered if _reachable_by_referrers_of(snapshot, graph, m, ordered)),
+            ordered[0],
+        )
     elif not any(m.name == keep.name and m.location == keep.location for m in ordered):
         names = ", ".join(f"'{m.name}'@{m.location}" for m in ordered)
         raise PscError(
@@ -410,8 +597,16 @@ def plan_merge_bucket(
     # original members, or a shared referrer would keep a still-dropped member.
     edit_index: dict[tuple[str, str, str, str, str | None], ReferenceEdit] = {}
     for drop in drops:
+        # Every pairwise sub-plan must hide *all* the bucket's drops, not just its
+        # own: a sibling duplicate still standing between a referrer and the
+        # survivor is on its way out too, and must not be read as a blocking shadow.
         sub = plan_merge(
-            snapshot, graph, keep=keep, drop=drop, allow_value_change=allow_value_change
+            snapshot,
+            graph,
+            keep=keep,
+            drop=drop,
+            allow_value_change=allow_value_change,
+            also_dropping=drops,
         )
         cs.warnings.extend(sub.warnings)
         cs.blockers.extend(sub.blockers)
@@ -437,9 +632,7 @@ def plan_merge_bucket(
     # already gated themselves, but recompute so aggregated ops are consistent).
     gate_unmappable_reference_edits(cs)
 
-    if cs.blockers:
-        cs.reference_edits.clear()
-        cs.deletes.clear()
+    _clear_if_blocked(cs)
     return cs
 
 
@@ -506,51 +699,34 @@ def plan_merge_group(
     # "address-group" (see refs.py `_by_target`), so that is the correct lookup
     # key here. The visibility `resolve()` below, by contrast, takes a NAMESPACE,
     # which for both addresses and groups is "address" (ADDR_NS).
-    refs = graph.where_used("address-group", drop.name, drop.loc)
-    for ref in refs:
+    refs = [
+        r
+        for r in graph.where_used("address-group", drop.name, drop.loc)
         # Defense-in-depth: the keep group must never be repointed into a member
         # of itself. The containment block above should already prevent reaching
         # here, but guard so a self-member edit can never be emitted.
-        if ref.referrer_kind == "address-group" and (
-            ref.referrer_name,
-            ref.referrer_location,
-        ) == (keep.name, keep.loc):
-            continue
-        target = graph.resolve(ADDR_NS, keep.name, ref.referrer_location)
-        if target is None or (target.name, target.location) != (keep.name, keep.loc):
-            cs.blockers.append(
-                f"cannot repoint {ref.referrer_kind} '{ref.referrer_name}'@"
-                f"{ref.referrer_location.name} {ref.field}: kept object "
-                f"'{keep.name}' is not visible there"
-            )
-            continue
-        before = field_members(snapshot, ref)
-        after = _rewrite_members(before, drop.name, keep.name)
-        cs.reference_edits.append(
-            ReferenceEdit(
-                referrer_kind=ref.referrer_kind,
-                referrer_name=ref.referrer_name,
-                referrer_location=ref.referrer_location.name,
-                field=ref.field,
-                rulebase=ref.rulebase.value if ref.rulebase else None,
-                before=before,
-                after=after,
-            )
+        if not (
+            r.referrer_kind == "address-group"
+            and (r.referrer_name, r.referrer_location) == (keep.name, keep.loc)
         )
-        if ref.field in ("source", "destination") and not after:
-            cs.warnings.append(
-                f"{ref.referrer_kind} '{ref.referrer_name}' {ref.field} would be emptied"
-            )
+    ]
+    _plan_repoints(
+        cs,
+        snapshot,
+        graph,
+        kind="address-group",
+        keep=keep,
+        drop=drop,
+        refs=refs,
+        ignoring=_post_merge_namespace("address-group", drop, None),
+    )
 
     cs.deletes.append(
         ObjectDelete(kind=ObjectKind.ADDRESS_GROUP, name=drop.name, location=drop.location)
     )
     gate_unmappable_reference_edits(cs)
 
-    if cs.blockers:
-        # Invariant: a blocked plan carries zero ops (mirror of plan_merge).
-        cs.reference_edits.clear()
-        cs.deletes.clear()
+    _clear_if_blocked(cs)
     return cs
 
 
