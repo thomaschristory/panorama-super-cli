@@ -166,7 +166,7 @@ and growing an existing group is `G`. A same-named group *elsewhere* in the
 hierarchy is legal and only warns — the two shadow each other, and a bare
 reference resolves to whichever is nearest.
 
-The CLI equivalent is [`psc set address-group`](editing-objects.md#create-and-update-objects),
+The CLI equivalent is [`psc set address-group`](editing-objects.md#create-or-update-an-object),
 which takes member names directly. It has no visibility blockers: it cannot know
 which object you meant by a name, only the workbench's selection carries that.
 
