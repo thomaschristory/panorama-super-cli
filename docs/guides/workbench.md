@@ -101,6 +101,7 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | `r` | **rename** | Reference-aware rename; choose which selected entry to rename and its new name. |
 | `e` | **rule** | Add the selected objects as members of an existing rule field. |
 | `G` | **group** | Add the selected objects as members of an existing address-/service-group (the TUI form of [`group edit-member --add`](editing-objects.md#edit-group-membership); removal is CLI-only). |
+| `N` | **new group** | Build a *new* group out of the selection (see [below](#n-a-group-from-the-selection)). The kind follows what you picked — addresses make an address-group, services a service-group — and the location picker defaults to the narrowest one that can see every member. |
 | `c` | **create** | Object creation (address / group / service / service-group / tag), the TUI form for `psc set`. The form is **dynamic** — it shows only the fields the chosen kind uses, and predefined values (address type, service protocol, tag color) are **dropdowns**. |
 | `i` | **refs-unused** | List objects no rule reaches (read-only). |
 | `g` | **dangling** | List references to names that resolve to nothing (read-only). |
@@ -113,6 +114,61 @@ The mutating spokes are the same engines as their CLI counterparts, so the
 behaviour — and the [blockers](safety.md#blockers-are-a-hard-gate) that refuse an
 unsafe plan — is identical. A spoke with an empty or unusable selection rings the
 bell instead of staging.
+
+## `N` — a group from the selection
+
+The find session's payoff: search, `space` the objects you want, `N`, name the
+group, `ctrl+y`. `G` adds the selection to a group that already exists; `N` makes
+one out of it.
+
+```text
+search: 10.0.5.               →   ▸ web-srv-01  shared  10.0.5.10/32   [x]
+                                  ▸ web-srv-02  shared  10.0.5.11/32   [x]
+                                  ▸ web-srv-03  shared  10.0.5.12/32   [x]
+
+N   →   New address-group from web-srv-01, web-srv-02, web-srv-03
+        name:     web-tier
+        location: shared          ← the narrowest location that sees every member
+        ctrl+y  →  set shared address-group web-tier static [ web-srv-01 web-srv-02 web-srv-03 ]
+```
+
+The **kind is derived from the selection**: addresses and address-groups make a
+static address-group (a group nested inside a group is valid PAN-OS and allowed);
+services and service-groups make a service-group. A selection that mixes the two
+namespaces belongs in no group and is refused, as is a tag. Staging clears the
+selection — its members have been consumed into the group.
+
+Group members are **bare names, resolved upward** from the group's own location,
+which gives two ways to write a group that does not mean what you picked. `N`
+refuses both:
+
+- **A member the location cannot see.** A `shared` group naming an object that
+  lives in `DG-NYC` dangles — `shared` cannot see into a device-group, and
+  neither can a sibling. This is why the location picker defaults to the
+  narrowest location whose visibility cone (itself, its ancestors, `shared`)
+  covers every member; when the selection spans *sibling* device-groups no such
+  location exists, and every choice blocks.
+
+    ```text
+    BLOCKED: member 'nyc-lb' @DG-NYC is not visible from shared — a group can
+    only name objects in its own location, its ancestors, or shared
+    ```
+
+- **A member whose name is shadowed there.** You selected `web` @shared, but the
+  group lives in `DG-NYC`, which defines its own `web`: the group would bind to
+  *that* one. PAN-OS has no syntax for "the shared one", so the intent is
+  inexpressible and the plan is refused rather than quietly pointed at the wrong
+  object. (Selecting `DG-NYC`'s own `web` is fine — that *is* what the group
+  resolves to.)
+
+A group of that kind already at that name and location also blocks: `N` creates,
+and growing an existing group is `G`. A same-named group *elsewhere* in the
+hierarchy is legal and only warns — the two shadow each other, and a bare
+reference resolves to whichever is nearest.
+
+The CLI equivalent is [`psc set address-group`](editing-objects.md#create-and-update-objects),
+which takes member names directly. It has no visibility blockers: it cannot know
+which object you meant by a name, only the workbench's selection carries that.
 
 ## The staged changelist
 

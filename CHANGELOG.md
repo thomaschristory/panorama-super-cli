@@ -7,6 +7,33 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+### Added
+
+- **Workbench: build a group from the selection (`N`)**
+  ([#146](https://github.com/thomaschristory/panorama-super-cli/issues/146)) —
+  the find session's payoff. Search, `space` the objects you want, press `N`,
+  name the group: the selection becomes a new static group. `G` adds the
+  selection to a group that already exists; `N` makes one out of it. The kind
+  follows the selection (addresses and address-groups make an address-group,
+  services a service-group; a selection mixing the two namespaces is refused),
+  and the location picker defaults to the narrowest location whose visibility
+  cone covers every member. Staging clears the selection.
+- Because the workbench knows *which objects* you pointed at — not just their
+  names — `N` refuses the two ways a member reference silently means something
+  else. A member the group's location cannot see (a `DG-NYC` object in a `shared`
+  group) would dangle; a member whose name is **shadowed** from that location (you
+  picked `web`@shared, but the group lives in a device-group that defines its own
+  `web`) would bind to the wrong object, and PAN-OS has no syntax to say
+  otherwise. Both are blockers. A group already at that name and location blocks
+  too — `N` creates, `G` grows. `psc set address-group` is unchanged: it takes bare
+  names and cannot make that check.
+
+### Fixed
+
+- The workbench's group screens no longer swallow the member list they preview:
+  Textual parses `[ a, b ]` as markup and dropped it (the same class of bug as
+  [#129](https://github.com/thomaschristory/panorama-super-cli/issues/129)).
+
 ## v1.6.0 — 2026-07-13
 
 ### Fixed
