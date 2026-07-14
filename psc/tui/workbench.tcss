@@ -20,10 +20,17 @@ Screen { background: $surface; }
 DataTable > .datatable--cursor { background: #fa582d; color: black; }
 Footer { background: #fa582d; }
 
-/* The ? cheatsheet: a card floating over a dimmed hub. */
+/* The ? cheatsheet: a card floating over a dimmed hub. A `min-width` alone
+   (rather than raising the percentage) would force the card wider than a
+   narrow terminal — `align: center middle` can't push X negative to center
+   an oversized child, so it pins X to 0 and everything past the right edge
+   of the *screen* (not the card) is clipped by the compositor, which would
+   hide the description column exactly like the bug this is fixing. 90%
+   keeps the card within the terminal at any width while still being much
+   roomier than the old 70% at the widths that matter (30-100 cols). */
 KeymapScreen { align: center middle; background: $surface 60%; }
 #keymap-card {
-    width: 70%;
+    width: 90%;
     max-width: 110;
     height: auto;
     max-height: 80%;

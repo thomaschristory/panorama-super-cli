@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from rich.console import Console
+from textual.containers import Container
 from textual.widgets import DataTable, Input, Static
 
 from psc.core.source import OfflineSource
@@ -167,6 +168,51 @@ async def test_no_description_line_wraps_to_the_left_margin(workbench_xml: str) 
                 continue
             if line == line.lstrip() and line.strip() not in allowed_flush_left:
                 pytest.fail(f"line wrapped to the left margin: {line!r}")
+
+
+@pytest.mark.asyncio
+async def test_overlay_keeps_descriptions_at_a_narrow_width(workbench_xml: str) -> None:
+    # Regression: a fixed width=20 key column plus a no_wrap, unbounded-width
+    # title column reserved ~40 chars for two columns before Rich ever got to
+    # the description column — on a 40-col terminal that left nothing, and
+    # every row rendered as bare "d   Dedup" with no description at all. This
+    # is the sole discovery surface for ~22 hidden hotkeys, so losing every
+    # description defeats the feature. Check a prefix of each description's
+    # first word survives rather than the whole sentence — wrapping (and even
+    # an ellipsis on a long compound word like "Reference-safe") is fine and
+    # expected at this width; silently dropping the column to nothing is not.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        static = app.screen.query_one("#keymap-body", Static)
+        body = _rendered_text(static, width=40)
+        for cmd in HUB_COMMANDS:
+            prefix = cmd.description.split()[0][:6]
+            assert prefix in body, (cmd.action, prefix)
+
+
+@pytest.mark.asyncio
+async def test_keymap_card_never_extends_past_the_screen(workbench_xml: str) -> None:
+    # Regression: `#keymap-card` used to be `width: 70%; min-width: 50`. On a
+    # terminal narrower than 50 cols, `align: center middle` can't push the
+    # card's X negative to center an oversized child — it pins X to 0 — so
+    # everything past the *screen's* right edge (not the card's) got clipped
+    # by the compositor. That silently hid the description column again, in
+    # a way the raw-Console tests above can't see (they bypass CSS/layout
+    # entirely). `width: 90%` with no min-width keeps the card within the
+    # terminal at any size, so the whole card — and hence its description
+    # column — stays on screen and visible.
+    for width in (100, 60, 40, 30):
+        app = _app(workbench_xml)
+        async with app.run_test(size=(width, 30)) as pilot:
+            app.query_one("#results", DataTable).focus()
+            await pilot.press("question_mark")
+            await pilot.pause()
+            card = app.screen.query_one("#keymap-card", Container)
+            assert card.region.x >= 0, (width, card.region)
+            assert card.region.right <= width, (width, card.region)
 
 
 @pytest.mark.asyncio

@@ -42,10 +42,26 @@ def _render() -> Table:
         caption_style="dim",
         caption_justify="left",
     )
-    # Widest row is "delete / backspace" (19 chars); 10 truncated it and made
-    # the alias-rendering fix below pointless.
-    table.add_column("key", style="b", no_wrap=True, width=20)
-    table.add_column("title", no_wrap=True)
+    # No fixed width: a pinned width (previously 20, sized for "delete /
+    # backspace" on one line) reserved that space unconditionally, starving
+    # the description column to nothing on a narrow terminal. Letting the key
+    # column auto-size to its actual content — and putting aliases on their
+    # own line within the cell instead of joining them with " / " — keeps its
+    # natural width small (the longest single key/alias, "backspace", is 9
+    # chars) so Rich has room left to give the description column.
+    #
+    # `title` must NOT be `no_wrap`: Rich only shrinks a `no_wrap` column below
+    # its natural content width as a last-resort "reduce everything evenly"
+    # pass, which starved `description` down to 0 (an empty column, no dash,
+    # nothing) at 40 cols under the old no_wrap title — `title`'s ~20-char
+    # natural width ("Apply naming scheme") plus `key`'s left almost nothing
+    # for `description` to be reduced into. A wrappable `title` collapses
+    # (onto a second line) before `description` is starved, same as
+    # `description` itself already did — it stays one line at any realistic
+    # width since titles are short, but degrades gracefully instead of
+    # forcing everything else to zero when the terminal is genuinely tiny.
+    table.add_column("key", style="b", no_wrap=True)
+    table.add_column("title")
     table.add_column("description")  # the only column allowed to wrap
 
     first = True
@@ -61,8 +77,12 @@ def _render() -> Table:
             description.append(cmd.description, style="dim")
             # An alias (e.g. backspace for delete) is a real, working binding —
             # list it too, or the overlay defeats its own purpose of being
-            # where every hidden hotkey is discoverable.
-            key_label = " / ".join((cmd.key, *cmd.aliases))
+            # where every hidden hotkey is discoverable. One per line rather
+            # than " / "-joined, so a multi-char alias doesn't widen the
+            # column for every row.
+            key_label = Text(cmd.key)
+            for alias in cmd.aliases:
+                key_label.append(f"\n{alias}")
             table.add_row(key_label, cmd.title, description)
     return table
 
