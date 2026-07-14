@@ -2,10 +2,15 @@
 Screen { background: $surface; }
 
 #topbar { height: auto; }
-#search { width: 1fr; border: tall #fa582d; }
+/* min-width keeps the app's primary input — and its startup focus — typeable
+   on narrow terminals; #staging is fixed-width and would otherwise take all
+   the slack out of #search's 1fr share down to nothing (measured 0 at 30
+   cols pre-fix). */
+#search { width: 1fr; min-width: 16; border: tall #fa582d; }
 /* Fixed width so the staged counter sits beside the search box rather than
-   stealing width from it as the batch grows. */
-#staging { width: 24; height: 3; content-align: center middle; border: round #fa582d; color: $text; }
+   stealing width from it as the batch grows. 16 cols still fits "staged (N)"
+   for realistic (including 2-3 digit) N. */
+#staging { width: 16; height: 3; content-align: center middle; border: round #fa582d; color: $text; }
 
 #panes { height: 1fr; }
 /* results is the scanning surface, the selection is usually a handful of rows. */

@@ -82,6 +82,49 @@ async def test_staged_strip_still_updates(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_stays_usable_at_a_narrow_width(workbench_xml: str) -> None:
+    # Regression: #staging was a fixed `width: 24` and #search took the
+    # remainder as `1fr`, with no floor. On a narrow terminal #staging still
+    # claimed its full 24 columns to render an 11-character "staged (N)"
+    # string while #search — the app's primary input, and its startup focus —
+    # shrank to nothing (measured 0 at 30 cols, 10 at 40, pre-fix). Both keep
+    # a usable width now: #staging is narrower (16) and #search has a
+    # `min-width` floor.
+    app = _app(workbench_xml)
+    async with app.run_test(size=(40, 24)) as pilot:
+        await pilot.pause()
+        search = app.query_one("#search", Input)
+        # Pre-fix this was 10; the fix (min-width on #search, a narrower fixed
+        # #staging) brings it to 18. >= 15 leaves margin but still fails pre-fix.
+        assert search.size.width >= 15, search.size.width
+
+
+@pytest.mark.asyncio
+async def test_search_stays_usable_at_thirty_columns(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test(size=(30, 24)) as pilot:
+        await pilot.pause()
+        search = app.query_one("#search", Input)
+        assert search.size.width > 0, search.size.width
+
+
+@pytest.mark.asyncio
+async def test_staged_strip_fits_a_two_or_three_digit_count(workbench_xml: str) -> None:
+    # #staging narrowed from 24 to 16 to give #search more room. Confirm that
+    # narrower width still legibly fits "staged (N)" for a realistic batch
+    # size, not just the "staged (0)" the app launches with.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        staging = app.query_one("#staging", Static)
+        staging.update("staged (123)")
+        await pilot.pause()
+        # The border eats 2 columns; the content-align: center middle interior
+        # must still hold the full 12-character string without clipping.
+        assert staging.size.width - 2 >= len("staged (123)")
+
+
+@pytest.mark.asyncio
 async def test_footer_shows_exactly_three_keys_with_no_duplicates(workbench_xml: str) -> None:
     # Regression for the Footer rendering ctrl+p twice: once from our explicit
     # command-table binding, once from Textual's own built-in command-palette
@@ -89,9 +132,11 @@ async def test_footer_shows_exactly_three_keys_with_no_duplicates(workbench_xml:
     #
     # Focus the results table rather than asserting straight off `run_test()`:
     # the search Input has autofocus on mount, and Input.check_consume_key()
-    # swallows every plain-character binding (including `?` and `q`) out of
-    # the active-bindings set while it's focused, which would hide the real
-    # bug behind an unrelated "footer only shows ctrl+p" artifact.
+    # swallows every plain-character binding out of the active-bindings set
+    # while it's focused — *except* `?`, which is a priority binding for
+    # exactly this reason (see `SearchInput` in `psc/tui/app.py`). Testing
+    # from the focused-search state would hide the real bug behind an
+    # unrelated "footer only shows ctrl+p" artifact for every other key.
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
         await pilot.pause()
