@@ -235,3 +235,8 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.staged import StagedScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(StagedScreen(self.session))
+
+    def action_keymap(self) -> None:
+        from psc.tui.screens.keymap import KeymapScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(KeymapScreen())

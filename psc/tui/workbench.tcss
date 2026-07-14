@@ -14,3 +14,15 @@ Screen { background: $surface; }
 
 DataTable > .datatable--cursor { background: #fa582d; color: black; }
 Footer { background: #fa582d; }
+
+/* The ? cheatsheet: a card floating over a dimmed hub. */
+KeymapScreen { align: center middle; background: $surface 60%; }
+#keymap-card {
+    width: 70%;
+    max-width: 90;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $panel;
+    border: thick #fa582d;
+}
