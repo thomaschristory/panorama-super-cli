@@ -19,7 +19,7 @@ Footer { background: #fa582d; }
 KeymapScreen { align: center middle; background: $surface 60%; }
 #keymap-card {
     width: 70%;
-    max-width: 90;
+    max-width: 110;
     height: auto;
     max-height: 80%;
     padding: 1 2;
