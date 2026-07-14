@@ -28,9 +28,18 @@ class Command:
     # stack. (The palette used to be False here too, but that let ctrl+p open
     # over a spoke and list commands check_action would then refuse to run —
     # picking one silently did nothing. It's gated like every other spoke key
-    # now. Note the guard is irrelevant over the `?` overlay either way:
-    # ModalScreen blocks app-level bindings on its own, before check_action
-    # ever runs.)
+    # now.
+    #
+    # `check_action` is doing real work here for `?` too — modality does NOT
+    # protect it. `App._check_bindings(priority=True)` walks the *screen's*
+    # binding chain, not the modal-aware one, so a priority binding (which `?`
+    # is, see `priority` below) dispatches straight through an open
+    # ModalScreen: Textual's own priority `ctrl+q` quits the app even with a
+    # modal on top. Without this guard, pressing `?` while `KeymapScreen` is
+    # already open would push a second `KeymapScreen` on top of itself. Don't
+    # "simplify" this to `hub_only=False` on the theory that `?` is read-only
+    # and modality already covers it — it doesn't, and that combination is
+    # exactly how the overlay would learn to stack on itself.)
     hub_only: bool = True
     # Whether Textual should check this binding *before* the focused widget
     # gets the key. A focused Input swallows plain printable keys as typed
@@ -257,7 +266,7 @@ def bindings() -> list[Binding]:
 
 
 def priority_keys() -> frozenset[str]:
-    """The literal characters of every priority command (currently just `?`).
+    """The literal characters of every priority command's key AND aliases.
 
     Textual's `Input` pre-filters any *App*-level binding for a key it could
     plausibly insert as a character — before the priority check ever runs —
@@ -266,15 +275,21 @@ def priority_keys() -> frozenset[str]:
     `check_consume_key`, letting the priority binding actually fire. See
     `psc/tui/app.py`'s `SearchInput`.
 
-    This only works because every `priority=True` command's `key` is a single
-    character — `check_consume_key` compares against the typed *character*
-    (`" "`, `None`, …), not Textual's key *name* (`"space"`, `"ctrl+p"`, …). A
-    multi-character priority key would silently never match and the override
-    would just never fire. A table-integrity test in
-    `tests/tui/test_commands.py` enforces that invariant so a violation fails
-    loudly in CI instead of silently at runtime.
+    `bindings()` stamps `priority` onto alias bindings too (an alias is a
+    real, working key for the same action), so this must cover aliases or a
+    priority command with a printable alias would get `priority=True` in
+    `bindings()` but still be silently swallowed by a focused Input on the
+    alias key specifically.
+
+    This only works because every `priority=True` command's `key` *and every
+    alias* is a single character — `check_consume_key` compares against the
+    typed *character* (`" "`, `None`, …), not Textual's key *name* (`"space"`,
+    `"ctrl+p"`, …). A multi-character priority key or alias would silently
+    never match and the override would just never fire. A table-integrity
+    test in `tests/tui/test_commands.py` enforces that invariant so a
+    violation fails loudly in CI instead of silently at runtime.
     """
-    return frozenset(cmd.key for cmd in HUB_COMMANDS if cmd.priority)
+    return frozenset(key for cmd in HUB_COMMANDS if cmd.priority for key in (cmd.key, *cmd.aliases))
 
 
 def hub_actions() -> frozenset[str]:
