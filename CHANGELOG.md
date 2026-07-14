@@ -15,7 +15,9 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   results and selection tables stack vertically below at the full terminal
   width instead of splitting it side by side. The results table — the widest
   content in the app — no longer gets squeezed to half the screen and
-  truncating its columns.
+  truncating its columns. Both the search box and the `?` keymap overlay stay
+  usable on a narrow terminal rather than shrinking to nothing or clipping
+  their text.
 - **Workbench: the footer no longer lists all the bindings**
   ([#150](https://github.com/thomaschristory/panorama-super-cli/issues/150)) —
   it now shows just `? keys`, `ctrl+p commands`, and `q quit`. `?` opens a new
@@ -25,7 +27,21 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   and ranked above Textual's built-in commands (theme, screenshot) — so
   `Dedup` and `Duplicate scan` are finally distinguishable. **No key was
   reassigned**: every existing hotkey still works from the hub, it's just no
-  longer advertised across the bottom of the screen.
+  longer advertised across the bottom of the screen. The keymap overlay also
+  lists **aliases** (`delete` / `backspace` both shown for Remove), and the
+  palette's help text now shows each command's hotkey alongside its
+  description.
+- **Workbench: `?` now opens the keymap overlay even while the search box has
+  focus** — the app launches with focus in `#search`, and `?` is the only way
+  to discover the other ~20 hidden hotkeys, so it had to work from there. `q`
+  is deliberately **not** made a priority key: it stays typeable in a search
+  (e.g. an object name containing "q"), so the footer shows only `? keys` and
+  `ctrl+p commands` at launch — `q quit` joins them once focus leaves the
+  search box.
+- **Workbench: `ctrl+p` is now inert while a spoke is open**, gated by the
+  same spoke-stacking guard as every other hub key. Previously it opened the
+  command palette over an open spoke and offered commands that silently did
+  nothing when picked.
 
 ## v1.7.0 — 2026-07-13
 

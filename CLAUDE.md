@@ -44,10 +44,28 @@ UI would import `psc.core` directly and never touch `psc.cli`.
 - `psc/output/` — formatters (table/json/jsonl/yaml/csv/set) + error envelope.
 - `psc/config/` — profiles + defaults (ruamel round-trip).
 - `psc/cli/` — the Typer app; one thin command module per feature group.
+- `psc/tui/` — the workbench (interactive TUI), a second frontend over
+  `psc.core`:
+  - `app.py` — `WorkbenchApp` + `HubScreen`, the hub screen every spoke stacks
+    on top of.
+  - `session.py` — `WorkbenchSession`: search, selection buffer, staged
+    changelist, over a `Source`.
+  - `state.py` — TUI-local state models (selection items, output mode).
+  - `commands.py` — **the single source of truth** for the hub: one `Command`
+    row per action (key, handler, title, description, category). `BINDINGS`,
+    the `_HUB_ACTIONS` spoke-stacking guard, the `?` keymap overlay, and the
+    `ctrl+p` command palette are all *derived* from this table — add a spoke
+    by adding a row here, not by touching four files.
+  - `palette.py` — `PscCommands`, the `ctrl+p` command-palette `Provider`
+    reading `commands.py`.
+  - `screens/` — one module per spoke (dedup, move, rename, create, …), plus
+    `keymap.py` for the `?` overlay.
 
 The hard rule: **`psc/core/` imports nothing from `psc/cli/` or any UI
 framework.** Engines return models; the CLI formats them. If you reach for
-`typer`/`rich` inside `core/`, you're in the wrong layer.
+`typer`/`rich` inside `core/`, you're in the wrong layer. `psc/tui/` *is*
+allowed to depend on `psc/core/` and Textual — it's a frontend like `psc/cli/`,
+not part of the engine layer.
 
 Features are deliberately independent: `find_cmds`, `dedup_cmds`, `refs_cmds`,
 `name_cmds`, `audit_cmds`, `set_cmds`, `rule_cmds`, `decommission_cmds` each map
@@ -83,6 +101,14 @@ in `core` (models, refs, changeset, setcmd).
   silently doing something surprising (e.g. a cross-scope reference that can't
   be repointed, or a shared-rename that would shadow a device-group object).
 - **Offline `--apply` never overwrites the source export** — it writes to `--out`.
+- **Workbench spoke-stacking guard.** `WorkbenchApp.check_action` refuses any
+  hub action while a spoke screen is on top of the stack (`len(screen_stack) >
+  1`). This is not a formality: Textual's *modal* screens do not block
+  app-level `priority` bindings — Textual's own priority `ctrl+q` reaches
+  through a modal, and so would `?` (a priority binding, see `commands.py`)
+  without this guard, letting a second spoke stack over the first and stage a
+  plan against an already-stale one. `check_action` is the only thing
+  preventing that; don't rely on modality alone when adding a priority key.
 
 ## Error contract
 
