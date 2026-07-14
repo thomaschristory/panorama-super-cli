@@ -102,3 +102,12 @@ def test_app_bindings_are_derived_from_the_table() -> None:
 
 def test_app_hub_actions_are_derived_from_the_table() -> None:
     assert hub_actions() == WorkbenchApp._HUB_ACTIONS
+
+
+def test_question_mark_is_the_only_priority_binding() -> None:
+    # '?' is the sole discovery surface for the ~22 hidden hotkeys, so it must
+    # survive a focused Input (priority=True). Every other key — including
+    # 'q' — must stay swallowable by a focused Input, so a search query can
+    # contain any letter. This guards against that asymmetry eroding.
+    priority_keys = {b.key for b in bindings() if b.priority}
+    assert priority_keys == {"?"}

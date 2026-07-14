@@ -91,12 +91,18 @@ No key was reassigned to get here — every spoke hotkey in the tables below
 still works exactly as before, it's just no longer listed across the bottom of
 the screen. Press `?` when you forget one.
 
-Both `?` and `q` are plain, printable keys, so a **focused text field swallows
-them as typed characters** instead of triggering the binding — this is why
-they briefly disappear from the footer while the search box has focus (right
-after launch, or after clicking into it). Tab or click into the results or
-selection table first. `ctrl+p` is unaffected and always works, from the
-search box or anywhere else in the hub.
+`?` always works, even while the search box has focus (which is where the app
+starts) — it's a priority binding, since it's the only way to discover the
+other ~22 hidden hotkeys. The one cost: you can't type a literal `?` into a
+search, but `?` is never a meaningful character in an IP, value, or PAN-OS
+object name.
+
+`q`, by contrast, is a plain printable key, so a **focused text field swallows
+it as a typed character** instead of quitting — this is deliberate, so you can
+type a "q" into a search (e.g. an object name containing "q"). Tab or click
+into the results or selection table first if you want `q` to quit. `ctrl+p` is
+unaffected either way and always works, from the search box or anywhere else
+in the hub.
 
 ## The selection buffer
 

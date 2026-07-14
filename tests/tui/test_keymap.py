@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 from rich.console import Console
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
@@ -38,6 +38,52 @@ async def test_question_mark_opens_the_overlay(workbench_xml: str) -> None:
         await pilot.press("question_mark")
         await pilot.pause()
         assert isinstance(app.screen, KeymapScreen)
+
+
+@pytest.mark.asyncio
+async def test_question_mark_opens_the_overlay_from_a_focused_search_input(
+    workbench_xml: str,
+) -> None:
+    # Regression: the app launches with focus in #search, and a focused Input
+    # swallows plain printable keys — including '?', the only discovery
+    # surface for the other ~22 hidden hotkeys. '?' must be a priority
+    # binding so it reaches the app before the Input consumes it. Don't focus
+    # #results first; the point is that this works from the launch state.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        search = app.query_one("#search", Input)
+        assert search.has_focus  # guard: prove we're testing the real launch state
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert isinstance(app.screen, KeymapScreen)
+
+
+@pytest.mark.asyncio
+async def test_question_mark_does_not_leak_into_the_search_input(workbench_xml: str) -> None:
+    # Proves the priority binding *intercepts* the key rather than both the
+    # binding and the Input's default character-insertion handler firing.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        search = app.query_one("#search", Input)
+        assert search.has_focus
+        await pilot.press("question_mark")
+        await pilot.pause()
+        assert search.value == ""
+
+
+@pytest.mark.asyncio
+async def test_q_is_still_swallowed_by_a_focused_search_input(workbench_xml: str) -> None:
+    # Deliberate asymmetry: unlike '?', 'q' must stay a normal (non-priority)
+    # binding so a search for an object name containing "q" still works from
+    # the launch state. Guards against someone later "fixing" q to match ?.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        search = app.query_one("#search", Input)
+        assert search.has_focus
+        await pilot.press("q")
+        await pilot.pause()
+        assert search.value == "q"
+        assert app.is_running  # did not quit
 
 
 @pytest.mark.asyncio

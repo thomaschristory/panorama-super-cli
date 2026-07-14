@@ -26,6 +26,14 @@ class Command:
     # Whether the spoke-stacking guard disables this while a spoke is open.
     # False for quit and the palette, which must stay reachable from anywhere.
     hub_only: bool = True
+    # Whether Textual should check this binding *before* the focused widget
+    # gets the key. A focused Input swallows plain printable keys as typed
+    # characters, and the app launches with focus in #search — so `?`, the
+    # only place the other ~22 hidden hotkeys are discoverable, must be
+    # priority or it's unreachable from the app's default state. Every other
+    # key (including `q`) stays non-priority on purpose: a search query must
+    # be able to contain any letter.
+    priority: bool = False
 
 
 # Display order in the ? overlay and in the palette's empty-query list.
@@ -197,6 +205,7 @@ HUB_COMMANDS: tuple[Command, ...] = (
         "Keys",
         "Show every key binding, grouped by what it does",
         "Session",
+        priority=True,
     ),
     Command(
         "ctrl+p",
@@ -226,9 +235,30 @@ def bindings() -> list[Binding]:
     out: list[Binding] = []
     for cmd in HUB_COMMANDS:
         label = cmd.title.lower()
-        out.append(Binding(cmd.key, cmd.action, label, show=cmd.key in FOOTER_KEYS))
+        out.append(
+            Binding(
+                cmd.key,
+                cmd.action,
+                label,
+                show=cmd.key in FOOTER_KEYS,
+                priority=cmd.priority,
+            )
+        )
         out.extend(Binding(alias, cmd.action, label, show=False) for alias in cmd.aliases)
     return out
+
+
+def priority_keys() -> frozenset[str]:
+    """The literal characters of every priority command (currently just `?`).
+
+    Textual's `Input` pre-filters any *App*-level binding for a key it could
+    plausibly insert as a character — before the priority check ever runs —
+    so a priority `Binding` alone doesn't make it past a focused `Input`. The
+    search box needs this set to know which characters to stop claiming via
+    `check_consume_key`, letting the priority binding actually fire. See
+    `psc/tui/app.py`'s `SearchInput`.
+    """
+    return frozenset(cmd.key for cmd in HUB_COMMANDS if cmd.priority)
 
 
 def hub_actions() -> frozenset[str]:

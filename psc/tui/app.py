@@ -13,12 +13,31 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from psc.tui.commands import bindings, hub_actions
+from psc.tui.commands import bindings, hub_actions, priority_keys
 from psc.tui.palette import PscCommands
 from psc.tui.session import WorkbenchSession, render_value
 from psc.tui.state import SelectionItem
 
 _TCSS = str(Path(__file__).with_name("workbench.tcss"))
+
+
+class SearchInput(Input):
+    """The `#search` box, taught to let priority-bound characters (`?`) through.
+
+    Textual hides an App-level binding from the priority check whenever the
+    focused widget's `check_consume_key` says it *could* consume that
+    character — which `Input` does for every printable key by default. That
+    pre-filtering runs before priority is even considered, so without this
+    override a priority `Binding` for `?` would still lose to a focused
+    search box. The excluded set is derived from `commands.priority_keys()`
+    rather than hardcoded here, so the table in `commands.py` stays the only
+    place a key's priority is decided.
+    """
+
+    def check_consume_key(self, key: str, character: str | None) -> bool:
+        if character in priority_keys():
+            return False
+        return super().check_consume_key(key, character)
 
 
 class HubScreen(Widget):
@@ -31,7 +50,7 @@ class HubScreen(Widget):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="topbar"):
-            yield Input(placeholder="search: IP / value / name", id="search")
+            yield SearchInput(placeholder="search: IP / value / name", id="search")
             yield Static("staged (0)", id="staging")
         with Vertical(id="panes"):
             yield DataTable(id="results")
