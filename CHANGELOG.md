@@ -7,6 +7,26 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ## [Unreleased]
 
+### Changed
+
+- **Workbench: the hub layout is restacked**
+  ([#149](https://github.com/thomaschristory/panorama-super-cli/issues/149)) —
+  the search box and the `staged (N)` strip now share the top row, and the
+  results and selection tables stack vertically below at the full terminal
+  width instead of splitting it side by side. The results table — the widest
+  content in the app — no longer gets squeezed to half the screen and
+  truncating its columns.
+- **Workbench: the footer no longer lists all the bindings**
+  ([#150](https://github.com/thomaschristory/panorama-super-cli/issues/150)) —
+  it now shows just `? keys`, `ctrl+p commands`, and `q quit`. `?` opens a new
+  **keymap overlay** listing every command grouped by what it does, with a
+  real description; `ctrl+p` opens the **command palette**, now rendering
+  `psc`'s own commands as `Category › Title` with the description as help text
+  and ranked above Textual's built-in commands (theme, screenshot) — so
+  `Dedup` and `Duplicate scan` are finally distinguishable. **No key was
+  reassigned**: every existing hotkey still works from the hub, it's just no
+  longer advertised across the bottom of the screen.
+
 ## v1.7.0 — 2026-07-13
 
 ### Added

@@ -45,17 +45,22 @@ Passing `--apply-out` implies `offline-apply`; choosing `offline-apply` without
 
 ## The hub
 
-The home screen is a **hub**: a search box, a results table, the selection
-buffer, and a `staged (N)` strip.
+The home screen is a **hub**: a search box, a `staged (N)` strip, a results
+table, and the selection buffer. The search box and the staged strip share the
+top row; the results and selection tables stack **vertically** below it, each
+at the full terminal width — the results table is the widest content in the
+app, so it no longer splits the screen with the selection panel next to it.
 
 ```
-┌ search: IP / value / name ─────────────────────────────┐
-├──────────────────────────┬─────────────────────────────┤
-│ results                  │ selection                   │
-│ kind  name  location  …  │ kind  name  location        │
-│                          ├─────────────────────────────┤
-│                          │ staged (N)                  │
-└──────────────────────────┴─────────────────────────────┘
+┌ search: IP / value / name ────────────────┬ staged (N) ┐
+├───────────────────────────────────────────┴────────────┤
+│ results                                                │
+│ kind  name  location  value                            │
+├────────────────────────────────────────────────────────┤
+│ selection                                              │
+│ kind  name  location                                   │
+└────────────────────────────────────────────────────────┘
+  ? keys   ctrl+p commands   q quit
 ```
 
 The flow is **hub → search → select → spoke → staged changelist → apply**:
@@ -71,6 +76,27 @@ The flow is **hub → search → select → spoke → staged changelist → appl
 While a spoke is open, the hub keys are inert — you must finish or cancel the
 spoke first. This prevents a second spoke stacking over the first and letting a
 plan go stale.
+
+## Finding the keys
+
+The footer shows three keys, not the whole binding table:
+
+| Key | What it opens |
+| --- | --- |
+| `?` | The **keymap** — every command, grouped by what it does (Navigate / Objects / Analyze / Names / Session), each with a real description. Dismiss with `escape`, `?`, or `q`. |
+| `ctrl+p` | The **command palette** — fuzzy-search every command by title, category, or description. Entries read `Category › Title` (e.g. `Analyze › Dedup` vs. `Analyze › Duplicate scan`), so the two are finally distinguishable. Textual's own commands (theme, screenshot) are ranked below `psc`'s. |
+| `q` | Quit. |
+
+No key was reassigned to get here — every spoke hotkey in the tables below
+still works exactly as before, it's just no longer listed across the bottom of
+the screen. Press `?` when you forget one.
+
+Both `?` and `q` are plain, printable keys, so a **focused text field swallows
+them as typed characters** instead of triggering the binding — this is why
+they briefly disappear from the footer while the search box has focus (right
+after launch, or after clicking into it). Tab or click into the results or
+selection table first. `ctrl+p` is unaffected and always works, from the
+search box or anywhere else in the hub.
 
 ## The selection buffer
 
