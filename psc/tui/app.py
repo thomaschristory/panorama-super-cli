@@ -11,6 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from psc.tui.commands import bindings, hub_actions
 from psc.tui.session import WorkbenchSession, render_value
 from psc.tui.state import SelectionItem
 
@@ -32,63 +33,16 @@ class HubScreen(Widget):
 class WorkbenchApp(App[None]):
     CSS_PATH = _TCSS
     TITLE = "psc workbench"
-    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
-        ("space", "toggle_row", "select"),
-        ("v", "inspect", "view"),
-        ("delete", "remove_selected", "remove"),
-        ("backspace", "remove_selected", "remove"),
-        ("c", "create", "create"),
-        ("d", "dedup", "dedup"),
-        ("D", "duplicates", "dup scan"),
-        ("u", "usage", "usage"),
-        ("a", "audit", "audit"),
-        ("f", "diff", "diff"),
-        ("o", "export", "export"),
-        ("m", "move", "move"),
-        ("x", "decommission", "decommission"),
-        ("r", "rename", "rename"),
-        ("e", "rule_edit", "rule"),
-        ("G", "group_add", "add to group"),
-        ("N", "group_new", "new group"),
-        ("i", "unused", "unused"),
-        ("g", "dangling", "dangling"),
-        ("l", "name_lint", "lint"),
-        ("n", "name_apply", "name apply"),
-        ("p", "profiles", "profiles"),
-        ("s", "staged", "staged"),
-        ("q", "quit", "quit"),
-    ]
+
+    # Keys, labels and descriptions all live in psc/tui/commands.py — see there
+    # to add a spoke. Only FOOTER_KEYS are shown; `?` lists the rest.
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = list(bindings())
 
     # Hub-only bindings — disabled while any spoke screen is on top of the
     # stack, so a spoke key can't stack a second spoke over the first (which
     # would let the first spoke's plan go stale and corrupt the config on
     # confirm). Spokes have their own ctrl+y/escape bindings.
-    _HUB_ACTIONS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "toggle_row",
-            "inspect",
-            "remove_selected",
-            "create",
-            "dedup",
-            "duplicates",
-            "usage",
-            "audit",
-            "diff",
-            "export",
-            "move",
-            "decommission",
-            "rename",
-            "rule_edit",
-            "group_add",
-            "group_new",
-            "unused",
-            "dangling",
-            "name_lint",
-            "name_apply",
-            "profiles",
-            "staged",
-        }
-    )
+    _HUB_ACTIONS: ClassVar[frozenset[str]] = hub_actions()
 
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()

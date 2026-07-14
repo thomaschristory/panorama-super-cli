@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from textual.binding import Binding
+
 from psc.tui.app import WorkbenchApp
 from psc.tui.commands import (
     CATEGORIES,
@@ -91,3 +93,12 @@ def test_descriptions_are_real_sentences() -> None:
     for cmd in HUB_COMMANDS:
         assert len(cmd.description) > 15, cmd.action
         assert cmd.title
+
+
+def test_app_bindings_are_derived_from_the_table() -> None:
+    app_keys = {b.key for b in WorkbenchApp.BINDINGS if isinstance(b, Binding)}
+    assert app_keys == {b.key for b in bindings()}
+
+
+def test_app_hub_actions_are_derived_from_the_table() -> None:
+    assert hub_actions() == WorkbenchApp._HUB_ACTIONS
