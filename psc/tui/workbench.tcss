@@ -1,8 +1,40 @@
 /* Palo Alto orange accent. */
 Screen { background: $surface; }
-#search { border: tall #fa582d; }
-#results { height: 1fr; border: round #fa582d; }
+
+#topbar { height: auto; }
+/* min-width keeps the app's primary input — and its startup focus — typeable
+   on narrow terminals; #staging is fixed-width and would otherwise take all
+   the slack out of #search's 1fr share down to nothing (measured 0 at 30
+   cols pre-fix). */
+#search { width: 1fr; min-width: 16; border: tall #fa582d; }
+/* Fixed width so the staged counter sits beside the search box rather than
+   stealing width from it as the batch grows. 16 cols still fits "staged (N)"
+   for realistic (including 2-3 digit) N. */
+#staging { width: 16; height: 3; content-align: center middle; border: round #fa582d; color: $text; }
+
+#panes { height: 1fr; }
+/* results is the scanning surface, the selection is usually a handful of rows. */
+#results { height: 2fr; border: round #fa582d; }
 #selection { height: 1fr; border: round $secondary; }
-#staging { height: auto; border: round #fa582d; color: $text; }
+
 DataTable > .datatable--cursor { background: #fa582d; color: black; }
 Footer { background: #fa582d; }
+
+/* The ? cheatsheet: a card floating over a dimmed hub. A `min-width` alone
+   (rather than raising the percentage) would force the card wider than a
+   narrow terminal — `align: center middle` can't push X negative to center
+   an oversized child, so it pins X to 0 and everything past the right edge
+   of the *screen* (not the card) is clipped by the compositor, which would
+   hide the description column exactly like the bug this is fixing. 90%
+   keeps the card within the terminal at any width while still being much
+   roomier than the old 70% at the widths that matter (30-100 cols). */
+KeymapScreen { align: center middle; background: $surface 60%; }
+#keymap-card {
+    width: 90%;
+    max-width: 110;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $panel;
+    border: thick #fa582d;
+}

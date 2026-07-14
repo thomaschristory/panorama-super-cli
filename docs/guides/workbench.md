@@ -45,18 +45,28 @@ Passing `--apply-out` implies `offline-apply`; choosing `offline-apply` without
 
 ## The hub
 
-The home screen is a **hub**: a search box, a results table, the selection
-buffer, and a `staged (N)` strip.
+The home screen is a **hub**: a search box, a `staged (N)` strip, a results
+table, and the selection buffer. The search box and the staged strip share the
+top row; the results and selection tables stack **vertically** below it, each
+at the full terminal width — the results table is the widest content in the
+app, so it no longer splits the screen with the selection panel next to it.
 
 ```
-┌ search: IP / value / name ─────────────────────────────┐
-├──────────────────────────┬─────────────────────────────┤
-│ results                  │ selection                   │
-│ kind  name  location  …  │ kind  name  location        │
-│                          ├─────────────────────────────┤
-│                          │ staged (N)                  │
-└──────────────────────────┴─────────────────────────────┘
+┌ search: IP / value / name ────────────────┬ staged (N) ┐
+├───────────────────────────────────────────┴────────────┤
+│ results                                                │
+│ kind  name  location  value                            │
+├────────────────────────────────────────────────────────┤
+│ selection                                              │
+│ kind  name  location                                   │
+└────────────────────────────────────────────────────────┘
+  ? keys   ctrl+p commands
 ```
+
+At launch, focus is in `#search`, which — deliberately — consumes `q` as a
+typed character rather than quitting (see [below](#finding-the-keys)), so the
+Footer shows only two keys until you tab or click off the search box; `q quit`
+joins them once focus moves to the results or selection table.
 
 The flow is **hub → search → select → spoke → staged changelist → apply**:
 
@@ -71,6 +81,34 @@ The flow is **hub → search → select → spoke → staged changelist → appl
 While a spoke is open, the hub keys are inert — you must finish or cancel the
 spoke first. This prevents a second spoke stacking over the first and letting a
 plan go stale.
+
+## Finding the keys
+
+The footer shows three keys, not the whole binding table:
+
+| Key | What it opens |
+| --- | --- |
+| `?` | The **keymap** — every command, grouped by what it does (Navigate / Objects / Analyze / Names / Session), each with a real description. Dismiss with `escape`, `?`, or `q`. |
+| `ctrl+p` | The **command palette** — fuzzy-search every command by title, category, or description. Entries read `Category › Title` (e.g. `Analyze › Dedup` vs. `Analyze › Duplicate scan`), so the two are finally distinguishable. Textual's own commands (theme, screenshot) are ranked below `psc`'s. |
+| `q` | Quit. |
+
+No key was reassigned to get here — every spoke hotkey in the tables below
+still works exactly as before, it's just no longer listed across the bottom of
+the screen. Press `?` when you forget one.
+
+`?` always works, even while the search box has focus (which is where the app
+starts) — it's a priority binding, since it's the only way to discover the
+other ~22 hidden hotkeys. The one cost: you can't type a literal `?` into a
+search, but `?` is never a meaningful character in an IP, value, or PAN-OS
+object name.
+
+`q`, by contrast, is a plain printable key, so a **focused text field swallows
+it as a typed character** instead of quitting — this is deliberate, so you can
+type a "q" into a search (e.g. an object name containing "q"). Tab or click
+into the results or selection table first if you want `q` to quit. `ctrl+p`
+works from the search box or anywhere else in the hub — but only in the hub:
+like every other hub key, it's inert while a spoke is open, so it can't stack
+a second plan over one you haven't finished or cancelled yet.
 
 ## The selection buffer
 

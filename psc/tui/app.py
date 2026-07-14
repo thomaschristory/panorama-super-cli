@@ -2,93 +2,79 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import Provider
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from psc.tui.commands import bindings, hub_actions, priority_keys
+from psc.tui.palette import PscCommands
 from psc.tui.session import WorkbenchSession, render_value
 from psc.tui.state import SelectionItem
 
 _TCSS = str(Path(__file__).with_name("workbench.tcss"))
 
 
+class SearchInput(Input):
+    """The `#search` box, taught to let priority-bound characters (`?`) through.
+
+    Textual hides an App-level binding from the priority check whenever the
+    focused widget's `check_consume_key` says it *could* consume that
+    character — which `Input` does for every printable key by default. That
+    pre-filtering runs before priority is even considered, so without this
+    override a priority `Binding` for `?` would still lose to a focused
+    search box. The excluded set is derived from `commands.priority_keys()`
+    rather than hardcoded here, so the table in `commands.py` stays the only
+    place a key's priority is decided.
+    """
+
+    def check_consume_key(self, key: str, character: str | None) -> bool:
+        if character in priority_keys():
+            return False
+        return super().check_consume_key(key, character)
+
+
 class HubScreen(Widget):
-    """The home layout container (a plain Widget, not a leaf Static)."""
+    """The home layout container (a plain Widget, not a leaf Static).
+
+    Search and the staged strip share the top row; the two tables stack
+    vertically below so the results table — the widest content in the app — gets
+    the full terminal width instead of half of it.
+    """
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="search: IP / value / name", id="search")
-        with Horizontal():
+        with Horizontal(id="topbar"):
+            yield SearchInput(placeholder="search: IP / value / name", id="search")
+            yield Static("staged (0)", id="staging")
+        with Vertical(id="panes"):
             yield DataTable(id="results")
-            with Vertical():
-                yield DataTable(id="selection")
-                yield Static("staged (0)", id="staging")
+            yield DataTable(id="selection")
 
 
 class WorkbenchApp(App[None]):
     CSS_PATH = _TCSS
     TITLE = "psc workbench"
-    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
-        ("space", "toggle_row", "select"),
-        ("v", "inspect", "view"),
-        ("delete", "remove_selected", "remove"),
-        ("backspace", "remove_selected", "remove"),
-        ("c", "create", "create"),
-        ("d", "dedup", "dedup"),
-        ("D", "duplicates", "dup scan"),
-        ("u", "usage", "usage"),
-        ("a", "audit", "audit"),
-        ("f", "diff", "diff"),
-        ("o", "export", "export"),
-        ("m", "move", "move"),
-        ("x", "decommission", "decommission"),
-        ("r", "rename", "rename"),
-        ("e", "rule_edit", "rule"),
-        ("G", "group_add", "add to group"),
-        ("N", "group_new", "new group"),
-        ("i", "unused", "unused"),
-        ("g", "dangling", "dangling"),
-        ("l", "name_lint", "lint"),
-        ("n", "name_apply", "name apply"),
-        ("p", "profiles", "profiles"),
-        ("s", "staged", "staged"),
-        ("q", "quit", "quit"),
-    ]
+
+    # Keys, labels and descriptions all live in psc/tui/commands.py — see there
+    # to add a spoke. Only FOOTER_KEYS are shown; `?` lists the rest.
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = list(bindings())
 
     # Hub-only bindings — disabled while any spoke screen is on top of the
     # stack, so a spoke key can't stack a second spoke over the first (which
     # would let the first spoke's plan go stale and corrupt the config on
     # confirm). Spokes have their own ctrl+y/escape bindings.
-    _HUB_ACTIONS: ClassVar[frozenset[str]] = frozenset(
-        {
-            "toggle_row",
-            "inspect",
-            "remove_selected",
-            "create",
-            "dedup",
-            "duplicates",
-            "usage",
-            "audit",
-            "diff",
-            "export",
-            "move",
-            "decommission",
-            "rename",
-            "rule_edit",
-            "group_add",
-            "group_new",
-            "unused",
-            "dangling",
-            "name_lint",
-            "name_apply",
-            "profiles",
-            "staged",
-        }
-    )
+    _HUB_ACTIONS: ClassVar[frozenset[str]] = hub_actions()
+
+    # Our commands, plus Textual's own (theme, screenshot, …) ranked below.
+    COMMANDS: ClassVar[set[type[Provider] | Callable[[], type[Provider]]]] = App.COMMANDS | {
+        PscCommands
+    }
 
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
@@ -105,7 +91,9 @@ class WorkbenchApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield HubScreen()
-        yield Footer()
+        # Textual's Footer appends its own command-palette key on the right; we
+        # already bind ctrl+p from the command table, so suppress the duplicate.
+        yield Footer(show_command_palette=False)
 
     def on_mount(self) -> None:
         results = self.query_one("#results", DataTable)
@@ -274,3 +262,8 @@ class WorkbenchApp(App[None]):
         from psc.tui.screens.staged import StagedScreen  # noqa: PLC0415 — avoid import cycle
 
         self.push_screen(StagedScreen(self.session))
+
+    def action_keymap(self) -> None:
+        from psc.tui.screens.keymap import KeymapScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(KeymapScreen())
