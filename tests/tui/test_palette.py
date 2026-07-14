@@ -89,6 +89,22 @@ async def test_search_finds_a_command_by_title(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_hit_help_includes_the_hotkey(workbench_xml: str) -> None:
+    # The palette used to teach you nothing about the key that runs a command
+    # directly next time — the two discovery surfaces (this and the ? overlay)
+    # didn't reinforce each other. help now carries the key too, driven from
+    # the same table row as the title/description.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = PscCommands(app.screen)
+        hits = [h async for h in provider.search("dedup")]
+        hit = next(h for h in hits if "Analyze › Dedup" in str(h.text))  # noqa: RUF001
+        assert hit.help is not None
+        assert "(d)" in hit.help
+
+
+@pytest.mark.asyncio
 async def test_search_finds_a_command_by_description(workbench_xml: str) -> None:
     # 'survivor' appears only in dedup's description, not its title — the whole
     # reason descriptions are in the table.
@@ -129,9 +145,12 @@ async def test_hits_are_labelled_with_their_category(workbench_xml: str) -> None
 
 @pytest.mark.asyncio
 async def test_palette_command_runs_the_hub_action(workbench_xml: str) -> None:
-    # End-to-end: the callback a Hit carries must actually open the spoke. The
-    # palette dismisses itself before invoking it, so check_action sees a bare
-    # hub and lets the action through.
+    # Callback-level check that a Hit's command actually opens the spoke.
+    # NOT end-to-end: no palette is open, so check_action sees stack == 1 for
+    # a trivial reason (there's nothing on top of the hub to begin with) —
+    # see test_ctrl_p_command_opens_the_spoke_end_to_end below for the real
+    # thing, which drives the actual CommandPalette widget and is what
+    # exercises the dismiss-before-invoke ordering the design relies on.
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -142,6 +161,35 @@ async def test_palette_command_runs_the_hub_action(workbench_xml: str) -> None:
         # awaits it through the message pump (textual/message_pump.py `invoke`).
         # `run_action` is itself a coroutine function, so mirror that here.
         await hit.command()
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicatesScreen)
+
+
+@pytest.mark.asyncio
+async def test_ctrl_p_command_opens_the_spoke_end_to_end(workbench_xml: str) -> None:
+    # The real path: open the actual CommandPalette from the hub, type to
+    # filter it, pick a hit, and confirm the spoke actually opens. This is
+    # what test_palette_command_runs_the_hub_action above does NOT cover —
+    # that test builds PscCommands by hand and calls hit.command() with no
+    # palette open, so check_action trivially sees a bare hub. The design
+    # depends on CommandPalette._select_or_command calling self.dismiss()
+    # *before* self.app.call_later(...) (textual/command.py) — if that
+    # ordering ever regressed, the palette screen would still be on the stack
+    # when the action's check_action ran, and the spoke-stacking guard would
+    # silently swallow the action instead of opening it. Only a pilot that
+    # drives the real widget can see that.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # off the search Input
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert isinstance(app.screen, CommandPalette)
+        for key in "duplicate":
+            await pilot.press(key)
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
         assert isinstance(app.screen, DuplicatesScreen)

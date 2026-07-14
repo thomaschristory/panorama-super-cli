@@ -34,6 +34,11 @@ class PscCommands(Provider):
     def _label(self, command: Command) -> str:
         return f"{command.category} › {command.title}"  # noqa: RUF001
 
+    def _help(self, command: Command) -> str:
+        # Reinforce the ? overlay: picking a command here should also teach you
+        # the key that runs it directly next time, driven from the same table.
+        return f"{command.description} ({command.key})"
+
     async def discover(self) -> Hits:
         """The empty-query list: the whole table, in table order."""
         # Exclude the palette's own row — you're already in it, and picking it
@@ -46,7 +51,7 @@ class PscCommands(Provider):
                 _PSC_FLOOR + (total - i) / total,
                 self._label(command),
                 self._runner(command),
-                help=command.description,
+                help=self._help(command),
             )
 
     async def search(self, query: str) -> Hits:
@@ -64,5 +69,5 @@ class PscCommands(Provider):
                     matcher.highlight(label),
                     self._runner(command),
                     text=label,
-                    help=command.description,
+                    help=self._help(command),
                 )
