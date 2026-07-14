@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import Provider
 from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from psc.tui.commands import bindings, hub_actions
+from psc.tui.palette import PscCommands
 from psc.tui.session import WorkbenchSession, render_value
 from psc.tui.state import SelectionItem
 
@@ -48,6 +51,11 @@ class WorkbenchApp(App[None]):
     # would let the first spoke's plan go stale and corrupt the config on
     # confirm). Spokes have their own ctrl+y/escape bindings.
     _HUB_ACTIONS: ClassVar[frozenset[str]] = hub_actions()
+
+    # Our commands, plus Textual's own (theme, screenshot, …) ranked below.
+    COMMANDS: ClassVar[set[type[Provider] | Callable[[], type[Provider]]]] = App.COMMANDS | {
+        PscCommands
+    }
 
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
