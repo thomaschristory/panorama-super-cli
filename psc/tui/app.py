@@ -19,15 +19,20 @@ _TCSS = str(Path(__file__).with_name("workbench.tcss"))
 
 
 class HubScreen(Widget):
-    """The home layout container (a plain Widget, not a leaf Static)."""
+    """The home layout container (a plain Widget, not a leaf Static).
+
+    Search and the staged strip share the top row; the two tables stack
+    vertically below so the results table — the widest content in the app — gets
+    the full terminal width instead of half of it.
+    """
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="search: IP / value / name", id="search")
-        with Horizontal():
+        with Horizontal(id="topbar"):
+            yield Input(placeholder="search: IP / value / name", id="search")
+            yield Static("staged (0)", id="staging")
+        with Vertical(id="panes"):
             yield DataTable(id="results")
-            with Vertical():
-                yield DataTable(id="selection")
-                yield Static("staged (0)", id="staging")
+            yield DataTable(id="selection")
 
 
 class WorkbenchApp(App[None]):

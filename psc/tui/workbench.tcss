@@ -1,8 +1,16 @@
 /* Palo Alto orange accent. */
 Screen { background: $surface; }
-#search { border: tall #fa582d; }
-#results { height: 1fr; border: round #fa582d; }
+
+#topbar { height: auto; }
+#search { width: 1fr; border: tall #fa582d; }
+/* Fixed width so the staged counter sits beside the search box rather than
+   stealing width from it as the batch grows. */
+#staging { width: 24; height: 3; content-align: center middle; border: round #fa582d; color: $text; }
+
+#panes { height: 1fr; }
+/* results is the scanning surface, the selection is usually a handful of rows. */
+#results { height: 2fr; border: round #fa582d; }
 #selection { height: 1fr; border: round $secondary; }
-#staging { height: auto; border: round #fa582d; color: $text; }
+
 DataTable > .datatable--cursor { background: #fa582d; color: black; }
 Footer { background: #fa582d; }
