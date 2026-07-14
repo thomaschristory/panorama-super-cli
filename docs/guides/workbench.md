@@ -100,9 +100,10 @@ object name.
 `q`, by contrast, is a plain printable key, so a **focused text field swallows
 it as a typed character** instead of quitting — this is deliberate, so you can
 type a "q" into a search (e.g. an object name containing "q"). Tab or click
-into the results or selection table first if you want `q` to quit. `ctrl+p` is
-unaffected either way and always works, from the search box or anywhere else
-in the hub.
+into the results or selection table first if you want `q` to quit. `ctrl+p`
+works from the search box or anywhere else in the hub — but only in the hub:
+like every other hub key, it's inert while a spoke is open, so it can't stack
+a second plan over one you haven't finished or cancelled yet.
 
 ## The selection buffer
 

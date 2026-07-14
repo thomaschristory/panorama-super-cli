@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import pytest
 from textual.binding import Binding
 
+import psc.tui.commands as commands_module
 from psc.tui.app import WorkbenchApp
 from psc.tui.commands import (
     CATEGORIES,
     FOOTER_KEYS,
     HUB_COMMANDS,
+    Command,
     bindings,
     by_category,
     hub_actions,
@@ -46,12 +49,14 @@ def test_categories_are_all_known() -> None:
     assert {c.category for c in HUB_COMMANDS} <= set(CATEGORIES)
 
 
-def test_hub_actions_excludes_quit_and_palette() -> None:
-    # quit and the command palette must stay live while a spoke is open;
-    # every other action is gated by the spoke-stacking guard.
+def test_hub_actions_excludes_only_quit() -> None:
+    # quit must stay live while a spoke is open; every other action, including
+    # the command palette (#1 — every one of its commands assumes the hub, so
+    # opening it over a spoke let you pick a command that silently did
+    # nothing), is gated by the spoke-stacking guard.
     actions = hub_actions()
     assert "quit" not in actions
-    assert "command_palette" not in actions
+    assert "command_palette" in actions
     assert "dedup" in actions
     assert "staged" in actions
 
@@ -96,8 +101,11 @@ def test_descriptions_are_real_sentences() -> None:
 
 
 def test_app_bindings_are_derived_from_the_table() -> None:
-    app_keys = {b.key for b in WorkbenchApp.BINDINGS if isinstance(b, Binding)}
-    assert app_keys == {b.key for b in bindings()}
+    # Compare (key, action) pairs, not just the set of keys — a hypothetical
+    # swapped pairing (same keys, wrong action wired to one of them) would
+    # pass a keys-only comparison but must fail here.
+    app_pairs = {(b.key, b.action) for b in WorkbenchApp.BINDINGS if isinstance(b, Binding)}
+    assert app_pairs == {(b.key, b.action) for b in bindings()}
 
 
 def test_app_hub_actions_are_derived_from_the_table() -> None:
@@ -111,3 +119,40 @@ def test_question_mark_is_the_only_priority_binding() -> None:
     # contain any letter. This guards against that asymmetry eroding.
     priority_keys = {b.key for b in bindings() if b.priority}
     assert priority_keys == {"?"}
+
+
+def test_priority_commands_have_single_character_keys() -> None:
+    # priority_keys() (used by SearchInput.check_consume_key) compares against
+    # a typed *character* (" ", None, ...), not a Textual key *name* ("space",
+    # "ctrl+p", ...). A priority command whose key isn't a single character
+    # would silently never make it past a focused Input — the override would
+    # just never fire. Fail loudly here instead of letting that happen at
+    # runtime.
+    for cmd in HUB_COMMANDS:
+        if cmd.priority:
+            assert len(cmd.key) == 1, cmd.action
+
+
+def test_aliased_priority_command_yields_priority_on_key_and_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (#2): bindings() used to drop `priority` when expanding an
+    # alias, so an aliased priority command would quietly lose priority on
+    # the alias only. No real table row combines priority + aliases today,
+    # so exercise it against a monkeypatched table rather than waiting for a
+    # future row to collide with the single-character-key invariant.
+    synthetic = (
+        Command(
+            "?",
+            "keymap",
+            "Keys",
+            "Show every key binding, grouped by what it does",
+            "Session",
+            aliases=("h",),
+            priority=True,
+        ),
+    )
+    monkeypatch.setattr(commands_module, "HUB_COMMANDS", synthetic)
+    by_key = {b.key: b.priority for b in commands_module.bindings()}
+    assert by_key["?"] is True
+    assert by_key["h"] is True

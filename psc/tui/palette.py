@@ -36,8 +36,11 @@ class PscCommands(Provider):
 
     async def discover(self) -> Hits:
         """The empty-query list: the whole table, in table order."""
-        total = len(HUB_COMMANDS)
-        for i, command in enumerate(HUB_COMMANDS):
+        # Exclude the palette's own row — you're already in it, and picking it
+        # would just dismiss the palette instead of reopening it.
+        rows = [c for c in HUB_COMMANDS if c.action != "command_palette"]
+        total = len(rows)
+        for i, command in enumerate(rows):
             # Descending within (1, 2] so the sort reproduces the table's order.
             yield Hit(
                 _PSC_FLOOR + (total - i) / total,
@@ -49,6 +52,8 @@ class PscCommands(Provider):
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
         for command in HUB_COMMANDS:
+            if command.action == "command_palette":
+                continue
             label = self._label(command)
             # Match the description too, so 'survivor' finds dedup even though the
             # word appears nowhere in its title.

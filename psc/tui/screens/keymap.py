@@ -42,7 +42,9 @@ def _render() -> Table:
         caption_style="dim",
         caption_justify="left",
     )
-    table.add_column("key", style="b", no_wrap=True, width=10)
+    # Widest row is "delete / backspace" (19 chars); 10 truncated it and made
+    # the alias-rendering fix below pointless.
+    table.add_column("key", style="b", no_wrap=True, width=20)
     table.add_column("title", no_wrap=True)
     table.add_column("description")  # the only column allowed to wrap
 
@@ -57,7 +59,11 @@ def _render() -> Table:
         for cmd in cmds:
             description = Text("— ")
             description.append(cmd.description, style="dim")
-            table.add_row(cmd.key, cmd.title, description)
+            # An alias (e.g. backspace for delete) is a real, working binding —
+            # list it too, or the overlay defeats its own purpose of being
+            # where every hidden hotkey is discoverable.
+            key_label = " / ".join((cmd.key, *cmd.aliases))
+            table.add_row(key_label, cmd.title, description)
     return table
 
 

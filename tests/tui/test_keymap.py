@@ -102,6 +102,23 @@ async def test_overlay_lists_every_command_with_its_description(workbench_xml: s
 
 
 @pytest.mark.asyncio
+async def test_overlay_lists_every_alias(workbench_xml: str) -> None:
+    # #4: the overlay used to render only cmd.key, so a working binding like
+    # 'backspace' (an alias of 'delete') was unfindable anywhere — not the
+    # footer, not the one place hidden hotkeys are supposed to live.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        static = app.screen.query_one("#keymap-body", Static)
+        body = _rendered_text(static, width=200)
+        for cmd in HUB_COMMANDS:
+            for alias in cmd.aliases:
+                assert alias in body, alias
+
+
+@pytest.mark.asyncio
 async def test_overlay_groups_by_category(workbench_xml: str) -> None:
     app = _app(workbench_xml)
     async with app.run_test() as pilot:

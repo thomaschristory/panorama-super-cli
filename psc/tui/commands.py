@@ -24,7 +24,13 @@ class Command:
     # A second key for the same action (delete/backspace both drop a row).
     aliases: tuple[str, ...] = ()
     # Whether the spoke-stacking guard disables this while a spoke is open.
-    # False for quit and the palette, which must stay reachable from anywhere.
+    # False only for quit — it must stay reachable no matter what's on the
+    # stack. (The palette used to be False here too, but that let ctrl+p open
+    # over a spoke and list commands check_action would then refuse to run —
+    # picking one silently did nothing. It's gated like every other spoke key
+    # now. Note the guard is irrelevant over the `?` overlay either way:
+    # ModalScreen blocks app-level bindings on its own, before check_action
+    # ever runs.)
     hub_only: bool = True
     # Whether Textual should check this binding *before* the focused widget
     # gets the key. A focused Input swallows plain printable keys as typed
@@ -213,7 +219,6 @@ HUB_COMMANDS: tuple[Command, ...] = (
         "Commands",
         "Search every command by name",
         "Session",
-        hub_only=False,
     ),
     Command(
         "q",
@@ -244,7 +249,10 @@ def bindings() -> list[Binding]:
                 priority=cmd.priority,
             )
         )
-        out.extend(Binding(alias, cmd.action, label, show=False) for alias in cmd.aliases)
+        out.extend(
+            Binding(alias, cmd.action, label, show=False, priority=cmd.priority)
+            for alias in cmd.aliases
+        )
     return out
 
 
@@ -257,6 +265,14 @@ def priority_keys() -> frozenset[str]:
     search box needs this set to know which characters to stop claiming via
     `check_consume_key`, letting the priority binding actually fire. See
     `psc/tui/app.py`'s `SearchInput`.
+
+    This only works because every `priority=True` command's `key` is a single
+    character — `check_consume_key` compares against the typed *character*
+    (`" "`, `None`, …), not Textual's key *name* (`"space"`, `"ctrl+p"`, …). A
+    multi-character priority key would silently never match and the override
+    would just never fire. A table-integrity test in
+    `tests/tui/test_commands.py` enforces that invariant so a violation fails
+    loudly in CI instead of silently at runtime.
     """
     return frozenset(cmd.key for cmd in HUB_COMMANDS if cmd.priority)
 

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.command import Hit
+from textual.command import CommandPalette, Hit
+from textual.widgets import DataTable
 
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
@@ -28,13 +29,27 @@ def test_system_commands_survive() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discover_yields_every_command(workbench_xml: str) -> None:
+async def test_discover_yields_every_command_except_itself(workbench_xml: str) -> None:
+    # #6: the palette must not list itself — you're already in it, and
+    # picking 'Session > Commands' just dismisses the palette rather than
+    # reopening it.
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
         await pilot.pause()
         provider = PscCommands(app.screen)
         hits = [h async for h in provider.discover()]
-        assert len(hits) == len(HUB_COMMANDS)
+        assert len(hits) == len(HUB_COMMANDS) - 1
+        assert not any("Commands" in str(h.text) for h in hits)
+
+
+@pytest.mark.asyncio
+async def test_search_excludes_itself(workbench_xml: str) -> None:
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        provider = PscCommands(app.screen)
+        hits = [h async for h in provider.search("command")]
+        assert not any("Session › Commands" in str(h.text) for h in hits)  # noqa: RUF001
 
 
 @pytest.mark.asyncio
@@ -130,3 +145,34 @@ async def test_palette_command_runs_the_hub_action(workbench_xml: str) -> None:
         await pilot.pause()
         await pilot.pause()
         assert isinstance(app.screen, DuplicatesScreen)
+
+
+@pytest.mark.asyncio
+async def test_ctrl_p_opens_the_palette_from_the_hub(workbench_xml: str) -> None:
+    # #1, half (a): ctrl+p must still work from a bare hub — it's only spokes
+    # it should be gated against.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # off the search Input
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert isinstance(app.screen, CommandPalette)
+
+
+@pytest.mark.asyncio
+async def test_ctrl_p_is_inert_over_an_open_spoke(workbench_xml: str) -> None:
+    # #1, half (b): the palette used to be hub_only=False, so ctrl+p opened it
+    # over an open spoke (e.g. DuplicatesScreen) and offered commands whose
+    # target action check_action would refuse — picking one silently
+    # dismissed the palette and did nothing, with no error and no feedback.
+    # Gating command_palette like every other hub action fixes this: ctrl+p
+    # now does nothing at all while a spoke is open, same as 'd' or 'c'.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # off the search Input
+        await pilot.press("D")
+        await pilot.pause()
+        assert isinstance(app.screen, DuplicatesScreen)
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert [type(s).__name__ for s in app.screen_stack] == ["Screen", "DuplicatesScreen"]
