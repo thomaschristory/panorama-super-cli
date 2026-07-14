@@ -60,8 +60,13 @@ app, so it no longer splits the screen with the selection panel next to it.
 │ selection                                              │
 │ kind  name  location                                   │
 └────────────────────────────────────────────────────────┘
-  ? keys   ctrl+p commands   q quit
+  ? keys   ctrl+p commands
 ```
+
+At launch, focus is in `#search`, which — deliberately — consumes `q` as a
+typed character rather than quitting (see [below](#finding-the-keys)), so the
+Footer shows only two keys until you tab or click off the search box; `q quit`
+joins them once focus moves to the results or selection table.
 
 The flow is **hub → search → select → spoke → staged changelist → apply**:
 
