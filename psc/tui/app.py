@@ -64,7 +64,9 @@ class WorkbenchApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield HubScreen()
-        yield Footer()
+        # Textual's Footer appends its own command-palette key on the right; we
+        # already bind ctrl+p from the command table, so suppress the duplicate.
+        yield Footer(show_command_palette=False)
 
     def on_mount(self) -> None:
         results = self.query_one("#results", DataTable)
