@@ -174,7 +174,9 @@ def _check_same_value(
     value, so divergent members are simply not one bucket.
     """
     template_ref, tpl = template
-    for m, obj in objs[1:]:
+    for m, obj in objs:
+        if (m.name, m.location) == (template_ref.name, template_ref.location):
+            continue
         if not same_value(kind, tpl, obj):
             cs.blockers.append(
                 f"'{m.name}'@{m.location} does not carry the same value as "

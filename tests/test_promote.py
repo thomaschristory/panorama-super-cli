@@ -385,6 +385,25 @@ def test_keep_unifies_divergent_names_and_repoints_only_the_odd_ones() -> None:
     ]
 
 
+def test_keep_divergent_value_on_a_non_survivor_rank0_member_is_blocked() -> None:
+    # web-primary@APAC carries a DIFFERENT value and, by rank, sorts to objs[0]
+    # (APAC < EMEA). The survivor template is h-web1@EMEA, so a value gate that
+    # skips objs[0] would never compare web-primary's divergent value and let the
+    # bucket through -- silently repointing r2 onto a different-valued survivor.
+    snap = _snap(
+        addresses=[
+            _addr("web-primary", APAC, value="10.9.9.9/32"),
+            _addr("h-web1", EMEA, value="10.0.0.1/32"),
+        ],
+        security_rules=[_rule("r2", APAC, source=["web-primary"])],
+    )
+    cs = _promote_keep(snap, members=[("h-web1", EMEA), ("web-primary", APAC)], keep="h-web1")
+
+    assert cs.is_blocked
+    assert any("not one bucket" in b for b in cs.blockers)
+    assert cs.upserts == [] and cs.deletes == [] and cs.reference_edits == []
+
+
 def test_keep_naming_a_non_member_is_an_input_error() -> None:
     snap = _snap(addresses=[_addr("h-web1", EMEA), _addr("web-primary", APAC)])
     with pytest.raises(PscError):
