@@ -271,6 +271,13 @@ def promote(
         help="Destination: 'shared' (default), or a device-group that is a common "
         "ancestor of every bucket member.",
     ),
+    keep: str | None = typer.Option(
+        None,
+        "--keep",
+        help="Survivor NAME when the bucket's copies are named differently. Must be one "
+        "of the bucket's own names; every other copy's references are repointed onto it. "
+        "Without this, a divergently-named bucket is a blocker.",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Execute the promotion (default: dry-run)."),
     out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
@@ -282,6 +289,10 @@ def promote(
     collapse onto. `promote` creates it once at the destination and deletes every
     device-group copy — references fall through by PAN-OS shadowing, so nothing is
     repointed. Dry-run by default (use `-o set` for the PAN-OS script).
+
+    When the copies are named differently (`h-web1@DG-A` vs `web-primary@DG-B`),
+    pass `--keep h-web1`: the survivor is created under that name and every
+    reference to the other copies is repointed onto it before they are deleted.
     """
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
@@ -289,6 +300,12 @@ def promote(
 
     if all_buckets == (group is not None):
         raise PscError("promote needs exactly one of --group or --all", ErrorType.INPUT)
+    if all_buckets and keep is not None:
+        raise PscError(
+            "--all and --keep are mutually exclusive (one survivor name cannot span "
+            "many buckets); promote the divergent bucket on its own with --group",
+            ErrorType.INPUT,
+        )
 
     if all_buckets:
         cs, skipped = plan_promote_all(snap, graph, kind=kind, dest_name=to)
@@ -296,6 +313,8 @@ def promote(
     else:
         assert group is not None  # guarded by the exactly-one check above
         bucket = select_bucket(snap, graph, kind=kind, value=group)
-        cs = plan_promote(snap, graph, kind=kind, members=list(bucket.members), dest_name=to)
+        cs = plan_promote(
+            snap, graph, kind=kind, members=list(bucket.members), dest_name=to, keep_name=keep
+        )
 
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)

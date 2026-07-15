@@ -43,6 +43,38 @@ name="localhost.localdomain"><device-group>
   </entry>
 </device-group></entry></devices></config>"""
 
+# --keep's job is to repoint referrers, not just rename an unreferenced object,
+# so each sibling DG gets its own local security rule naming its own copy —
+# proof that `--keep h-web1` actually rewrites DG-B's rule onto the survivor
+# rather than merely surviving because nothing pointed at the odd name.
+_XML_DIVERGENT = """<config><shared></shared><devices><entry \
+name="localhost.localdomain"><device-group>
+  <entry name="DG-A">
+    <address><entry name="h-web1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+    <pre-rulebase><security><rules>
+      <entry name="allow-h-web1">
+        <source><member>h-web1</member></source>
+        <destination><member>any</member></destination>
+        <service><member>any</member></service>
+        <application><member>any</member></application>
+        <action>allow</action>
+      </entry>
+    </rules></security></pre-rulebase>
+  </entry>
+  <entry name="DG-B">
+    <address><entry name="web-primary"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+    <pre-rulebase><security><rules>
+      <entry name="allow-web-primary">
+        <source><member>web-primary</member></source>
+        <destination><member>any</member></destination>
+        <service><member>any</member></service>
+        <application><member>any</member></application>
+        <action>allow</action>
+      </entry>
+    </rules></security></pre-rulebase>
+  </entry>
+</device-group></entry></devices></config>"""
+
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PSC_CONFIG": "/nonexistent/psc-test-config.yaml"}
@@ -159,4 +191,62 @@ def test_group_and_all_together_is_a_usage_error(tmp_path: Path) -> None:
 
 def test_neither_group_nor_all_is_a_usage_error(tmp_path: Path) -> None:
     cp = run("-c", str(_cfg(tmp_path)), "dedup", "promote", "address")
+    assert cp.returncode != 0
+
+
+def test_divergent_names_without_keep_exit_6(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _XML_DIVERGENT)
+    cp = run("-c", str(cfg), "dedup", "promote", "address", "--group", "10.0.0.1/32")
+    assert cp.returncode == 6, cp.stdout + cp.stderr
+    assert "names diverge" in cp.stdout + cp.stderr
+
+
+def test_keep_unifies_them(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _XML_DIVERGENT)
+    out = tmp_path / "out.xml"
+    cp = run(
+        "-c",
+        str(cfg),
+        "dedup",
+        "promote",
+        "address",
+        "--group",
+        "10.0.0.1/32",
+        "--keep",
+        "h-web1",
+        "--apply",
+        "--out",
+        str(out),
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    root = xml_fromstring(out.read_text())
+
+    shared_names = {e.get("name") for e in root.findall("./shared/address/entry")}
+    assert shared_names == {"h-web1"}  # unified onto the --keep name
+
+    for dg in ("DG-A", "DG-B"):
+        entry = next(
+            e for e in root.findall("./devices/entry/device-group/entry") if e.get("name") == dg
+        )
+        assert entry.findall("./address/entry") == []  # both DG copies gone
+
+    # DG-B's rule referenced the odd name; --keep must have repointed it.
+    dgb = next(
+        e for e in root.findall("./devices/entry/device-group/entry") if e.get("name") == "DG-B"
+    )
+    sources = {m.text for m in dgb.findall("./pre-rulebase/security/rules/entry/source/member")}
+    assert sources == {"h-web1"}
+
+
+def test_all_and_keep_together_is_a_usage_error(tmp_path: Path) -> None:
+    cp = run(
+        "-c",
+        str(_cfg(tmp_path)),
+        "dedup",
+        "promote",
+        "address",
+        "--all",
+        "--keep",
+        "web",
+    )
     assert cp.returncode != 0

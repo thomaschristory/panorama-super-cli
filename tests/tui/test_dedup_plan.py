@@ -204,3 +204,28 @@ def test_staging_a_promote_compounds_into_the_working_snapshot(
 
     locs = {(a.name, a.location.name) for a in session.working_snapshot.addresses}
     assert any(loc == "shared" for _n, loc in locs)
+
+
+# --- promote mode: the survivor Select doubles as --keep (#154) -------------
+
+
+def test_the_survivor_select_supplies_keep_name_when_promoting(
+    session_with_divergent_dups: WorkbenchSession,
+) -> None:
+    found = selection_bucket(session_with_divergent_dups)
+    assert found is not None
+    _kind, members = found
+    keep = next(m for m in members if m.name == "h-web1")
+
+    label, cs = plan_selection_bucket(session_with_divergent_dups, keep=keep, dest_name="shared")
+    assert label.startswith("promote ")
+    assert not cs.is_blocked
+    assert cs.upserts[0].name == "h-web1"
+    assert cs.reference_edits  # the odd-named copy's referrers are rewritten
+
+
+def test_promoting_divergent_names_without_a_keep_is_blocked(
+    session_with_divergent_dups: WorkbenchSession,
+) -> None:
+    _label, cs = plan_selection_bucket(session_with_divergent_dups, dest_name="shared")
+    assert cs.is_blocked

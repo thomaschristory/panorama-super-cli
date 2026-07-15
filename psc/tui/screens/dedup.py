@@ -30,6 +30,7 @@ from psc.core.dedup import ObjectRef, plan_merge_bucket
 from psc.core.normalize import service_key
 from psc.core.promote import plan_promote
 from psc.core.refs import ReferenceGraph
+from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import SelectionItem
 from psc.tui.widgets.review import ReviewPanel, can_apply
@@ -110,7 +111,10 @@ def plan_selection_bucket(
     own members (`plan_merge_bucket`, today's behaviour, address-only). A
     location -> promote the whole bucket there (`plan_promote`), the only option
     when the bucket has no in-place merge planner (e.g. services) or no member at
-    a common ancestor of every other member.
+    a common ancestor of every other member. On the promote path, `keep` doubles
+    as the survivor name (`keep_name`): the one dropdown picks both which member
+    "wins" a merge and, when promoting a divergently-named bucket, which name the
+    unified object takes.
     """
     found = selection_bucket(session)
     if found is None:
@@ -130,7 +134,14 @@ def plan_selection_bucket(
         survivor = keep or members[0]
         return (f"merge {len(members) - 1} dup(s) -> {survivor.name}@{survivor.location}", cs)
 
-    cs = plan_promote(snap, graph, kind=kind, members=members, dest_name=dest_name)
+    cs = plan_promote(
+        snap,
+        graph,
+        kind=kind,
+        members=members,
+        dest_name=dest_name,
+        keep_name=keep.name if keep is not None else None,
+    )
     return (f"promote {len(members)} {kind.value}(s) -> @{dest_name}", cs)
 
 
@@ -199,9 +210,17 @@ class DedupScreen(Screen[None]):
         return None if select.is_blank() else str(select.value)
 
     def _render_plan(self) -> None:
-        plan = plan_selection_bucket(
-            self.session, keep=self._chosen_keep(), dest_name=self._chosen_dest()
-        )
+        # `plan_promote` raises PscError(INPUT) if `keep` names something that
+        # isn't a bucket member. That can't happen through the survivor Select
+        # (its options are always bucket members), but re-rendering runs on every
+        # Select.Changed, including transient states mid-interaction — swallow it
+        # rather than let a momentary bad combination crash the app.
+        try:
+            plan = plan_selection_bucket(
+                self.session, keep=self._chosen_keep(), dest_name=self._chosen_dest()
+            )
+        except PscError:
+            return
         if plan is not None:
             self.query_one("#review", ReviewPanel).show(plan[1])
 
