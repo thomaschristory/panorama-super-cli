@@ -15,6 +15,7 @@ from psc.core.dedup import (
     find_duplicate_addresses,
     find_duplicate_groups,
     find_duplicate_services,
+    find_duplicate_tags,
     plan_merge,
     plan_merge_bucket,
     plan_merge_group,
@@ -122,6 +123,28 @@ def groups(
         model=result.buckets,
         rows=_dup_rows(result.buckets),
         table_title="duplicate address-groups",
+        group_by="group",
+    )
+
+
+@app.command("tags")
+def tags(ctx: typer.Context) -> None:
+    """List tags defined under the same name in more than one location.
+
+    Tags are name-keyed: a same-named tag in several device-groups is a
+    redundant definition of one logical tag (color/comments are cosmetic).
+    Consolidate a bucket with `dedup promote tag --name NAME` (or `--all`).
+    """
+    rt: Runtime = ctx.obj
+    groups = find_duplicate_tags(rt.snapshot())
+    if rt.strict and not groups:
+        raise PscError("no duplicate tags", ErrorType.NOT_FOUND)
+    render(
+        rt.stdout,
+        rt.output,
+        model=groups,
+        rows=_dup_rows(groups),
+        table_title="duplicate tags",
         group_by="group",
     )
 
@@ -252,7 +275,9 @@ def _report_skipped(rt: Runtime, skipped: list[SkippedBucket]) -> None:
 @app.command("promote")
 def promote(
     ctx: typer.Context,
-    kind: ObjectKind = typer.Argument(..., help="Object kind: address | service | address-group."),
+    kind: ObjectKind = typer.Argument(
+        ..., help="Object kind: address | service | address-group | tag."
+    ),
     group: str | None = typer.Option(
         None,
         "--group",
@@ -263,9 +288,10 @@ def promote(
     name: str | None = typer.Option(
         None,
         "--name",
-        help="Promote every address-group with this NAME. Only valid for `address-group` "
-        "(name-keyed: an effective-leaf-set selector is not something you can type). The "
-        "members' effective sets must match, or the plan is blocked.",
+        help="Promote every address-group or tag with this NAME. Valid for the name-keyed "
+        "kinds (`address-group`, `tag`): an effective-leaf-set — or, for a tag, a value — "
+        "selector is not something you can type. Address-group members' effective sets must "
+        "match, or the plan is blocked.",
     ),
     all_buckets: bool = typer.Option(
         False,
@@ -329,22 +355,29 @@ def promote(
             "many buckets); promote the divergent bucket on its own",
             ErrorType.INPUT,
         )
-    if name is not None and kind is not ObjectKind.ADDRESS_GROUP:
+    name_keyed = (ObjectKind.ADDRESS_GROUP, ObjectKind.TAG)
+    if name is not None and kind not in name_keyed:
         raise PscError(
-            "--name only selects address-group buckets (name-keyed); "
+            "--name only selects address-group or tag buckets (name-keyed); "
             "address/service buckets are value-keyed, use --group",
             ErrorType.INPUT,
         )
-    if group is not None and kind is ObjectKind.ADDRESS_GROUP:
+    if group is not None and kind in name_keyed:
         raise PscError(
             "--group only selects address/service buckets (value-keyed); "
-            "address-group buckets are name-keyed, use --name",
+            f"{kind.value} buckets are name-keyed, use --name",
             ErrorType.INPUT,
         )
     if cascade and kind is not ObjectKind.ADDRESS_GROUP:
         raise PscError(
             "--cascade only applies to address-group buckets (only groups have a "
             "member closure to cascade)",
+            ErrorType.INPUT,
+        )
+    if keep is not None and kind is ObjectKind.TAG:
+        raise PscError(
+            "--keep does not apply to tag buckets: a tag bucket has a single name, "
+            "so there is nothing to unify",
             ErrorType.INPUT,
         )
 
