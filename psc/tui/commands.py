@@ -134,7 +134,7 @@ HUB_COMMANDS: tuple[Command, ...] = (
         "d",
         "dedup",
         "Dedup",
-        "Collapse the selected duplicates toward one chosen survivor",
+        "Collapse the selected duplicates onto one survivor, or promote them to shared",
         "Analyze",
     ),
     Command(
