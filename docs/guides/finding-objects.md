@@ -21,6 +21,10 @@ see at a glance which groups (and therefore rules) already cover this IP.
 `exists` is `true` when there's at least one `exact` match — the quick "is this
 already an object?" signal.
 
+Each matched object also carries its **tags** — comma-joined in the table and
+CSV, a list in JSON/YAML, and empty when the object has no tags. (`find object`
+on a tag definition itself reports `[]`.)
+
 ### Targets
 
 `find ip` accepts a host, a CIDR, a range, or an FQDN:

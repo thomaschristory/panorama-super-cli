@@ -45,7 +45,9 @@ object by exact name. `-e/--exact` keeps only equal-value matches. `--resolve-fq
 opts into DNS: FQDN objects are resolved (cached, timeout-bounded) and match when
 their A/AAAA records include the queried IP; the default never touches DNS
 (offline-safe). `-x/--expand` "opens" each match — see [`show`](#show) below,
-which is the same expansion. See [Finding objects](../guides/finding-objects.md).
+which is the same expansion. Object listings carry a `tags` column (comma-joined
+in table/CSV, a list in JSON/YAML; empty when untagged). See
+[Finding objects](../guides/finding-objects.md).
 
 ### show
 
