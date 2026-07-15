@@ -541,6 +541,33 @@ def select_address_bucket(snapshot: Snapshot, value: str, *, strict: bool = True
     return matches[0]
 
 
+def select_group_bucket(snapshot: Snapshot, name: str) -> DuplicateGroup:
+    """Every address-group named `name`, across locations — a promote bucket.
+
+    Group promote buckets are **name-keyed**, not leaf-set-keyed: `find_duplicate_groups`
+    buckets by effective member set, which is not something a human can type on a
+    command line. Equivalence is not assumed here — `plan_promote` enforces that the
+    members' effective leaf sets match, so a same-named pair that means two different
+    things is a blocker, not a silent merge.
+    """
+    members = [
+        ObjectRef(name=g.name, location=g.location.name)
+        for g in snapshot.address_groups
+        if g.name == name
+    ]
+    if len(members) < 2:  # noqa: PLR2004 — "2" is "at least one duplicate", not a tunable
+        raise PscError(
+            f"address-group '{name}' is not defined in more than one location — "
+            "nothing to promote (run `dedup groups` to find redundant groups)",
+            ErrorType.INPUT,
+        )
+    return DuplicateGroup(
+        kind="address-group",
+        value=name,
+        members=sorted(members, key=lambda r: (r.location, r.name)),
+    )
+
+
 def select_service_bucket(snapshot: Snapshot, value: str) -> DuplicateGroup:
     """Find the duplicate-service bucket matching a user-supplied `--group` value.
 

@@ -37,10 +37,13 @@ from psc.core.dedup import (
     DuplicateGroup,
     ObjectRef,
     find_duplicate_addresses,
+    find_duplicate_groups,
     find_duplicate_services,
     plan_repoints,
+    resolve_group_members,
     rewrite_members,
     select_address_bucket,
+    select_group_bucket,
     select_service_bucket,
 )
 from psc.core.models import Address, AddressGroup, Location, Service, Snapshot
@@ -182,6 +185,37 @@ def _check_same_value(
                 f"'{m.name}'@{m.location} does not carry the same value as "
                 f"'{template_ref.name}'@{template_ref.location}; this is not one bucket"
             )
+
+
+def _gate_group_equivalence(
+    cs: ChangeSet, snapshot: Snapshot, graph: ReferenceGraph, *, objs: list[_Member]
+) -> None:
+    """Every group in the bucket must expand to the SAME effective leaf-address set.
+
+    Not `same_value`: that compares member *names*, and two device-groups' copies can
+    name their members differently (or nest them) and still mean the same hosts — or
+    name them identically and mean different hosts, because each name resolves up its
+    own device-group chain. Only the resolved leaf set settles it. Dynamic groups have
+    a runtime-only set and unresolvable ones have no knowable set; both are blockers,
+    never a guess.
+    """
+    sets: dict[tuple[str, str], frozenset[str]] = {}
+    for m, _obj in objs:
+        leaves = resolve_group_members(snapshot, graph, m.name, m.loc)
+        if leaves is None:
+            cs.blockers.append(
+                f"'{m.name}'@{m.location} has unresolvable members (dynamic, dangling, or "
+                "malformed) — its effective set is unknowable, so it cannot be promoted"
+            )
+            continue
+        sets[(m.name, m.location)] = leaves
+    if cs.blockers:
+        return
+    if len(set(sets.values())) > 1:
+        cs.blockers.append(
+            "effective member sets differ across the bucket; these groups are not "
+            "equivalent and promoting one over the others would change rule matching"
+        )
 
 
 def _check_per_member_gates(
@@ -400,7 +434,10 @@ def plan_promote(
     survivor_objs = [(m, o) for m, o in objs if m.name == survivor]
     template_ref, template = survivor_objs[0]
 
-    _check_same_value(cs, kind, (template_ref, template), objs)
+    if kind is ObjectKind.ADDRESS_GROUP:
+        _gate_group_equivalence(cs, snapshot, graph, objs=objs)
+    else:
+        _check_same_value(cs, kind, (template_ref, template), objs)
     if cs.blockers:
         return _blocked(cs)
 
@@ -461,6 +498,11 @@ def buckets_for_kind(
         return find_duplicate_addresses(snapshot)
     if kind is ObjectKind.SERVICE:
         return find_duplicate_services(snapshot)
+    if kind is ObjectKind.ADDRESS_GROUP:
+        # Leaf-set-keyed, unlike the name-keyed `--name` selector: a sweep should
+        # find equivalent groups whatever they are called. Dynamic and unresolvable
+        # groups are excluded by the finder itself.
+        return find_duplicate_groups(snapshot, graph).buckets
     raise PscError(f"promote --all does not support {kind.value}", ErrorType.INPUT)
 
 
@@ -472,6 +514,8 @@ def select_bucket(
         return select_address_bucket(snapshot, value)
     if kind is ObjectKind.SERVICE:
         return select_service_bucket(snapshot, value)
+    if kind is ObjectKind.ADDRESS_GROUP:
+        return select_group_bucket(snapshot, value)
     raise PscError(f"promote --group does not support {kind.value}", ErrorType.INPUT)
 
 

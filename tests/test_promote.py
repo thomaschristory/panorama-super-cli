@@ -466,3 +466,91 @@ def test_group_member_lists_are_repointed_too() -> None:
 
     assert not cs.is_blocked
     assert [(e.referrer_name, e.after) for e in cs.reference_edits] == [("apac-web", ["h-web1"])]
+
+
+def _grp(name: str, loc: str, members: list[str]) -> AddressGroup:
+    return AddressGroup(name=name, location=_loc(loc), static_members=members)
+
+
+def test_group_bucket_promotes_when_its_members_are_already_shared() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", "shared")],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web1"])],
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS_GROUP, members=[("web", EMEA), ("web", APAC)])
+
+    assert not cs.is_blocked
+    assert [(u.name, u.location) for u in cs.upserts] == [("web", "shared")]
+    assert cs.upserts[0].members == ["h-web1"]
+    assert len(cs.deletes) == 2
+
+
+def test_group_bucket_with_dg_local_members_is_blocked_without_cascade() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("h-web1", APAC)],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web1"])],
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS_GROUP, members=[("web", EMEA), ("web", APAC)])
+
+    assert cs.is_blocked
+    assert any("not visible at shared" in b for b in cs.blockers)
+
+
+def test_group_bucket_with_differing_effective_leaf_sets_is_blocked() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", "shared"), _addr("h-web2", "shared", value="10.0.0.2/32")],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web2"])],
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS_GROUP, members=[("web", EMEA), ("web", APAC)])
+
+    assert cs.is_blocked
+    assert any("effective member sets differ" in b for b in cs.blockers)
+
+
+def test_group_bucket_with_the_same_leaf_set_under_different_member_names_promotes() -> None:
+    # EMEA's group names the shared object directly; APAC's goes through a nested
+    # group. Same effective leaves -> equivalent, so promotable.
+    snap = _snap(
+        addresses=[_addr("h-web1", "shared")],
+        address_groups=[
+            _grp("inner", "shared", ["h-web1"]),
+            _grp("web", EMEA, ["h-web1"]),
+            _grp("web", APAC, ["inner"]),
+        ],
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS_GROUP, members=[("web", EMEA), ("web", APAC)])
+
+    assert not cs.is_blocked
+
+
+def test_dynamic_group_bucket_is_blocked() -> None:
+    snap = _snap(
+        address_groups=[
+            AddressGroup(name="dag", location=_loc(EMEA), dynamic_filter="'prod'"),
+            AddressGroup(name="dag", location=_loc(APAC), dynamic_filter="'prod'"),
+        ]
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS_GROUP, members=[("dag", EMEA), ("dag", APAC)])
+
+    assert cs.is_blocked
+    assert any("unresolvable" in b for b in cs.blockers)
+
+
+def test_select_group_bucket_is_name_keyed() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", "shared")],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web1"])],
+    )
+    bucket = select_bucket(
+        snap, ReferenceGraph.build(snap), kind=ObjectKind.ADDRESS_GROUP, value="web"
+    )
+    assert sorted(m.location for m in bucket.members) == [APAC, EMEA]
+
+
+def test_select_group_bucket_needs_more_than_one_definition() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", "shared")],
+        address_groups=[_grp("web", EMEA, ["h-web1"])],
+    )
+    with pytest.raises(PscError):
+        select_bucket(snap, ReferenceGraph.build(snap), kind=ObjectKind.ADDRESS_GROUP, value="web")
