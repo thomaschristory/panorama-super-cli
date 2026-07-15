@@ -109,6 +109,35 @@ def test_find_ip_json_contract() -> None:
     assert {m["name"] for m in data["matches"]} >= {"h-web1", "web-primary"}
 
 
+def test_find_ip_json_carries_tags() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "find", "ip", "10.0.0.10")
+    assert cp.returncode == 0
+    data = json.loads(cp.stdout)
+    tags_by_name = {m["name"]: m["tags"] for m in data["matches"]}
+    assert tags_by_name["h-web1"] == ["t-prod"]
+
+
+def test_find_ip_table_has_tags_column() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "table", "find", "ip", "10.0.0.10")
+    assert cp.returncode == 0
+    assert "tags" in cp.stdout
+    assert "t-prod" in cp.stdout
+
+
+def test_find_object_json_carries_tags() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "find", "object", "grp-web")
+    assert cp.returncode == 0
+    assert json.loads(cp.stdout)[0]["tags"] == ["t-prod"]
+
+
+def test_find_object_tag_kind_reports_empty_tags() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "find", "object", "t-prod")
+    assert cp.returncode == 0
+    hit = json.loads(cp.stdout)[0]
+    assert hit["kind"] == "tag"
+    assert hit["tags"] == []
+
+
 def test_find_ip_exact_flag_json() -> None:
     cp = run("-c", str(FIXTURE), "-o", "json", "find", "ip", "--exact", "10.0.0.10")
     assert cp.returncode == 0

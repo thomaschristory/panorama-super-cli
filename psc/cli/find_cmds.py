@@ -83,6 +83,7 @@ def ip(
                     "location": "",
                     "type": "",
                     "value": "",
+                    "tags": [],
                 }
             )
         for m in res.matches:
@@ -94,6 +95,7 @@ def ip(
                     "location": m.location,
                     "type": m.type,
                     "value": m.value,
+                    "tags": m.tags,
                 }
             )
 
@@ -133,7 +135,14 @@ def obj(
         return
     hits = find_object(rt.snapshot(), name)
     rows = [
-        {"kind": h.kind, "name": h.name, "location": h.location, "detail": h.detail} for h in hits
+        {
+            "kind": h.kind,
+            "name": h.name,
+            "location": h.location,
+            "detail": h.detail,
+            "tags": h.tags,
+        }
+        for h in hits
     ]
     if rt.strict and not hits:
         raise PscError(f"no object named '{name}'", ErrorType.NOT_FOUND)

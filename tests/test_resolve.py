@@ -154,3 +154,22 @@ def test_find_object_across_kinds(snapshot: Snapshot) -> None:
     hits = find_object(snapshot, "grp-web")
     assert len(hits) == 1
     assert hits[0].kind == "address-group"
+
+
+def test_find_ip_match_carries_tags(snapshot: Snapshot) -> None:
+    # h-web1 carries tag t-prod in the fixture; the match must surface it.
+    res = find_ip(snapshot, "10.0.0.10")
+    match = next(m for m in res.matches if m.name == "h-web1")
+    assert match.tags == ["t-prod"]
+
+
+def test_find_object_carries_tags(snapshot: Snapshot) -> None:
+    hits = find_object(snapshot, "grp-web")
+    assert hits[0].tags == ["t-prod"]
+
+
+def test_find_object_tag_kind_has_empty_tags(snapshot: Snapshot) -> None:
+    # A tag definition has no tags of its own — empty list, never populated.
+    hits = find_object(snapshot, "t-prod")
+    assert [h.kind for h in hits] == ["tag"]
+    assert hits[0].tags == []

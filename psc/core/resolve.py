@@ -21,12 +21,14 @@ class AddressMatch(BaseModel):
     type: str
     value: str
     match: MatchKind
+    tags: list[str] = Field(default_factory=list)
 
 
 class GroupMatch(BaseModel):
     name: str
     location: str
     via: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class FindResult(BaseModel):
@@ -138,6 +140,7 @@ def find_ip(
             type=a.type.value,
             value=a.value,
             match=mk,
+            tags=a.tags,
         )
         for a, mk in sorted(matched, key=lambda t: (t[1].value, t[0].location.name, t[0].name))
     ]
@@ -169,7 +172,9 @@ def find_ip(
             if (_resolve_member(ag.location, m) or ("", "")) in matched_keys
         ]
         if via:
-            groups.append(GroupMatch(name=ag.name, location=ag.location.name, via=via))
+            groups.append(
+                GroupMatch(name=ag.name, location=ag.location.name, via=via, tags=ag.tags)
+            )
 
     return FindResult(
         query=raw,
@@ -201,6 +206,7 @@ class ObjectHit(BaseModel):
     name: str
     location: str
     detail: str
+    tags: list[str] = Field(default_factory=list)
 
 
 def find_object(snapshot: Snapshot, name: str) -> list[ObjectHit]:
@@ -214,6 +220,7 @@ def find_object(snapshot: Snapshot, name: str) -> list[ObjectHit]:
                     name=a.name,
                     location=a.location.name,
                     detail=f"{a.type.value} {a.value}",
+                    tags=a.tags,
                 )
             )
     for ag in snapshot.address_groups:
@@ -221,7 +228,11 @@ def find_object(snapshot: Snapshot, name: str) -> list[ObjectHit]:
             detail = ag.dynamic_filter or f"static[{len(ag.static_members or [])}]"
             hits.append(
                 ObjectHit(
-                    kind="address-group", name=ag.name, location=ag.location.name, detail=detail
+                    kind="address-group",
+                    name=ag.name,
+                    location=ag.location.name,
+                    detail=detail,
+                    tags=ag.tags,
                 )
             )
     for s in snapshot.services:
@@ -232,6 +243,7 @@ def find_object(snapshot: Snapshot, name: str) -> list[ObjectHit]:
                     name=s.name,
                     location=s.location.name,
                     detail=f"{s.protocol}/{s.destination_port}",
+                    tags=s.tags,
                 )
             )
     for sg in snapshot.service_groups:
@@ -242,6 +254,7 @@ def find_object(snapshot: Snapshot, name: str) -> list[ObjectHit]:
                     name=sg.name,
                     location=sg.location.name,
                     detail=f"members[{len(sg.members)}]",
+                    tags=sg.tags,
                 )
             )
     for t in snapshot.tags:
