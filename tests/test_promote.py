@@ -554,3 +554,132 @@ def test_select_group_bucket_needs_more_than_one_definition() -> None:
     )
     with pytest.raises(PscError):
         select_bucket(snap, ReferenceGraph.build(snap), kind=ObjectKind.ADDRESS_GROUP, value="web")
+
+
+def _promote_cascade(
+    snap: Snapshot, *, members: list[tuple[str, str]], dest: str = "shared"
+) -> ChangeSet:
+    return plan_promote(
+        snap,
+        ReferenceGraph.build(snap),
+        kind=ObjectKind.ADDRESS_GROUP,
+        members=[ObjectRef(name=n, location=loc) for n, loc in members],
+        dest_name=dest,
+        cascade=True,
+    )
+
+
+def test_cascade_promotes_the_leaves_and_deduplicates_them_across_members() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("h-web1", APAC)],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web1"])],
+    )
+    cs = _promote_cascade(snap, members=[("web", EMEA), ("web", APAC)])
+
+    assert not cs.is_blocked
+    # ONE shared h-web1, ONE shared web — not one per device-group.
+    assert [(u.kind.value, u.name, u.location) for u in cs.upserts] == [
+        ("address", "h-web1", "shared"),
+        ("address-group", "web", "shared"),
+    ]
+    # But BOTH device-group copies of each are deleted.
+    assert sorted((d.kind.value, d.name, d.location) for d in cs.deletes) == [
+        ("address", "h-web1", APAC),
+        ("address", "h-web1", EMEA),
+        ("address-group", "web", APAC),
+        ("address-group", "web", EMEA),
+    ]
+
+
+def test_cascade_upserts_leaves_before_the_group_that_references_them() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("h-web1", APAC)],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web1"])],
+    )
+    cs = _promote_cascade(snap, members=[("web", EMEA), ("web", APAC)])
+
+    kinds = [u.kind for u in cs.upserts]
+    assert kinds.index(ObjectKind.ADDRESS) < kinds.index(ObjectKind.ADDRESS_GROUP)
+
+
+def test_cascade_with_conflicting_leaf_values_is_blocked() -> None:
+    # Both device-groups have an `h-web1`, but they are DIFFERENT hosts. The two
+    # groups still expand to different leaf sets, so the equivalence gate fires
+    # first — assert the plan is blocked and names the conflict either way.
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("h-web1", APAC, value="10.9.9.9/32")],
+        address_groups=[_grp("web", EMEA, ["h-web1"]), _grp("web", APAC, ["h-web1"])],
+    )
+    cs = _promote_cascade(snap, members=[("web", EMEA), ("web", APAC)])
+
+    assert cs.is_blocked
+    assert cs.upserts == [] and cs.deletes == []
+
+
+def test_cascade_conflict_on_a_leaf_the_equivalence_gate_cannot_see() -> None:
+    # The groups ARE equivalent (both expand to 10.0.0.1), but each reaches it via a
+    # DG-local object of the same name carrying a different literal spelling that
+    # normalizes the same — so equivalence passes and the cascade must catch nothing.
+    # Then flip one leaf's TAGS, which `same_value` ignores: still no conflict.
+    # The real conflict case is a *nested group* name collision:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("h-web1", APAC)],
+        address_groups=[
+            _grp("inner", EMEA, ["h-web1"]),
+            _grp("inner", APAC, ["h-web1"]),
+            _grp("web", EMEA, ["inner"]),
+            _grp("web", APAC, ["inner"]),
+        ],
+    )
+    cs = _promote_cascade(snap, members=[("web", EMEA), ("web", APAC)])
+
+    # Equivalent groups, equivalent nested groups, equivalent leaves -> promotes,
+    # with ONE copy of each at shared.
+    assert not cs.is_blocked
+    assert [(u.kind.value, u.name) for u in cs.upserts] == [
+        ("address", "h-web1"),
+        ("address-group", "inner"),
+        ("address-group", "web"),
+    ]
+    assert len(cs.deletes) == 6  # two copies each of h-web1, inner, web
+
+
+def test_cascade_retains_a_leaf_still_needed_by_an_object_left_behind() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("h-web1", APAC)],
+        address_groups=[
+            _grp("web", EMEA, ["h-web1"]),
+            _grp("web", APAC, ["h-web1"]),
+            _grp("other", EMEA, ["h-web1"]),  # stays behind, still needs the EMEA leaf
+        ],
+    )
+    cs = _promote_cascade(snap, members=[("web", EMEA), ("web", APAC)])
+
+    assert not cs.is_blocked
+    deleted = {(d.kind.value, d.name, d.location) for d in cs.deletes}
+    assert ("address", "h-web1", EMEA) not in deleted  # retained for `other`
+    assert ("address", "h-web1", APAC) in deleted
+    assert any("copy is retained" in w for w in cs.warnings)
+
+
+def test_cascade_conflict_on_a_nested_group_the_equivalence_gate_cannot_see() -> None:
+    # The two `web` groups expand to the SAME effective leaf set ({10.0.0.1}), so
+    # `_gate_group_equivalence` passes and cannot catch anything. But the DG-local
+    # `inner` groups they cascade carry DIFFERENT static-member lists (APAC adds a
+    # same-valued duplicate leaf). Folding them onto one `inner@shared` is impossible:
+    # the cascade-conflict gate is the ONLY thing that sees it, and it must block with
+    # zero ops — never a last-write-wins upsert.
+    snap = _snap(
+        addresses=[_addr("h-a", EMEA), _addr("h-a", APAC), _addr("h-b", APAC)],
+        address_groups=[
+            _grp("inner", EMEA, ["h-a"]),
+            _grp("inner", APAC, ["h-a", "h-b"]),
+            _grp("web", EMEA, ["inner"]),
+            _grp("web", APAC, ["inner"]),
+        ],
+    )
+    cs = _promote_cascade(snap, members=[("web", EMEA), ("web", APAC)])
+
+    assert cs.is_blocked
+    assert any("cascade conflict" in b for b in cs.blockers)
+    assert cs.upserts == [] and cs.deletes == []

@@ -52,7 +52,9 @@ from psc.core.relocate import (
     NAMESPACE,
     Obj,
     build_destination_upsert,
+    cascade_closure,
     find_object,
+    has_remaining_local_referrer,
     promotion_blocker,
     revive_warnings,
     same_value,
@@ -227,11 +229,14 @@ def _check_per_member_gates(
     namespace: str,
     dest: Location,
     objs: list[_Member],
+    check_dependencies: bool,
 ) -> None:
     """Run relocate's direction/intermediate-shadow/dependency gates per source.
 
     A member already sitting at the destination is not a source: there is
-    nothing to promote and nothing to shadow-check.
+    nothing to promote and nothing to shadow-check. Under `--cascade` the
+    dependency gate is off (`check_dependencies=False`): the closure pulls those
+    dependencies up to the destination too, so refusing on them defeats the flag.
     """
     for m, obj in objs:
         if m.loc == dest:
@@ -245,7 +250,7 @@ def _check_per_member_gates(
             source=m.loc,
             dest=dest,
             namespace=namespace,
-            check_dependencies=True,
+            check_dependencies=check_dependencies,
         )
         if blocker is not None:
             cs.blockers.append(f"'{m.name}'@{m.location}: {blocker}")
@@ -285,6 +290,122 @@ def _plan_destination(
     cs.upserts.extend(upsert_cs.upserts)
     cs.blockers.extend(upsert_cs.blockers)
     cs.warnings.extend(upsert_cs.warnings)
+
+
+def _plan_cascade_bucket(  # noqa: PLR0912 — explicit fold/gate/upsert/delete-with-retain phases
+    cs: ChangeSet,
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    kind: ObjectKind,
+    survivor: str,
+    dest: Location,
+    objs: list[_Member],
+) -> None:
+    """Promote every member's dependency closure, folded into ONE set of upserts.
+
+    This is the whole reason group promotion is hard. Two device-groups' copies of a
+    group cascade the SAME leaf names to the SAME destination. Planning each closure
+    independently would upsert `h-web1@shared` twice — last write silently winning —
+    so the closures are folded on `(kind, destination-name)`: the first claim wins,
+    an identical second claim is redundant, and a second claim carrying a DIFFERENT
+    value is a blocker, because there is no correct single object to promote.
+
+    De-duplicating the *upserts* must not de-duplicate the *deletes*: every source
+    copy still has to go, including the ones whose upsert was folded away. Sources are
+    therefore tracked separately, keyed by their own identity rather than their
+    destination slot.
+    """
+    # (kind, destination-name) -> (object, the member whose closure claimed it)
+    claimed: dict[tuple[ObjectKind, str], tuple[Obj, ObjectRef]] = {}
+    upsert_order: list[tuple[ObjectKind, str, Obj]] = []
+    sources: list[tuple[ObjectKind, Obj, Location]] = []
+    seen_sources: set[tuple[str, str, str]] = set()
+
+    for m, obj in objs:
+        if m.loc == dest:
+            continue  # already home
+        closure = cascade_closure(
+            snapshot,
+            graph,
+            root_kind=kind,
+            root_name=m.name,
+            src_obj=obj,
+            source=m.loc,
+            dest=dest,
+        )
+        for c_kind, c_name, c_obj in closure:
+            # Only the bucket's own roots are renamed onto the survivor; a cascaded
+            # dependency keeps its name, because the promoted group refers to it BY
+            # that name.
+            is_root = c_kind is kind and c_name == m.name and c_obj.location == m.loc
+            dest_name = survivor if is_root else c_name
+
+            src_id = (c_kind.value, c_obj.name, c_obj.location.name)
+            if src_id not in seen_sources:
+                seen_sources.add(src_id)
+                sources.append((c_kind, c_obj, c_obj.location))
+
+            key = (c_kind, dest_name)
+            prior = claimed.get(key)
+            if prior is None:
+                claimed[key] = (c_obj, m)
+                upsert_order.append((c_kind, dest_name, c_obj))
+            elif not same_value(c_kind, prior[0], c_obj):
+                cs.blockers.append(
+                    f"cascade conflict: {c_kind.value} '{dest_name}' would be promoted to "
+                    f"{dest.name} from both '{prior[1].name}'@{prior[1].location} and "
+                    f"'{m.name}'@{m.location}, but those copies carry different values; "
+                    "consolidate them first"
+                )
+    if cs.blockers:
+        return
+
+    # Gate every distinct object once. Direction is guaranteed (one destination for
+    # all of them); the dependency gate is off because the closure already accounts
+    # for downward deps.
+    for c_kind, _dest_name, c_obj in upsert_order:
+        blocker = promotion_blocker(
+            snapshot,
+            graph,
+            kind=c_kind,
+            name=c_obj.name,
+            src_obj=c_obj,
+            source=c_obj.location,
+            dest=dest,
+            namespace=NAMESPACE[c_kind],
+            check_dependencies=False,
+        )
+        if blocker is not None:
+            cs.blockers.append(f"'{c_obj.name}'@{c_obj.location.name}: {blocker}")
+    if cs.blockers:
+        return
+
+    # Deepest dependencies first, roots last — `cascade_closure` is already post-order,
+    # and folding preserves each closure's internal order.
+    for c_kind, dest_name, c_obj in upsert_order:
+        _plan_destination(cs, snapshot, kind=c_kind, template=c_obj, survivor=dest_name, dest=dest)
+    if cs.blockers:
+        return
+
+    cascade_ids = {(k.value, o.name, loc.name) for k, o, loc in sources}
+    root_ids = {(kind.value, m.name, m.location) for m, _ in objs}
+    for c_kind, c_obj, src_loc in sources:
+        # A root always loses its source copy — that IS the promotion. Only a cascaded
+        # dependency is retain-eligible: an object staying behind in the source subtree
+        # may still need its device-group definition.
+        if (c_kind.value, c_obj.name, src_loc.name) not in root_ids and (
+            has_remaining_local_referrer(
+                graph, kind=c_kind, name=c_obj.name, loc=src_loc, cascade_ids=cascade_ids
+            )
+        ):
+            cs.warnings.append(
+                f"{c_kind.value} '{c_obj.name}'@{src_loc.name} is still referenced by an object "
+                f"remaining in {src_loc.name}; it is promoted to {dest.name} but its "
+                f"{src_loc.name} copy is retained (delete it by hand once nothing local needs it)"
+            )
+            continue
+        cs.deletes.append(ObjectDelete(kind=c_kind, name=c_obj.name, location=src_loc.name))
 
 
 def _synthetic(
@@ -395,6 +516,41 @@ def _pick_survivor(cs: ChangeSet, objs: list[_Member], keep_name: str | None) ->
     return next(iter(names))
 
 
+def _plan_bucket_ops(
+    cs: ChangeSet,
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    kind: ObjectKind,
+    template: Obj,
+    survivor: str,
+    dest: Location,
+    objs: list[_Member],
+    cascade: bool,
+) -> None:
+    """Emit the survivor upsert(s) and the source deletes for the bucket.
+
+    The two strategies sit behind one call so `plan_promote` need not branch on
+    `cascade` itself: the flat path upserts the survivor once and deletes every
+    non-destination copy; the cascade path folds each member's dependency closure
+    (see `_plan_cascade_bucket`). Either may append blockers; the caller gates.
+    """
+    if cs.blockers:
+        return  # an earlier gate already refused; nothing to plan
+    if cascade:
+        _plan_cascade_bucket(
+            cs, snapshot, graph, kind=kind, survivor=survivor, dest=dest, objs=objs
+        )
+        return
+    _plan_destination(cs, snapshot, kind=kind, template=template, survivor=survivor, dest=dest)
+    if cs.blockers:
+        return
+    for m, _obj in objs:
+        if m.loc == dest and m.name == survivor:
+            continue  # this IS the destination object
+        cs.deletes.append(ObjectDelete(kind=kind, name=m.name, location=m.location))
+
+
 def plan_promote(
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -403,6 +559,7 @@ def plan_promote(
     members: list[ObjectRef],
     dest_name: str = "shared",
     keep_name: str | None = None,
+    cascade: bool = False,
 ) -> ChangeSet:
     """Plan promoting a whole duplicate bucket to `dest_name` (default `shared`).
 
@@ -412,6 +569,12 @@ def plan_promote(
     need `keep_name` to unify them on one survivor, which repoints every referrer of
     the odd-named copies onto the survivor before deleting them. A member already
     sitting at the destination under the survivor name is adopted rather than deleted.
+
+    With `cascade`, each member's downward dependency closure (members, nested
+    groups, tags) is pulled up to `dest` too, folded across the bucket so one
+    upsert serves a leaf that recurs in several members — provided those copies
+    carry the same value; a same-named leaf with a divergent value is a blocker,
+    never a last-write-wins upsert.
     """
     if kind not in PROMOTABLE_KINDS:
         raise PscError(f"promote does not support {kind.value} objects", ErrorType.INPUT)
@@ -442,16 +605,28 @@ def plan_promote(
         return _blocked(cs)
 
     _check_per_member_gates(
-        cs, snapshot, graph, kind=kind, namespace=namespace, dest=dest, objs=objs
+        cs,
+        snapshot,
+        graph,
+        kind=kind,
+        namespace=namespace,
+        dest=dest,
+        objs=objs,
+        check_dependencies=not cascade,
     )
-    _plan_destination(cs, snapshot, kind=kind, template=template, survivor=survivor, dest=dest)
+    _plan_bucket_ops(
+        cs,
+        snapshot,
+        graph,
+        kind=kind,
+        template=template,
+        survivor=survivor,
+        dest=dest,
+        objs=objs,
+        cascade=cascade,
+    )
     if cs.blockers:
         return _blocked(cs)
-
-    for m, _obj in objs:
-        if m.loc == dest and m.name == survivor:
-            continue  # this IS the destination object
-        cs.deletes.append(ObjectDelete(kind=kind, name=m.name, location=m.location))
 
     # Repoint after the deletes are staged: the unmappable-reference gate only
     # fires when the plan also tears something down, so a doomed shadow must
