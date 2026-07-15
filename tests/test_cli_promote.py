@@ -424,3 +424,87 @@ def test_cascade_on_a_value_keyed_kind_is_a_usage_error(tmp_path: Path) -> None:
         "10.0.0.1/32",
     )
     assert cp.returncode != 0
+
+
+# --- tag dedup (#162) --------------------------------------------------------
+
+# 'prod' redundantly defined in DG-A and DG-B with DIFFERENT colours: the bucket
+# is name-keyed (colour is cosmetic), so it still consolidates, and the colour
+# difference must surface as a drift warning rather than a blocker.
+_TAG_XML = """<config><shared></shared><devices><entry name="localhost.localdomain"><device-group>
+  <entry name="DG-A">
+    <tag><entry name="prod"><color>color1</color></entry></tag>
+  </entry>
+  <entry name="DG-B">
+    <tag><entry name="prod"><color>color5</color></entry></tag>
+  </entry>
+</device-group></entry></devices></config>"""
+
+# A bare tag (no colour/comments) in two DGs: the promoted create carries no
+# fields, so the `set` renderer must still emit `set shared tag prod`.
+_BARE_TAG_XML = """<config><shared></shared><devices><entry \
+name="localhost.localdomain"><device-group>
+  <entry name="DG-A"><tag><entry name="prod"/></tag></entry>
+  <entry name="DG-B"><tag><entry name="prod"/></tag></entry>
+</device-group></entry></devices></config>"""
+
+
+def test_dedup_tags_lists_redundant_tags(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _TAG_XML)
+    cp = run("-c", str(cfg), "-o", "json", "dedup", "tags")
+    assert cp.returncode == 0, cp.stderr
+    assert "prod" in cp.stdout
+    assert "DG-A" in cp.stdout and "DG-B" in cp.stdout
+
+
+def test_dedup_promote_tag_apply_promotes_to_shared(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _TAG_XML)
+    out = tmp_path / "out.xml"
+    cp = run(
+        "-c", str(cfg), "dedup", "promote", "tag", "--name", "prod", "--apply", "--out", str(out)
+    )
+    assert cp.returncode == 0, cp.stderr
+    root = xml_fromstring(out.read_text())
+    shared_tags = {e.get("name") for e in root.findall("./shared/tag/entry")}
+    assert shared_tags == {"prod"}  # promoted to shared
+    for dg in ("DG-A", "DG-B"):
+        entry = next(
+            e for e in root.findall("./devices/entry/device-group/entry") if e.get("name") == dg
+        )
+        assert entry.findall("./tag/entry") == []  # both DG copies gone
+
+
+def test_dedup_promote_tag_warns_on_colour_drift(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _TAG_XML)
+    cp = run("-c", str(cfg), "dedup", "promote", "tag", "--name", "prod")
+    assert cp.returncode == 0, cp.stderr
+    assert "color" in (cp.stdout + cp.stderr)
+
+
+def test_dedup_promote_tag_all_set_output_emits_bare_create(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _BARE_TAG_XML)
+    cp = run("-c", str(cfg), "-o", "set", "dedup", "promote", "tag", "--all")
+    assert cp.returncode == 0, cp.stderr
+    assert "set shared tag prod" in cp.stdout  # fieldless create still rendered
+    assert "delete" in cp.stdout and "tag prod" in cp.stdout
+
+
+def test_dedup_promote_tag_rejects_group_flag(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _TAG_XML)
+    cp = run("-c", str(cfg), "dedup", "promote", "tag", "--group", "prod")
+    assert cp.returncode != 0
+    assert "name-keyed" in (cp.stdout + cp.stderr)
+
+
+def test_dedup_promote_tag_rejects_keep_flag(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _TAG_XML)
+    cp = run("-c", str(cfg), "dedup", "promote", "tag", "--name", "prod", "--keep", "prod")
+    assert cp.returncode != 0
+    assert "keep" in (cp.stdout + cp.stderr).lower()
+
+
+def test_dedup_promote_tag_rejects_cascade_flag(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path, _TAG_XML)
+    cp = run("-c", str(cfg), "dedup", "promote", "tag", "--name", "prod", "--cascade")
+    assert cp.returncode != 0
+    assert "cascade" in (cp.stdout + cp.stderr).lower()

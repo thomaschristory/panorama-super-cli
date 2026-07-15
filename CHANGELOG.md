@@ -5,6 +5,21 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
+## Unreleased
+
+### Added
+
+- `psc dedup tags` lists tags redundantly defined under one name in multiple
+  locations, and `psc dedup promote tag --name/--all` consolidates a bucket to a
+  common ancestor (default `shared`)
+  ([#162](https://github.com/thomaschristory/panorama-super-cli/issues/162)).
+  Tags are name-keyed — a tag carries no match-affecting value — so the
+  consolidation repoints **nothing**: deleting the device-group copies lets
+  their references re-resolve upward to the survivor by name. A discarded copy's
+  differing color/comments surface as a drift warning, never a blocker. Tags are
+  also a bucketable kind in the workbench dedup spoke (promote-only). `--group`,
+  `--keep`, and `--cascade` do not apply to `tag`.
+
 ## v1.10.0 — 2026-07-15
 
 ### Added

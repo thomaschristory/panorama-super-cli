@@ -40,11 +40,11 @@ if TYPE_CHECKING:
 
 _MIN_DUP_COUNT = 2
 
-# Kinds the spoke can bucket. `plan_merge_bucket` is address-only, so a service
-# or address-group bucket can be promoted but not merged in place — the screen
-# reflects that by refusing to offer the blank (merge) destination option
-# (see `compose`).
-_BUCKET_KINDS = frozenset({"address", "service", "address-group"})
+# Kinds the spoke can bucket. `plan_merge_bucket` is address-only, so a service,
+# address-group, or tag bucket can be promoted but not merged in place — the
+# screen reflects that by refusing to offer the blank (merge) destination option
+# (see `compose`). Tags bucket by name (not value); all others by value.
+_BUCKET_KINDS = frozenset({"address", "service", "address-group", "tag"})
 _MERGEABLE_KINDS = frozenset({ObjectKind.ADDRESS})
 
 
@@ -85,6 +85,10 @@ def selection_bucket(session: WorkbenchSession) -> tuple[ObjectKind, list[Object
             if leaves is None:
                 continue  # dynamic or unresolvable: no knowable set to bucket on
             keys[(g.location.name, g.name)] = _group_set_key(leaves)
+    elif kind is ObjectKind.TAG:
+        # Tags are name-keyed: same-named tags across locations form one bucket
+        # (colour/comments are cosmetic, so they never split a bucket).
+        keys = {(t.location.name, t.name): t.name for t in snap.tags}
     else:
         keys = {(s.location.name, s.name): service_key(s) for s in snap.services}
 

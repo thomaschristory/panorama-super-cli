@@ -247,3 +247,61 @@ def test_cascade_flag_reaches_the_engine(session_with_dup_groups: WorkbenchSessi
     _label, cs = plan_selection_bucket(session_with_dup_groups, dest_name="shared", cascade=True)
     assert not cs.is_blocked
     assert any(u.kind is ObjectKind.ADDRESS for u in cs.upserts)  # the leaves came too
+
+
+# --- tag buckets (#162): name-keyed, promote-only ---------------------------
+
+# 'prod' redundantly defined in two sibling device-groups (no copy in shared) —
+# the tag dedup case. Name-keyed: colours differ but the bucket still forms.
+_TWO_DG_TAG_XML = """<?xml version="1.0"?>
+<config>
+  <shared></shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <tag><entry name="prod"><color>color1</color></entry></tag>
+        </entry>
+        <entry name="dg2">
+          <tag><entry name="prod"><color>color5</color></entry></tag>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def session_with_dup_tags(tmp_path) -> WorkbenchSession:
+    p = tmp_path / "config_two_dg_tag.xml"
+    p.write_text(_TWO_DG_TAG_XML, encoding="utf-8")
+    sess = _session(str(p))
+    sess.add(SelectionItem(kind="tag", name="prod", location="dg1"))
+    sess.add(SelectionItem(kind="tag", name="prod", location="dg2"))
+    return sess
+
+
+def test_selection_bucket_groups_same_named_tags(
+    session_with_dup_tags: WorkbenchSession,
+) -> None:
+    found = selection_bucket(session_with_dup_tags)
+    assert found is not None
+    kind, members = found
+    assert kind is ObjectKind.TAG
+    assert {m.location for m in members} == {"dg1", "dg2"}
+
+
+def test_tag_bucket_plans_promote_not_merge(
+    session_with_dup_tags: WorkbenchSession,
+) -> None:
+    # Tags have no in-place merge planner, so a blank destination yields no plan;
+    # a destination promotes the whole bucket with zero repoints.
+    assert plan_selection_bucket(session_with_dup_tags) is None
+    plan = plan_selection_bucket(session_with_dup_tags, dest_name="shared")
+    assert plan is not None
+    label, cs = plan
+    assert label.startswith("promote ")
+    assert not cs.is_blocked
+    assert [u.location for u in cs.upserts] == ["shared"]
+    assert cs.reference_edits == []

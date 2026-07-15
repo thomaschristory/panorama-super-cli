@@ -14,6 +14,7 @@ from psc.core.models import (
     SecurityRule,
     Service,
     Snapshot,
+    Tag,
 )
 from psc.core.promote import SkippedBucket, plan_promote, plan_promote_all, select_bucket
 from psc.core.refs import ReferenceGraph
@@ -49,6 +50,10 @@ def _addr(name: str, loc: str, value: str = "10.0.0.1/32", **kw: object) -> Addr
 
 def _svc(name: str, loc: str, port: str = "443") -> Service:
     return Service(name=name, location=_loc(loc), protocol="tcp", destination_port=port)
+
+
+def _tag(name: str, loc: str, **kw: object) -> Tag:
+    return Tag(name=name, location=_loc(loc), **kw)  # type: ignore[arg-type]
 
 
 def _rule(name: str, loc: str, *, source: list[str]) -> SecurityRule:
@@ -177,13 +182,15 @@ def test_missing_member_is_blocked() -> None:
 
 
 def test_unpromotable_kind_is_an_input_error() -> None:
+    # service-group has no dedup finder, so it has no bucket to promote (tags,
+    # by contrast, ARE promotable — see the tag tests below).
     snap = _snap()
     with pytest.raises(PscError):
         plan_promote(
             snap,
             ReferenceGraph.build(snap),
-            kind=ObjectKind.TAG,
-            members=[ObjectRef(name="t", location=EMEA)],
+            kind=ObjectKind.SERVICE_GROUP,
+            members=[ObjectRef(name="sg", location=EMEA)],
         )
 
 
@@ -683,3 +690,58 @@ def test_cascade_conflict_on_a_nested_group_the_equivalence_gate_cannot_see() ->
     assert cs.is_blocked
     assert any("cascade conflict" in b for b in cs.blockers)
     assert cs.upserts == [] and cs.deletes == []
+
+
+def test_tag_only_in_dgs_promotes_with_one_upsert_and_no_repoints() -> None:
+    snap = _snap(
+        tags=[_tag("prod", DC), _tag("prod", APAC)],
+        addresses=[_addr("web", DC, tags=["prod"]), _addr("db", APAC, tags=["prod"])],
+    )
+    cs = _promote(snap, kind=ObjectKind.TAG, members=[("prod", DC), ("prod", APAC)])
+    assert not cs.is_blocked
+    assert [u.name for u in cs.upserts] == ["prod"]
+    assert cs.upserts[0].location == "shared"
+    assert cs.reference_edits == []  # name-stable: refs re-resolve upward
+    assert {(d.name, d.location) for d in cs.deletes} == {("prod", DC), ("prod", APAC)}
+
+
+def test_tag_shared_copy_is_adopted_not_recreated() -> None:
+    snap = _snap(tags=[_tag("prod", "shared"), _tag("prod", DC)])
+    cs = _promote(snap, kind=ObjectKind.TAG, members=[("prod", "shared"), ("prod", DC)])
+    assert not cs.is_blocked
+    assert cs.upserts == []  # shared already defines it
+    assert {(d.name, d.location) for d in cs.deletes} == {("prod", DC)}
+
+
+def test_tag_colour_drift_warns_but_does_not_block() -> None:
+    snap = _snap(
+        tags=[_tag("prod", DC, color="color1"), _tag("prod", APAC, color="color5")],
+    )
+    cs = _promote(snap, kind=ObjectKind.TAG, members=[("prod", DC), ("prod", APAC)])
+    assert not cs.is_blocked
+    assert any("color" in w for w in cs.warnings)
+
+
+def test_tag_sibling_shadow_warns() -> None:
+    # 'prod' promoted from EMEA/APAC to shared. DC (a child of EMEA, not in the
+    # bucket and not an ancestor of any member) also defines 'prod', so it keeps
+    # shadowing shared for its own subtree — a sibling shadow, not a blocker.
+    snap = _snap(tags=[_tag("prod", EMEA), _tag("prod", APAC), _tag("prod", DC)])
+    cs = _promote(snap, kind=ObjectKind.TAG, members=[("prod", EMEA), ("prod", APAC)])
+    assert not cs.is_blocked
+    assert any("shadow" in w.lower() for w in cs.warnings)
+
+
+def test_promote_all_tags_sweeps_every_bucket() -> None:
+    snap = _snap(
+        tags=[_tag("prod", DC), _tag("prod", APAC), _tag("dev", DC), _tag("dev", APAC)],
+    )
+    cs, skipped = plan_promote_all(snap, ReferenceGraph.build(snap), kind=ObjectKind.TAG)
+    assert skipped == []
+    assert {u.name for u in cs.upserts} == {"prod", "dev"}
+
+
+def test_select_bucket_tag_routes_to_tag_selector() -> None:
+    snap = _snap(tags=[_tag("prod", DC), _tag("prod", APAC)])
+    bucket = select_bucket(snap, ReferenceGraph.build(snap), kind=ObjectKind.TAG, value="prod")
+    assert bucket.kind == "tag" and len(bucket.members) == 2

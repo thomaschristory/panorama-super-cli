@@ -190,6 +190,12 @@ def upsert_lines(u: ObjectUpsert) -> list[str]:
         lines.append(f"{p} {leaf} {_members(u.members)}")
     if u.tags:
         lines.append(f"{p} tag {_members(u.tags)}")
+    # A fieldless object (a tag with no colour/comments) would otherwise render
+    # nothing — the create would silently vanish from the `set` script while the
+    # XML/live appliers still create the entry. Emit the bare entry line so all
+    # three appliers agree.
+    if not lines:
+        lines.append(p)
     return lines
 
 
