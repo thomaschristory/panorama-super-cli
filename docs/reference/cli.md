@@ -319,6 +319,20 @@ Manage live connection profiles. `init`/`login` are the friendlier front door;
 prints the config file's location (on stderr, so machine output stays clean) —
 handy because the path is platform-dependent. See [Configuration](config.md).
 
+### skill
+
+```
+psc skill install --target claude-code|codex|gemini|copilot [--apply]
+psc skill export <dir> [--apply]
+```
+
+Place the bundled [Agent Skill](../guides/using-with-ai-agents.md#bundled-skill)
+where an agent harness will load it. `install` copies it to the chosen harness's
+user-scoped skills directory (e.g. `~/.claude/skills/panorama-super-cli/` for
+`claude-code`); `export` copies it under an arbitrary directory. Both are
+**dry-run by default** — they print the source/destination plan and exit 0
+without writing until `--apply` is passed.
+
 ### version
 
 ```

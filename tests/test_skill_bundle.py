@@ -1,0 +1,64 @@
+"""Unit tests for the bundled-Skill `bundle_path()` helper (issue #165)."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from psc.skill import BUNDLE_NAME, bundle_path
+
+
+def test_bundle_name_is_the_skill_dir() -> None:
+    assert BUNDLE_NAME == "panorama-super-cli"
+
+
+def test_bundle_path_returns_existing_file() -> None:
+    """bundle_path() yields a Path pointing at the bundled SKILL.md."""
+    with bundle_path() as path:
+        assert isinstance(path, Path)
+        assert path.is_file()
+        assert path.name == "SKILL.md"
+
+
+def test_bundle_path_content_starts_with_frontmatter() -> None:
+    """The bundled file is the canonical SKILL.md with YAML frontmatter."""
+    with bundle_path() as path:
+        text = path.read_text(encoding="utf-8")
+    assert text.startswith("---\n"), text[:50]
+    assert "name: panorama-super-cli" in text
+
+
+def test_bundle_path_matches_repo_root_source_file() -> None:
+    """Source-tree layout: the resolved path equals the canonical file byte-for-byte."""
+    repo_root = Path(__file__).resolve().parents[1]
+    canonical = repo_root / "skills" / "panorama-super-cli" / "SKILL.md"
+    if not canonical.exists():
+        pytest.skip("running outside source checkout")
+    with bundle_path() as path:
+        assert path.read_bytes() == canonical.read_bytes()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="uv build / wheel layout test is POSIX-only")
+def test_bundle_path_ships_inside_built_wheel(tmp_path: Path) -> None:
+    """Installed-wheel layout: the SKILL.md must ship inside the wheel."""
+    repo_root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "dist"
+    out.mkdir()
+    proc = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(out)],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip(f"uv build unavailable or failed: {proc.stderr}")
+    wheels = list(out.glob("*.whl"))
+    assert wheels, f"no wheel built; uv stderr: {proc.stderr}"
+    with zipfile.ZipFile(wheels[0]) as zf:
+        names = zf.namelist()
+    assert "skills/panorama-super-cli/SKILL.md" in names, names
