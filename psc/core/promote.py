@@ -26,12 +26,20 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from psc.core.changeset import ChangeSet, ObjectDelete, ObjectKind
+from psc.core.changeset import (
+    ChangeSet,
+    ObjectDelete,
+    ObjectKind,
+    ReferenceEdit,
+    gate_unmappable_reference_edits,
+)
 from psc.core.dedup import (
     DuplicateGroup,
     ObjectRef,
     find_duplicate_addresses,
     find_duplicate_services,
+    plan_repoints,
+    rewrite_members,
     select_address_bucket,
     select_service_bucket,
 )
@@ -243,6 +251,114 @@ def _plan_destination(
     cs.warnings.extend(upsert_cs.warnings)
 
 
+def _synthetic(
+    snapshot: Snapshot, kind: ObjectKind, template: Obj, survivor: str, dest: Location
+) -> Snapshot:
+    """`snapshot` plus the promoted object, already defined at `dest`.
+
+    Never applied — this exists purely so name resolution can see the world as it
+    will be *after* the plan lands. Without it, repointing a referrer onto the
+    survivor resolves against a snapshot where the survivor does not exist yet, and
+    `plan_repoints` correctly (but uselessly) refuses.
+    """
+    promoted = template.model_copy(update={"name": survivor, "location": dest})
+    field = {
+        ObjectKind.ADDRESS: "addresses",
+        ObjectKind.SERVICE: "services",
+        ObjectKind.ADDRESS_GROUP: "address_groups",
+    }[kind]
+    existing = list(getattr(snapshot, field))
+    return snapshot.model_copy(update={field: [*existing, promoted]})
+
+
+def _plan_rename_repoints(
+    cs: ChangeSet,
+    snapshot: Snapshot,
+    *,
+    kind: ObjectKind,
+    template: Obj,
+    survivor: str,
+    dest: Location,
+    objs: list[_Member],
+) -> None:
+    """Repoint the odd-named copies' referrers onto the survivor name.
+
+    Members that already carry the survivor name need nothing: their references
+    re-resolve upward by shadowing once the device-group copy is deleted, and
+    `plan_repoints` deliberately emits no edit for that no-op rewrite.
+
+    Every doomed copy is passed in `ignoring`, exactly as `plan_merge_bucket` does:
+    a sibling duplicate still standing between a referrer and the survivor is on its
+    way out too, and must not be read as a blocking shadow.
+    """
+    renamed = [(m, o) for m, o in objs if m.name != survivor]
+    if not renamed:
+        return
+
+    synthetic = _synthetic(snapshot, kind, template, survivor, dest)
+    sgraph = ReferenceGraph.build(synthetic)
+    keep = ObjectRef(name=survivor, location=dest.name)
+    ignoring = frozenset((kind.value, m.name, m.location) for m, _ in objs)
+
+    # Successive drops on ONE field must chain: the second rewrite must operate on
+    # the first's result, or a shared referrer keeps a still-dropped member.
+    edit_index: dict[tuple[str, str, str, str, str | None], ReferenceEdit] = {}
+    for m, _obj in renamed:
+        sub = ChangeSet(title="")
+        plan_repoints(
+            sub,
+            synthetic,
+            sgraph,
+            kind=kind.value,
+            keep=keep,
+            drop=m,
+            refs=sgraph.where_used(kind.value, m.name, m.loc),
+            ignoring=ignoring,
+        )
+        cs.blockers.extend(sub.blockers)
+        cs.warnings.extend(sub.warnings)
+        for edit in sub.reference_edits:
+            key = (
+                edit.referrer_kind,
+                edit.referrer_name,
+                edit.referrer_location,
+                edit.field,
+                edit.rulebase,
+            )
+            prior = edit_index.get(key)
+            if prior is None:
+                edit_index[key] = edit
+                cs.reference_edits.append(edit)
+            else:
+                prior.after = rewrite_members(prior.after, m.name, survivor)
+
+
+def _pick_survivor(cs: ChangeSet, objs: list[_Member], keep_name: str | None) -> str | None:
+    """The name the bucket unifies on, or `None` when it can't (blocker appended).
+
+    Without `keep_name`, a same-named bucket keeps that name and a divergent one is
+    blocked — promotion by shadowing alone cannot reconcile two names. `keep_name`
+    is the explicit opt-in to unify divergent names on one member's; naming a
+    non-member is an input error, not a plan blocker.
+    """
+    names = {m.name for m, _ in objs}
+    if keep_name is not None:
+        if keep_name not in names:
+            listed = ", ".join(sorted(names))
+            raise PscError(
+                f"--keep '{keep_name}' is not a member name of this bucket ({listed})",
+                ErrorType.INPUT,
+            )
+        return keep_name
+    if len(names) > 1:
+        listed = ", ".join(f"'{m.name}'@{m.location}" for m, _ in objs)
+        cs.blockers.append(
+            f"bucket names diverge ({listed}); pass --keep NAME to unify them on one name"
+        )
+        return None
+    return next(iter(names))
+
+
 def plan_promote(
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -250,13 +366,16 @@ def plan_promote(
     kind: ObjectKind,
     members: list[ObjectRef],
     dest_name: str = "shared",
+    keep_name: str | None = None,
 ) -> ChangeSet:
     """Plan promoting a whole duplicate bucket to `dest_name` (default `shared`).
 
     Returns a `ChangeSet`; any unsafe condition yields a blocked, zero-op plan. The
-    bucket's members must all carry the same value and — in this phase — the same
-    name; a member already sitting at the destination is adopted as the destination
-    object rather than deleted.
+    bucket's members must all carry the same value. Same-named members promote with
+    zero reference edits (upward shadowing does the work); divergently-named members
+    need `keep_name` to unify them on one survivor, which repoints every referrer of
+    the odd-named copies onto the survivor before deleting them. A member already
+    sitting at the destination under the survivor name is adopted rather than deleted.
     """
     if kind not in PROMOTABLE_KINDS:
         raise PscError(f"promote does not support {kind.value} objects", ErrorType.INPUT)
@@ -271,26 +390,21 @@ def plan_promote(
     if cs.blockers:
         return _blocked(cs)
 
-    names = {m.name for m, _ in objs}
-    if len(names) > 1:
-        listed = ", ".join(f"'{m.name}'@{m.location}" for m, _ in objs)
-        cs.blockers.append(
-            f"bucket names diverge ({listed}); pass --keep NAME to unify them on one name"
-        )
+    survivor = _pick_survivor(cs, objs, keep_name)
+    if survivor is None:
         return _blocked(cs)
-    survivor = next(iter(names))
-    _, template = objs[0]
 
-    _check_same_value(cs, kind, objs[0], objs)
+    # `objs` is rank-ordered, so this is the survivor-named copy nearest to shared.
+    survivor_objs = [(m, o) for m, o in objs if m.name == survivor]
+    template_ref, template = survivor_objs[0]
+
+    _check_same_value(cs, kind, (template_ref, template), objs)
     if cs.blockers:
         return _blocked(cs)
 
     _check_per_member_gates(
         cs, snapshot, graph, kind=kind, namespace=namespace, dest=dest, objs=objs
     )
-    if cs.blockers:
-        return _blocked(cs)
-
     _plan_destination(cs, snapshot, kind=kind, template=template, survivor=survivor, dest=dest)
     if cs.blockers:
         return _blocked(cs)
@@ -300,7 +414,17 @@ def plan_promote(
             continue  # this IS the destination object
         cs.deletes.append(ObjectDelete(kind=kind, name=m.name, location=m.location))
 
-    _drift_warnings(cs, objs[0], objs)
+    # Repoint after the deletes are staged: the unmappable-reference gate only
+    # fires when the plan also tears something down, so a doomed shadow must
+    # already be in `cs.deletes` when the gate runs.
+    _plan_rename_repoints(
+        cs, snapshot, kind=kind, template=template, survivor=survivor, dest=dest, objs=objs
+    )
+    gate_unmappable_reference_edits(cs)
+    if cs.blockers:
+        return _blocked(cs)
+
+    _drift_warnings(cs, (template_ref, template), objs)
     revive_warnings(cs, snapshot, graph, name=survivor, namespace=namespace, dest=dest)
     _sibling_shadow_warnings(
         cs,

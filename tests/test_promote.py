@@ -8,6 +8,7 @@ from psc.core.changeset import ChangeSet, ObjectKind
 from psc.core.dedup import ObjectRef
 from psc.core.models import (
     Address,
+    AddressGroup,
     AddressType,
     Location,
     SecurityRule,
@@ -346,3 +347,103 @@ def test_select_bucket_on_a_value_with_no_bucket_is_an_input_error() -> None:
         select_bucket(
             snap, ReferenceGraph.build(snap), kind=ObjectKind.ADDRESS, value="10.0.0.1/32"
         )
+
+
+def _promote_keep(
+    snap: Snapshot, *, members: list[tuple[str, str]], keep: str, dest: str = "shared"
+) -> ChangeSet:
+    return plan_promote(
+        snap,
+        ReferenceGraph.build(snap),
+        kind=ObjectKind.ADDRESS,
+        members=[ObjectRef(name=n, location=loc) for n, loc in members],
+        dest_name=dest,
+        keep_name=keep,
+    )
+
+
+def test_keep_unifies_divergent_names_and_repoints_only_the_odd_ones() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("web-primary", APAC)],
+        security_rules=[
+            _rule("r1", EMEA, source=["h-web1"]),
+            _rule("r2", APAC, source=["web-primary"]),
+        ],
+    )
+    cs = _promote_keep(snap, members=[("h-web1", EMEA), ("web-primary", APAC)], keep="h-web1")
+
+    assert not cs.is_blocked
+    assert [(u.name, u.location) for u in cs.upserts] == [("h-web1", "shared")]
+    # Only APAC's rule is rewritten. EMEA's already says `h-web1` and simply
+    # re-resolves upward once the DG copy is gone — no edit, by design.
+    assert [(e.referrer_name, e.before, e.after) for e in cs.reference_edits] == [
+        ("r2", ["web-primary"], ["h-web1"])
+    ]
+    assert sorted((d.name, d.location) for d in cs.deletes) == [
+        ("h-web1", EMEA),
+        ("web-primary", APAC),
+    ]
+
+
+def test_keep_naming_a_non_member_is_an_input_error() -> None:
+    snap = _snap(addresses=[_addr("h-web1", EMEA), _addr("web-primary", APAC)])
+    with pytest.raises(PscError):
+        _promote_keep(
+            snap, members=[("h-web1", EMEA), ("web-primary", APAC)], keep="something-else"
+        )
+
+
+def test_keep_name_shadowed_by_a_different_object_in_a_members_own_dg_is_blocked() -> None:
+    # APAC defines its own, DIFFERENT `h-web1`. Repointing APAC's rule to `h-web1`
+    # would silently aim it at 10.9.9.9, not the promoted object.
+    snap = _snap(
+        addresses=[
+            _addr("h-web1", EMEA),
+            _addr("web-primary", APAC),
+            _addr("h-web1", APAC, value="10.9.9.9/32"),
+        ],
+        security_rules=[_rule("r2", APAC, source=["web-primary"])],
+    )
+    cs = _promote_keep(snap, members=[("h-web1", EMEA), ("web-primary", APAC)], keep="h-web1")
+
+    assert cs.is_blocked
+    assert any("not visible there" in b for b in cs.blockers)
+    assert cs.upserts == [] and cs.deletes == [] and cs.reference_edits == []
+
+
+def test_keep_on_an_already_same_named_bucket_emits_no_reference_edits() -> None:
+    snap = _snap(
+        addresses=[_addr("web", EMEA), _addr("web", APAC)],
+        security_rules=[_rule("r1", EMEA, source=["web"])],
+    )
+    cs = _promote_keep(snap, members=[("web", EMEA), ("web", APAC)], keep="web")
+
+    assert not cs.is_blocked
+    assert cs.reference_edits == []
+
+
+def test_keep_carries_the_survivors_attributes_not_the_dropped_ones() -> None:
+    snap = _snap(
+        addresses=[
+            _addr("h-web1", EMEA, description="the real one"),
+            _addr("web-primary", APAC, description="a copy"),
+        ]
+    )
+    cs = _promote_keep(snap, members=[("h-web1", EMEA), ("web-primary", APAC)], keep="h-web1")
+
+    assert not cs.is_blocked
+    assert cs.upserts[0].name == "h-web1"
+    assert any("description the promoted copy will not carry" in w for w in cs.warnings)
+
+
+def test_group_member_lists_are_repointed_too() -> None:
+    snap = _snap(
+        addresses=[_addr("h-web1", EMEA), _addr("web-primary", APAC)],
+        address_groups=[
+            AddressGroup(name="apac-web", location=_loc(APAC), static_members=["web-primary"])
+        ],
+    )
+    cs = _promote_keep(snap, members=[("h-web1", EMEA), ("web-primary", APAC)], keep="h-web1")
+
+    assert not cs.is_blocked
+    assert [(e.referrer_name, e.after) for e in cs.reference_edits] == [("apac-web", ["h-web1"])]

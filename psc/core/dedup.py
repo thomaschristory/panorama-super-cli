@@ -246,7 +246,7 @@ def _group_set_label(members: frozenset[str]) -> str:
     return "{" + ", ".join(sorted(members)) + "}"
 
 
-def _rewrite_members(before: list[str], drop: str, keep: str) -> list[str]:
+def rewrite_members(before: list[str], drop: str, keep: str) -> list[str]:
     """Replace `drop` with `keep`, de-duplicating while preserving order."""
     out: list[str] = []
     for m in before:
@@ -343,7 +343,7 @@ def _reachable_by_referrers_of(
 
     A referrer resolves a bare name up its own container chain, so a survivor
     outside that chain can never be repointed to. This is the necessary half of
-    the visibility gate in `_plan_repoints` (it cannot know about surviving
+    the visibility gate in `plan_repoints` (it cannot know about surviving
     shadows), used only to pick a default survivor that does not needlessly
     strand another member's rules.
     """
@@ -373,7 +373,7 @@ def _clear_if_blocked(cs: ChangeSet) -> None:
     cs.warnings.clear()
 
 
-def _plan_repoints(
+def plan_repoints(
     cs: ChangeSet,
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -390,6 +390,10 @@ def _plan_repoints(
     `address` namespace and rewrite flat member lists identically. `kind`
     (`address` / `address-group`) is what tells them apart *inside* that one
     namespace.
+
+    Also used by `core/promote.py`, which resolves against a *synthetic* snapshot
+    (the destination object added ahead of time) so the survivor is visible where
+    it will actually live once the plan applies.
     """
     collapsing = 0
     for ref in refs:
@@ -412,7 +416,7 @@ def _plan_repoints(
             continue
         collapsing += 1
         before = field_members(snapshot, ref)
-        after = _rewrite_members(before, drop.name, keep.name)
+        after = rewrite_members(before, drop.name, keep.name)
         if after == before:
             # Same-name collapse: the member list is untouched and the reference
             # simply re-resolves upward to the survivor. Emitting a no-op edit
@@ -486,7 +490,7 @@ def plan_merge(
         )
         return cs
 
-    _plan_repoints(
+    plan_repoints(
         cs,
         snapshot,
         graph,
@@ -641,7 +645,7 @@ def plan_merge_bucket(
             else:
                 # Re-derive the rewrite against the already-accumulated `after`,
                 # so successive drops on one field compose instead of clobbering.
-                prior.after = _rewrite_members(prior.after, drop.name, keep.name)
+                prior.after = rewrite_members(prior.after, drop.name, keep.name)
         cs.deletes.extend(sub.deletes)
 
     # Re-run the shared teardown gate over the *combined* plan (individual subs
@@ -726,7 +730,7 @@ def plan_merge_group(
             and (r.referrer_name, r.referrer_location) == (keep.name, keep.loc)
         )
     ]
-    _plan_repoints(
+    plan_repoints(
         cs,
         snapshot,
         graph,
