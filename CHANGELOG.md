@@ -5,6 +5,18 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
+## Unreleased
+
+### Added
+
+- `psc skill install --target claude-code|codex|gemini|copilot` copies the
+  bundled Agent Skill into a harness's user-scoped skills directory, and
+  `psc skill export <dir>` copies it under an arbitrary directory
+  ([#165](https://github.com/thomaschristory/panorama-super-cli/issues/165)).
+  Both are dry-run by default (print the source/destination plan, exit 0) and
+  only write with `--apply`. The Skill already shipped inside the wheel; this
+  makes placing it where an agent will load it a one-liner.
+
 ## v1.11.0 — 2026-07-15
 
 ### Added

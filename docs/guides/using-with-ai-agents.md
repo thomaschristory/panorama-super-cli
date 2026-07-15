@@ -51,6 +51,18 @@ fi
 model, and the JSON/exit-code contract — so a capable agent can use `psc`
 correctly from a cold start.
 
+Drop it where your harness loads user-scoped skills with `psc skill install`
+(dry-run by default — add `--apply` to write):
+
+```bash
+psc skill install --target claude-code --apply   # ~/.claude/skills/panorama-super-cli/
+psc skill install --target codex --apply          # ~/.agents/skills/panorama-super-cli/
+psc skill export ./vendor/skills --apply          # ./vendor/skills/panorama-super-cli/
+```
+
+Supported `--target` values: `claude-code`, `codex`, `gemini`, `copilot`. Re-run
+after upgrading `psc` to refresh an installed copy.
+
 ## Don't
 
 - Don't reflexively add `--apply` to a read command (it's ignored, but the habit

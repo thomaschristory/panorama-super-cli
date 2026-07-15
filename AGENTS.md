@@ -54,6 +54,10 @@ UI would import `psc.core` directly and never touch `psc.cli`.
   `--apply`); pure/device-free, so the xpath construction is unit-testable.
 - `psc/core/source.py` — `OfflineSource` (file) / `LiveSource` (pan-os-python);
   live `apply` pushes to the candidate config and never commits.
+- `psc/skill/` — access to the bundled portable Skill (`bundle_path()`,
+  `BUNDLE_NAME`); resolves `skills/panorama-super-cli/SKILL.md` in both the
+  source tree and the installed wheel via `importlib.resources`. Backs
+  `psc skill install/export` (`psc/cli/skill_cmds.py`).
 - `psc/output/` — formatters (table/json/jsonl/yaml/csv/set) + error envelope.
 - `psc/config/` — profiles + defaults (ruamel round-trip).
 - `psc/cli/` — the Typer app; one thin command module per feature group.

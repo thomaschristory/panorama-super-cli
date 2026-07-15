@@ -26,6 +26,7 @@ from psc.cli import (
     rule_cmds,
     set_cmds,
     show_cmds,
+    skill_cmds,
     version_cmds,
     workbench_cmds,
 )
@@ -159,6 +160,11 @@ app.add_typer(
     help="Audit address objects for overlapping or contained CIDR ranges.",
 )
 app.add_typer(profile_cmds.app, name="profile", help="Manage live connection profiles.")
+app.add_typer(
+    skill_cmds.app,
+    name="skill",
+    help="Install the bundled agent Skill into a harness (Claude Code, Codex, …).",
+)
 app.add_typer(version_cmds.app, name="version", help="Show version; check PyPI for updates.")
 app.command(
     "diff",
