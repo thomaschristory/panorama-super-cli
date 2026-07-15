@@ -18,6 +18,7 @@ from typing import Annotated
 import typer
 
 from psc.cli.runtime import Runtime
+from psc.output.errors import ErrorType, PscError
 from psc.output.format import render
 from psc.skill import BUNDLE_NAME, bundle_path
 
@@ -50,6 +51,20 @@ def _resolve(target: _Target) -> Path:
     return _home() / _TARGET_SUBDIR[target] / "skills" / BUNDLE_NAME / "SKILL.md"
 
 
+def _write(source: Path, dest: Path) -> None:
+    """Copy `source` to `dest`, surfacing filesystem errors as the typed envelope.
+
+    Without this, a bad `--apply` target (an existing file where a directory is
+    needed, an unwritable path) would let `OSError` escape as a raw traceback and
+    leave `-o json` stdout empty — a break of psc's error contract.
+    """
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+    except OSError as exc:
+        raise PscError(f"could not write {dest}: {exc}", ErrorType.INPUT) from exc
+
+
 def _emit(rt: Runtime, row: dict[str, object], title: str, human: str) -> None:
     render(rt.stdout, rt.output, model=row, rows=[row], table_title=title)
     rt.stderr.print(human)
@@ -76,23 +91,26 @@ def install(
     rt: Runtime = ctx.obj
     dest = _resolve(target)
     mode = "apply" if apply_ else "dry-run"
+    overwrite = dest.exists()
     written = False
     with bundle_path() as source:
         if apply_:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, dest)
+            _write(source, dest)
             written = True
         row: dict[str, object] = {
             "mode": mode,
             "target": target.value,
             "source": str(source.resolve()),
             "destination": str(dest),
+            "overwrite": overwrite,
             "written": written,
         }
+        verb = "reinstalled" if overwrite else "installed"
         human = (
-            f"[green]✓ installed[/green] {BUNDLE_NAME} skill at {dest}"
+            f"[green]✓ {verb}[/green] {BUNDLE_NAME} skill at {dest}"
             if written
             else f"[yellow]dry-run[/yellow]: pass --apply to install → {dest}"
+            + (" [dim](overwrites existing)[/dim]" if overwrite else "")
         )
         _emit(rt, row, "skill install", human)
 
@@ -118,21 +136,23 @@ def export(
     rt: Runtime = ctx.obj
     dest = (destination.expanduser() / BUNDLE_NAME / "SKILL.md").resolve()
     mode = "apply" if apply_ else "dry-run"
+    overwrite = dest.exists()
     written = False
     with bundle_path() as source:
         if apply_:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, dest)
+            _write(source, dest)
             written = True
         row: dict[str, object] = {
             "mode": mode,
             "source": str(source.resolve()),
             "destination": str(dest),
+            "overwrite": overwrite,
             "written": written,
         }
         human = (
             f"[green]✓ exported[/green] {BUNDLE_NAME} skill to {dest}"
             if written
             else f"[yellow]dry-run[/yellow]: pass --apply to export → {dest}"
+            + (" [dim](overwrites existing)[/dim]" if overwrite else "")
         )
         _emit(rt, row, "skill export", human)

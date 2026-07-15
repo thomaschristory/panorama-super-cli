@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,22 @@ from typer.testing import CliRunner
 from psc.cli.app import app as cli_app
 
 runner = CliRunner()
+
+
+def _run(*args: str, home: Path) -> subprocess.CompletedProcess[str]:
+    """Invoke `psc` as a subprocess so the real main() error contract runs."""
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PSC_CONFIG": "/nonexistent/psc-test-config.yaml",
+    }
+    return subprocess.run(
+        [sys.executable, "-m", "psc", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -96,3 +115,28 @@ def test_export_apply_writes_under_named_dir(tmp_path: Path) -> None:
     dest = out / "panorama-super-cli" / "SKILL.md"
     assert dest.is_file()
     assert "name: panorama-super-cli" in dest.read_text(encoding="utf-8")
+
+
+def test_overwrite_is_signalled_before_apply(tmp_path: Path) -> None:
+    """A second install must flag `overwrite` in the (dry-run) plan."""
+    res = runner.invoke(cli_app, ["-o", "json", "skill", "install", "-t", "claude-code", "--apply"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.stdout)["overwrite"] is False  # first write, nothing there yet
+
+    res = runner.invoke(cli_app, ["-o", "json", "skill", "install", "-t", "claude-code"])
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.stdout)
+    assert payload["overwrite"] is True
+    assert payload["mode"] == "dry-run"
+    assert payload["written"] is False
+
+
+def test_export_onto_a_file_yields_typed_error_not_traceback(tmp_path: Path) -> None:
+    """A bad --apply target must surface the typed JSON envelope, exit 3 — no traceback."""
+    blocker = tmp_path / "occupied"
+    blocker.write_text("i am a file, not a directory", encoding="utf-8")
+    cp = _run("-o", "json", "skill", "export", str(blocker), "--apply", home=tmp_path / "home")
+    assert cp.returncode == 3, cp.stderr  # ErrorType.INPUT
+    envelope = json.loads(cp.stdout)  # stdout stays a valid machine document
+    assert envelope["type"] == "input"
+    assert "Traceback" not in cp.stderr
