@@ -5,7 +5,7 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
-## Unreleased
+## v1.11.0 — 2026-07-15
 
 ### Added
 
