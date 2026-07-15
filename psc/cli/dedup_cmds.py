@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from psc.cli._options import OUT_OPTION, optional_location
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
+from psc.core.changeset import ObjectKind
 from psc.core.dedup import (
     DuplicateGroup,
     ObjectRef,
@@ -18,6 +20,7 @@ from psc.core.dedup import (
     plan_merge_group,
     select_address_bucket,
 )
+from psc.core.promote import SkippedBucket, plan_promote, plan_promote_all, select_bucket
 from psc.core.refs import ReferenceGraph
 from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
@@ -234,4 +237,65 @@ def merge_group(
         keep=ObjectRef(name=keep, location=keep_location or default_loc),
         drop=ObjectRef(name=remove, location=remove_location or default_loc),
     )
+    complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
+
+
+def _report_skipped(rt: Runtime, skipped: list[SkippedBucket]) -> None:
+    """Surface every bucket `--all` did not promote. Never let a sweep look total."""
+    if not skipped:
+        return
+    rt.stderr.print(f"[yellow]note[/yellow] skipped {len(skipped)} bucket(s):")
+    for s in skipped:
+        rt.stderr.print(f"  [yellow]-[/yellow] {escape(s.value)}: {escape(s.reason)}")
+
+
+@app.command("promote")
+def promote(
+    ctx: typer.Context,
+    kind: ObjectKind = typer.Argument(..., help="Object kind: address | service."),
+    group: str | None = typer.Option(
+        None,
+        "--group",
+        help="Promote the duplicate bucket with this value (e.g. '10.0.0.10/32'). "
+        "Run `dedup addresses` / `dedup services` to list buckets.",
+    ),
+    all_buckets: bool = typer.Option(
+        False,
+        "--all",
+        help="Promote EVERY promotable bucket of this kind in one plan. Buckets that "
+        "cannot be promoted are skipped and reported on stderr, never silently dropped.",
+    ),
+    to: str = typer.Option(
+        "shared",
+        "--to",
+        help="Destination: 'shared' (default), or a device-group that is a common "
+        "ancestor of every bucket member.",
+    ),
+    apply: bool = typer.Option(False, "--apply", help="Execute the promotion (default: dry-run)."),
+    out: str | None = OUT_OPTION,
+    output_format: ConfigFormat = OUT_FORMAT_OPTION,
+) -> None:
+    """Promote a cross-device-group duplicate into shared (or a common ancestor).
+
+    This is the merge `dedup merge` cannot do: when the same object is defined in
+    several device-groups and NOWHERE above them, there is no existing survivor to
+    collapse onto. `promote` creates it once at the destination and deletes every
+    device-group copy — references fall through by PAN-OS shadowing, so nothing is
+    repointed. Dry-run by default (use `-o set` for the PAN-OS script).
+    """
+    rt: Runtime = ctx.obj
+    snap = rt.snapshot()
+    graph = ReferenceGraph.build(snap)
+
+    if all_buckets == (group is not None):
+        raise PscError("promote needs exactly one of --group or --all", ErrorType.INPUT)
+
+    if all_buckets:
+        cs, skipped = plan_promote_all(snap, graph, kind=kind, dest_name=to)
+        _report_skipped(rt, skipped)
+    else:
+        assert group is not None  # guarded by the exactly-one check above
+        bucket = select_bucket(snap, graph, kind=kind, value=group)
+        cs = plan_promote(snap, graph, kind=kind, members=list(bucket.members), dest_name=to)
+
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
