@@ -109,6 +109,7 @@ psc -c cfg.xml -o json dedup addresses            # strict: byte-identical value
 psc -c cfg.xml -o json dedup addresses --not-strict  # also mask host bits (10.1.1.50/24 ~ 10.1.1.0/24)
 psc -c cfg.xml -o json dedup services
 psc -c cfg.xml -o json dedup groups               # address-groups w/ identical effective member set
+psc -c cfg.xml -o json dedup tags                 # tags defined under one name in 2+ locations (name-keyed)
 psc -c cfg.xml -o json dedup merge --keep h-web1 --remove web-primary   # dry-run plan (pairwise)
 psc -c cfg.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml
 psc -c cfg.xml dedup merge --group 10.0.0.10/32 --keep h-web1 --apply --out fixed.xml  # whole bucket
@@ -117,6 +118,8 @@ psc -c cfg.xml -o json dedup promote address --group 10.0.0.10/32           # dr
 psc -c cfg.xml dedup promote address --group 10.0.0.10/32 --keep h-web1 --apply --out fixed.xml
 psc -c cfg.xml dedup promote address-group --name grp-web --cascade --apply --out fixed.xml
 psc -c cfg.xml dedup promote service --all --apply --out fixed.xml          # sweep every bucket
+psc -c cfg.xml dedup promote tag --name prod --apply --out fixed.xml        # DG tag copies -> shared
+psc -c cfg.xml dedup promote tag --all --apply --out fixed.xml              # sweep every tag bucket
 ```
 
 `merge` repoints **every** group/security-rule/NAT reference onto `--keep`
@@ -143,6 +146,16 @@ resolve); `--group` and `--remove` are mutually exclusive.
 `dedup groups` buckets address-groups by the canonical leaf-address set they
 expand to (nested groups flattened); dynamic/unresolvable groups are skipped and
 noted on stderr (not exhaustive). `--location` scopes the comparison.
+
+`dedup tags` lists tags defined under **one name in 2+ locations** — redundant
+definitions of a single logical tag. Tags are **name-keyed**: a tag carries no
+match-affecting value (color/comments are cosmetic), and every reference binds
+by name up the device-group chain. Consolidate a bucket with `dedup promote tag
+--name NAME` (or `--all`): because the name is stable, **nothing is repointed**
+— deleting the device-group copies lets their references re-resolve upward to
+the survivor. A discarded copy's differing color/comments surface as a drift
+**warning**, never a blocker. `--group`, `--keep`, and `--cascade` do not apply
+to `tag` (name-keyed, single name, no member closure).
 `merge-group` collapses `--remove` into `--keep` with the same repoint-before-
 delete engine, but has **no value-change override** — it **blocks** (exit `6`)
 unless both groups expand to the *same* set, on a nested/cyclic pair, or if the
@@ -156,9 +169,10 @@ every device-group copy; since promotion only ever moves upward, every
 reference falls through to the new definition by ordinary PAN-OS shadowing —
 nothing is repointed. Exactly one of `--group VALUE` (address/service — the
 same values `dedup addresses`/`dedup services` list), `--name NAME`
-(address-group — buckets are name-keyed), or `--all` (every promotable bucket
-of the kind, reporting any it skips on stderr, never silently dropping them)
-selects the bucket. `--keep NAME` unifies copies that were named differently,
+(address-group **or tag** — both name-keyed), or `--all` (every promotable
+bucket of the kind, reporting any it skips on stderr, never silently dropping
+them) selects the bucket. `--keep NAME` unifies copies that were named
+differently,
 repointing their references onto the survivor name before deleting them; it's
 required whenever a bucket's copies disagree on a name, and mutually exclusive
 with `--all`. `--cascade` (address-groups only) also promotes a group bucket's
@@ -166,7 +180,8 @@ transitive dependencies (members, tags) to the destination in one plan;
 without it, an unresolved dependency **blocks** the promotion. Same safety
 gates as `move` (direction, intermediate shadow, dependency visibility) plus a
 bucket-level one: every member must carry the same value (or, for groups, the
-same effective leaf-address set) — there's no `--allow-value-change` escape
+same effective leaf-address set; **tags are exempt** — name-keyed, no value, so
+differing color/comments only warn) — there's no `--allow-value-change` escape
 hatch.
 
 ### refs — where-used, unused, dangling

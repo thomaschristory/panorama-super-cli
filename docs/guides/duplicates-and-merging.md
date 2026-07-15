@@ -212,10 +212,12 @@ delete device-group DG-B address web
 
 - `--group <value>` (address/service) selects a duplicate-*value* bucket, the
   same values `dedup addresses`/`dedup services` list.
-- `--name <name>` (address-group) selects every group with that *name* —
-  address-group buckets are name-keyed, since there's no way to type an
-  effective-leaf-set selector. Their members' effective sets must match or the
-  plan is blocked (the same equivalence check `dedup groups` uses).
+- `--name <name>` (address-group **or tag**) selects every object with that
+  *name* — both kinds are name-keyed. For address-groups there's no way to type
+  an effective-leaf-set selector, and their members' effective sets must match
+  or the plan is blocked (the same equivalence check `dedup groups` uses). Tags
+  have no value at all, so a same-named pair is always one bucket (see
+  [Duplicate tags](#duplicate-tags)).
 - `--all` sweeps every promotable bucket of the kind in one plan. Buckets it
   cannot promote are **skipped and reported on stderr**, never silently
   dropped:
@@ -281,6 +283,52 @@ Applies the same way as merge: dry-run by default, `--apply --out FILE`
 offline (never overwriting the source export), `--apply` alone on a live
 profile (candidate config, never committed), and `-o set`/`-of set` for the
 PAN-OS script.
+
+## Duplicate tags
+
+A tag defined under the **same name in more than one location** (e.g. `prod` in
+`shared`, `DG-A`, and `DG-B`) is a redundant definition of one logical tag.
+PAN-OS resolves a tag reference by *name* up the device-group chain, so those
+copies all stand in for the same binding. `dedup tags` lists them:
+
+```console
+psc -c panorama.xml dedup tags
+```
+
+Tags are **name-keyed**, not value-keyed: a tag carries no match-affecting value
+(its `color`/`comments` are cosmetic), so a same-named pair is always one bucket.
+Consolidate a bucket with `dedup promote tag`:
+
+```console
+$ psc -c panorama.xml dedup promote tag --name prod
+promote 2 tag(s) -> @shared
+  • create tag 'prod' @shared
+  • delete tag 'prod' @DG-A
+  • delete tag 'prod' @DG-B
+dry-run — re-run with --apply to execute
+```
+
+Because the name is stable, the consolidation repoints **nothing** — deleting
+the device-group copies simply lets their references (objects, rules, and
+dynamic-address-group filters) re-resolve upward to the survivor by name. This
+makes tag consolidation strictly safer than address/service promote, which can
+require repoints when copies are named differently.
+
+The one thing to watch is cosmetic: if the discarded copies carry a different
+`color` or `comments` than the survivor, the survivor's win, and `psc` **warns**
+(it never blocks on this — the operator decides):
+
+```console
+$ psc -c panorama.xml dedup promote tag --name prod
+...
+note 'prod'@DG-B has color color5 the promoted copy will not carry (survivor keeps color1)
+```
+
+`--all` sweeps every duplicate-tag bucket in one plan. `--group`, `--keep`, and
+`--cascade` do **not** apply to `tag`: tags aren't value-keyed (no `--group`),
+a bucket has a single name (no `--keep`), and a tag is a dependency leaf with no
+member closure to cascade. Consolidation is available in the workbench dedup
+spoke too — select same-named tags and pick a promote destination.
 
 ## Duplicate address-groups
 

@@ -69,6 +69,7 @@ staged or written. See [Finding objects](../guides/finding-objects.md#open-an-ob
 psc dedup addresses [--not-strict]
 psc dedup services
 psc dedup groups [--location LOC]
+psc dedup tags
 psc dedup merge --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
                [--allow-value-change] [--apply] [--out PATH] [-of xml|set]
@@ -77,13 +78,14 @@ psc dedup merge --group VALUE [--keep NAME] [--not-strict]
 psc dedup merge-group --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
                [--apply] [--out PATH] [-of xml|set]
-psc dedup promote <address|service|address-group>
+psc dedup promote <address|service|address-group|tag>
                (--group VALUE | --name NAME | --all) [--to shared|DG]
                [--keep NAME] [--cascade] [--apply] [--out PATH] [-of xml|set]
 ```
 
-Find duplicate objects (`addresses`/`services`) or address-groups with identical
-effective member sets (`groups`); merge one object (`merge`) or address-group
+Find duplicate objects (`addresses`/`services`), address-groups with identical
+effective member sets (`groups`), or tags redundantly defined under one name in
+several locations (`tags`); merge one object (`merge`) or address-group
 (`merge-group`) into another, repointing all references. `dedup merge` has two
 modes: pairwise (`--keep X --remove Y`) collapses one object, and group
 (`--group <value> [--keep NAME]`) collapses the *entire* duplicate bucket sharing
@@ -100,7 +102,10 @@ duplicate address/service value), `--name` (an address-group name — group
 buckets are name-keyed), or `--all` (every promotable bucket, reporting any it
 skips on stderr) selects the bucket; `--keep NAME` unifies copies that were
 named differently (repointing their references); `--cascade` also promotes an
-address-group bucket's members and tags to the destination. See
+address-group bucket's members and tags to the destination. Tags are also
+promotable (`--name`/`--all`, name-keyed): consolidation repoints nothing since
+tag references bind by name, and differing color/comments only warn; `--group`,
+`--keep`, and `--cascade` do not apply to `tag`. See
 [Duplicates and merging](../guides/duplicates-and-merging.md).
 
 ### audit
