@@ -88,6 +88,22 @@ def find_duplicate_services(snapshot: Snapshot) -> list[DuplicateGroup]:
     return _to_groups("service", buckets, display)
 
 
+def find_duplicate_tags(snapshot: Snapshot) -> list[DuplicateGroup]:
+    """Tags sharing one name across 2+ locations — redundant definitions.
+
+    Tags are name-keyed: a tag carries no match-affecting value (colour/comments
+    are cosmetic), and every reference binds by name up the device-group chain.
+    So the bucket key is simply the name, and a name defined in more than one
+    location is a redundant definition of one logical tag.
+    """
+    buckets: dict[str, list[ObjectRef]] = {}
+    display: dict[str, str] = {}
+    for t in snapshot.tags:
+        buckets.setdefault(t.name, []).append(ObjectRef(name=t.name, location=t.location.name))
+        display.setdefault(t.name, t.name)
+    return _to_groups("tag", buckets, display)
+
+
 def _to_groups[K](
     kind: str, buckets: dict[K, list[ObjectRef]], display: dict[K, str]
 ) -> list[DuplicateGroup]:
@@ -563,6 +579,31 @@ def select_group_bucket(snapshot: Snapshot, name: str) -> DuplicateGroup:
         )
     return DuplicateGroup(
         kind="address-group",
+        value=name,
+        members=sorted(members, key=lambda r: (r.location, r.name)),
+    )
+
+
+def select_tag_bucket(snapshot: Snapshot, name: str) -> DuplicateGroup:
+    """Every tag named `name`, across locations — a promote bucket.
+
+    Name-keyed, like `select_group_bucket`: a tag's identity IS its name, so a
+    same-named pair in two device-groups is always the same logical tag. Fewer
+    than two copies is nothing to consolidate.
+    """
+    members = [
+        ObjectRef(name=t.name, location=t.location.name)
+        for t in snapshot.tags
+        if t.name == name
+    ]
+    if len(members) < 2:  # noqa: PLR2004 — "2" is "at least one duplicate", not a tunable
+        raise PscError(
+            f"tag '{name}' is not defined in more than one location — "
+            "nothing to promote (run `dedup tags` to find redundant tags)",
+            ErrorType.INPUT,
+        )
+    return DuplicateGroup(
+        kind="tag",
         value=name,
         members=sorted(members, key=lambda r: (r.location, r.name)),
     )

@@ -8,10 +8,12 @@ from psc.core.dedup import (
     find_duplicate_addresses,
     find_duplicate_groups,
     find_duplicate_services,
+    find_duplicate_tags,
     plan_merge,
     plan_merge_bucket,
     plan_merge_group,
     resolve_group_members,
+    select_tag_bucket,
 )
 from psc.core.models import (
     Address,
@@ -21,6 +23,7 @@ from psc.core.models import (
     NatRule,
     SecurityRule,
     Snapshot,
+    Tag,
 )
 from psc.core.normalize import normalize_address
 from psc.core.parse import parse_config
@@ -793,3 +796,38 @@ def test_plan_merge_bucket_apply_roundtrips() -> None:
     assert grp.static_members == ["d1"]
     r1 = next(r for r in new_snap.security_rules if r.name == "r1")
     assert r1.destination == ["d1"]
+
+
+def _tag(name: str, loc: str, **kw: object) -> Tag:
+    location = Location.shared() if loc == "shared" else Location.dg(loc)
+    return Tag(name=name, location=location, **kw)  # type: ignore[arg-type]
+
+
+def test_find_duplicate_tags_buckets_same_name_across_locations() -> None:
+    snap = Snapshot(
+        device_groups=["DG-A", "DG-B"],
+        tags=[_tag("prod", "DG-A"), _tag("prod", "DG-B"), _tag("dev", "DG-A")],
+    )
+    groups = {g.value: {m.location for m in g.members} for g in find_duplicate_tags(snap)}
+    assert groups == {"prod": {"DG-A", "DG-B"}}  # 'dev' is single-location, excluded
+
+
+def test_find_duplicate_tags_ignores_single_location() -> None:
+    snap = Snapshot(tags=[_tag("prod", "shared")])
+    assert find_duplicate_tags(snap) == []
+
+
+def test_select_tag_bucket_returns_all_copies() -> None:
+    snap = Snapshot(
+        device_groups=["DG-A", "DG-B"],
+        tags=[_tag("prod", "DG-A"), _tag("prod", "DG-B")],
+    )
+    bucket = select_tag_bucket(snap, "prod")
+    assert bucket.kind == "tag"
+    assert {m.location for m in bucket.members} == {"DG-A", "DG-B"}
+
+
+def test_select_tag_bucket_raises_when_not_duplicated() -> None:
+    snap = Snapshot(tags=[_tag("prod", "shared")])
+    with pytest.raises(PscError):
+        select_tag_bucket(snap, "prod")
