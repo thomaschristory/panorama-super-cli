@@ -190,3 +190,58 @@ def test_empty_bucket_is_an_input_error() -> None:
     snap = _snap()
     with pytest.raises(PscError):
         plan_promote(snap, ReferenceGraph.build(snap), kind=ObjectKind.ADDRESS, members=[])
+
+
+def test_a_sibling_device_group_still_defining_the_name_warns() -> None:
+    # APAC is not in the bucket, but defines its own `web`. After promoting the
+    # EMEA/DC copies to shared, APAC keeps shadowing shared/web for its subtree.
+    snap = _snap(
+        addresses=[
+            _addr("web", EMEA),
+            _addr("web", DC, value="10.0.0.1/32"),
+            _addr("web", APAC, value="10.9.9.9/32"),
+        ]
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS, members=[("web", EMEA), ("web", DC)])
+
+    # DC->shared crosses EMEA, which defines `web` -> intermediate-shadow blocker.
+    assert cs.is_blocked
+
+
+def test_sibling_shadow_warning_on_a_clean_promote() -> None:
+    # Bucket is DC + AMER; APAC is an uninvolved sibling that keeps its own `web`,
+    # and is NOT between either source and shared, so it warns rather than blocks.
+    snap = _snap(
+        addresses=[
+            _addr("web", DC),
+            _addr("web", "AMER"),
+            _addr("web", APAC, value="10.9.9.9/32"),
+        ],
+        device_groups=[EMEA, DC, APAC, "AMER"],
+        device_group_parents={DC: EMEA},
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS, members=[("web", DC), ("web", "AMER")])
+
+    assert not cs.is_blocked
+    assert any(f"'{APAC}' still defines 'web'" in w and "keep shadowing" in w for w in cs.warnings)
+
+
+def test_bucket_members_own_device_groups_are_not_reported_as_shadows() -> None:
+    snap = _snap(addresses=[_addr("web", EMEA), _addr("web", APAC)])
+    cs = _promote(snap, kind=ObjectKind.ADDRESS, members=[("web", EMEA), ("web", APAC)])
+
+    assert not cs.is_blocked
+    assert not any("keep shadowing" in w for w in cs.warnings)
+
+
+def test_tags_only_on_a_discarded_copy_are_warned_about() -> None:
+    snap = _snap(
+        addresses=[
+            _addr("web", "shared"),
+            _addr("web", EMEA, tags=["prod"]),
+        ]
+    )
+    cs = _promote(snap, kind=ObjectKind.ADDRESS, members=[("web", "shared"), ("web", EMEA)])
+
+    assert not cs.is_blocked
+    assert any("tags the promoted copy will not carry: prod" in w for w in cs.warnings)
