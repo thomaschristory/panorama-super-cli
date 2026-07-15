@@ -24,8 +24,17 @@ that keeps shadowing the promoted name.
 
 from __future__ import annotations
 
+from pydantic import BaseModel
+
 from psc.core.changeset import ChangeSet, ObjectDelete, ObjectKind
-from psc.core.dedup import ObjectRef
+from psc.core.dedup import (
+    DuplicateGroup,
+    ObjectRef,
+    find_duplicate_addresses,
+    find_duplicate_services,
+    select_address_bucket,
+    select_service_bucket,
+)
 from psc.core.models import Address, AddressGroup, Location, Service, Snapshot
 from psc.core.refs import ReferenceGraph
 from psc.core.relocate import (
@@ -303,3 +312,126 @@ def plan_promote(
         members=[m for m, _ in objs],
     )
     return cs
+
+
+class SkippedBucket(BaseModel):
+    """A bucket `--all` deliberately did not promote, and why.
+
+    Skipping is not the same as blocking. A blocker is a hard gate on ONE plan; in
+    a sweep, one unpromotable bucket must not veto every other. So `plan_promote_all`
+    excludes the bucket from the aggregate plan and reports it here — loudly, because
+    silent truncation would read as "covered everything" when it did not.
+    """
+
+    value: str
+    reason: str
+
+
+def buckets_for_kind(
+    snapshot: Snapshot, graph: ReferenceGraph, kind: ObjectKind
+) -> list[DuplicateGroup]:
+    """Every duplicate bucket of `kind`, using dedup's finders."""
+    if kind is ObjectKind.ADDRESS:
+        return find_duplicate_addresses(snapshot)
+    if kind is ObjectKind.SERVICE:
+        return find_duplicate_services(snapshot)
+    raise PscError(f"promote --all does not support {kind.value}", ErrorType.INPUT)
+
+
+def select_bucket(
+    snapshot: Snapshot, graph: ReferenceGraph, *, kind: ObjectKind, value: str
+) -> DuplicateGroup:
+    """The one bucket a `--group <value>` selector names."""
+    if kind is ObjectKind.ADDRESS:
+        return select_address_bucket(snapshot, value)
+    if kind is ObjectKind.SERVICE:
+        return select_service_bucket(snapshot, value)
+    raise PscError(f"promote --group does not support {kind.value}", ErrorType.INPUT)
+
+
+def plan_promote_all(
+    snapshot: Snapshot,
+    graph: ReferenceGraph,
+    *,
+    kind: ObjectKind,
+    dest_name: str = "shared",
+) -> tuple[ChangeSet, list[SkippedBucket]]:
+    """Promote every promotable bucket of `kind` in one plan.
+
+    Buckets that cannot be promoted are excluded and returned as `SkippedBucket`s;
+    the aggregate plan's `blockers` stays empty by construction, so one bad bucket
+    cannot veto the rest (see `SkippedBucket`).
+    """
+    dest = to_location(dest_name)
+    cs = ChangeSet(title=f"promote all duplicate {kind.value} buckets -> @{dest.name}")
+    skipped: list[SkippedBucket] = []
+
+    planned: list[tuple[DuplicateGroup, ChangeSet]] = []
+    for bucket in buckets_for_kind(snapshot, graph, kind):
+        plan = plan_promote(
+            snapshot, graph, kind=kind, members=list(bucket.members), dest_name=dest_name
+        )
+        if plan.is_blocked:
+            skipped.append(SkippedBucket(value=bucket.value, reason="; ".join(plan.blockers)))
+            continue
+        planned.append((bucket, plan))
+
+    colliding = _colliding_buckets(planned, dest=dest)
+    seen: set[tuple[str, str, str]] = set()
+    for bucket, plan in planned:
+        if bucket.value in colliding:
+            skipped.append(
+                SkippedBucket(
+                    value=bucket.value,
+                    reason=(
+                        f"name clash: promoting this bucket would define a name at {dest.name} "
+                        "that another bucket defines with a different value; rename one side first"
+                    ),
+                )
+            )
+            continue
+        # Identical upserts can legitimately recur across buckets once cascade is in
+        # play (two groups sharing a leaf), so fold rather than duplicate.
+        for u in plan.upserts:
+            key = (u.kind.value, u.name, u.location)
+            if key in seen:
+                continue
+            seen.add(key)
+            cs.upserts.append(u)
+        cs.reference_edits.extend(plan.reference_edits)
+        cs.deletes.extend(plan.deletes)
+        cs.warnings.extend(plan.warnings)
+
+    if skipped:
+        cs.warnings.append(
+            f"skipped {len(skipped)} bucket(s) that cannot be promoted to {dest.name}; "
+            "see the skipped report"
+        )
+    return cs, skipped
+
+
+def _colliding_buckets(
+    planned: list[tuple[DuplicateGroup, ChangeSet]], *, dest: Location
+) -> set[str]:
+    """Bucket values whose plans would define the same destination name differently.
+
+    Unique to `--all`: two buckets can each be internally sound and still fight over
+    a name at the destination. Same name + same value would have been ONE bucket, so
+    a name clash across buckets is always a value clash — applying both would upsert
+    the object twice, last write silently winning. Skip both sides; there is no
+    correct single object to promote.
+    """
+    owner: dict[tuple[str, str, str], tuple[object, str]] = {}
+    colliding: set[str] = set()
+    for bucket, plan in planned:
+        for u in plan.upserts:
+            if u.location != dest.name:
+                continue
+            key = (u.kind.value, u.name, u.location)
+            prior = owner.get(key)
+            if prior is None:
+                owner[key] = (u, bucket.value)
+            elif prior[0] != u:
+                colliding.add(bucket.value)
+                colliding.add(prior[1])
+    return colliding

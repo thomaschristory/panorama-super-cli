@@ -537,6 +537,22 @@ def select_address_bucket(snapshot: Snapshot, value: str, *, strict: bool = True
     return matches[0]
 
 
+def select_service_bucket(snapshot: Snapshot, value: str) -> DuplicateGroup:
+    """Find the duplicate-service bucket matching a user-supplied `--group` value.
+
+    Simpler than the address case: `service_key` is already canonical and unique
+    per bucket, so no type prefix and no ambiguity are possible.
+    """
+    wanted = value.strip()
+    matches = [g for g in find_duplicate_services(snapshot) if g.value == wanted]
+    if not matches:
+        raise PscError(
+            f"no duplicate-service bucket matches '{value}' (run `dedup services` to list buckets)",
+            ErrorType.INPUT,
+        )
+    return matches[0]
+
+
 def plan_merge_bucket(
     snapshot: Snapshot,
     graph: ReferenceGraph,
