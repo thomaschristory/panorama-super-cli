@@ -39,14 +39,16 @@ from psc.core.dedup import (
     find_duplicate_addresses,
     find_duplicate_groups,
     find_duplicate_services,
+    find_duplicate_tags,
     plan_repoints,
     resolve_group_members,
     rewrite_members,
     select_address_bucket,
     select_group_bucket,
     select_service_bucket,
+    select_tag_bucket,
 )
-from psc.core.models import Address, AddressGroup, Location, Service, Snapshot
+from psc.core.models import Address, AddressGroup, Location, Service, Snapshot, Tag
 from psc.core.refs import ReferenceGraph
 from psc.core.relocate import (
     NAMESPACE,
@@ -62,14 +64,18 @@ from psc.core.relocate import (
 )
 from psc.output.errors import ErrorType, PscError
 
-# Exactly the kinds `dedup` buckets. Tags carry no value to deduplicate, and
-# service-groups have no dedup finder, so neither has a bucket to promote.
-PROMOTABLE_KINDS = frozenset({ObjectKind.ADDRESS, ObjectKind.SERVICE, ObjectKind.ADDRESS_GROUP})
+# The kinds `dedup` buckets. Addresses/services/groups bucket by value; tags
+# bucket by NAME (a tag has no match-affecting value, but it CAN be redundantly
+# defined in several locations — #162). Service-groups have no dedup finder, so
+# they have no bucket to promote.
+PROMOTABLE_KINDS = frozenset(
+    {ObjectKind.ADDRESS, ObjectKind.SERVICE, ObjectKind.ADDRESS_GROUP, ObjectKind.TAG}
+)
 
 # The concrete object types a promotable bucket can hold. Narrower than
-# relocate's `Obj` (no Tag), which is what lets us read `.tags`/`.description`
-# off a bucket member without a cast.
-PromotableObj = Address | AddressGroup | Service
+# relocate's `Obj` (no ServiceGroup). A Tag lacks `.tags`/`.description`, so
+# `_drift_warnings` branches on type rather than reading them blindly.
+PromotableObj = Address | AddressGroup | Service | Tag
 
 _Member = tuple[ObjectRef, PromotableObj]
 
@@ -108,7 +114,7 @@ def _resolve_members(
         if obj is None:
             cs.blockers.append(f"{kind.value} '{m.name}'@{m.location} does not exist")
             continue
-        assert isinstance(obj, Address | AddressGroup | Service)
+        assert isinstance(obj, Address | AddressGroup | Service | Tag)
         out.append((m, obj))
     return out
 
@@ -116,14 +122,31 @@ def _resolve_members(
 def _drift_warnings(cs: ChangeSet, template: _Member, objs: list[_Member]) -> None:
     """Attributes a discarded copy carries that the promoted object will not.
 
-    Tags are the sharp edge: they decide dynamic address-group membership, so a
-    tag that exists only on a discarded copy silently changes what a DAG matches.
-    Warn — the operator, not the tool, decides.
+    For the value-carrying kinds, tags are the sharp edge: they decide dynamic
+    address-group membership, so a tag only on a discarded copy silently changes
+    what a DAG matches. For a Tag object itself the drift is cosmetic —
+    colour/comments — but still worth surfacing, since the survivor's appearance
+    wins. Warn either way; the operator, not the tool, decides.
     """
     tpl_ref, tpl = template
     for m, obj in objs:
         if (m.name, m.location) == (tpl_ref.name, tpl_ref.location):
             continue
+        # Template and members share a kind, so branching on the template narrows
+        # both sides for mypy (a bucket of tags has a Tag template, and vice versa).
+        if isinstance(tpl, Tag):
+            assert isinstance(obj, Tag)
+            if obj.color and obj.color != tpl.color:
+                cs.warnings.append(
+                    f"'{m.name}'@{m.location} has color {obj.color} the promoted copy will "
+                    f"not carry (survivor keeps {tpl.color or 'no color'})"
+                )
+            if obj.comments and obj.comments != tpl.comments:
+                cs.warnings.append(
+                    f"'{m.name}'@{m.location} has comments the promoted copy will not carry"
+                )
+            continue
+        assert not isinstance(obj, Tag)
         lost = sorted(set(obj.tags) - set(tpl.tags))
         if lost:
             # No square brackets: warnings render through rich, which would eat
@@ -423,6 +446,7 @@ def _synthetic(
         ObjectKind.ADDRESS: "addresses",
         ObjectKind.SERVICE: "services",
         ObjectKind.ADDRESS_GROUP: "address_groups",
+        ObjectKind.TAG: "tags",
     }[kind]
     existing = list(getattr(snapshot, field))
     return snapshot.model_copy(update={field: [*existing, promoted]})
@@ -678,6 +702,8 @@ def buckets_for_kind(
         # find equivalent groups whatever they are called. Dynamic and unresolvable
         # groups are excluded by the finder itself.
         return find_duplicate_groups(snapshot, graph).buckets
+    if kind is ObjectKind.TAG:
+        return find_duplicate_tags(snapshot)
     raise PscError(f"promote --all does not support {kind.value}", ErrorType.INPUT)
 
 
@@ -691,6 +717,8 @@ def select_bucket(
         return select_service_bucket(snapshot, value)
     if kind is ObjectKind.ADDRESS_GROUP:
         return select_group_bucket(snapshot, value)
+    if kind is ObjectKind.TAG:
+        return select_tag_bucket(snapshot, value)
     raise PscError(f"promote --group does not support {kind.value}", ErrorType.INPUT)
 
 

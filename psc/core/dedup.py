@@ -592,9 +592,7 @@ def select_tag_bucket(snapshot: Snapshot, name: str) -> DuplicateGroup:
     than two copies is nothing to consolidate.
     """
     members = [
-        ObjectRef(name=t.name, location=t.location.name)
-        for t in snapshot.tags
-        if t.name == name
+        ObjectRef(name=t.name, location=t.location.name) for t in snapshot.tags if t.name == name
     ]
     if len(members) < 2:  # noqa: PLR2004 — "2" is "at least one duplicate", not a tunable
         raise PscError(
