@@ -5,6 +5,18 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
+## v1.12.1 — 2026-07-15
+
+### Documentation
+
+- Documentation audit against v1.9–v1.12: document the `tags` column on object
+  listings (CLI reference, finding-objects guide, README, bundled SKILL.md),
+  add `psc skill install`/`export` to the README, install guide, and SKILL.md,
+  and list `dedup tags` in the README command table
+  ([#168](https://github.com/thomaschristory/panorama-super-cli/pull/168)). The
+  bundled SKILL.md ships in the wheel, so this patch also delivers the refreshed
+  Skill to `psc skill install`.
+
 ## v1.12.0 — 2026-07-15
 
 ### Added
