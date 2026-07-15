@@ -5,6 +5,16 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
+## Unreleased
+
+### Added
+
+- Object listings now carry a `tags` column
+  ([#159](https://github.com/thomaschristory/panorama-super-cli/issues/159)) —
+  `psc find ip` and `psc find object` surface each object's tags (comma-joined in
+  the table/CSV, a list in JSON/YAML). Empty when an object has no tags; tag
+  definitions themselves report `[]`.
+
 ## v1.9.0 — 2026-07-15
 
 ### Added
