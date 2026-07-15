@@ -250,3 +250,83 @@ def test_all_and_keep_together_is_a_usage_error(tmp_path: Path) -> None:
         "web",
     )
     assert cp.returncode != 0
+
+
+# --- address-group buckets: --name selector + --cascade (#154 phase 3) ------
+
+# Two sibling device-groups, each with its OWN copy of 'h-web1' and a 'web'
+# group containing it. Neither the address nor the group has a shared-visible
+# copy, so a bare promote blocks on the group's unresolved dependency
+# (h-web1 isn't visible at shared) — exactly the case --cascade exists for.
+_GROUP_XML = """<config><shared></shared><devices><entry \
+name="localhost.localdomain"><device-group>
+  <entry name="DG-A">
+    <address><entry name="h-web1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+    <address-group>
+      <entry name="web"><static><member>h-web1</member></static></entry>
+    </address-group>
+  </entry>
+  <entry name="DG-B">
+    <address><entry name="h-web1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+    <address-group>
+      <entry name="web"><static><member>h-web1</member></static></entry>
+    </address-group>
+  </entry>
+</device-group></entry></devices></config>"""
+
+
+def _group_cfg(tmp_path: Path) -> Path:
+    return _cfg(tmp_path, _GROUP_XML)
+
+
+def test_group_promote_without_cascade_is_blocked(tmp_path: Path) -> None:
+    cfg = _group_cfg(tmp_path)
+    cp = run("-c", str(cfg), "dedup", "promote", "address-group", "--name", "web")
+    assert cp.returncode == 6, cp.stdout + cp.stderr
+
+
+def test_group_promote_with_cascade_pulls_the_leaves_up(tmp_path: Path) -> None:
+    cfg = _group_cfg(tmp_path)
+    out = tmp_path / "out.xml"
+    cp = run(
+        "-c",
+        str(cfg),
+        "dedup",
+        "promote",
+        "address-group",
+        "--name",
+        "web",
+        "--cascade",
+        "--apply",
+        "--out",
+        str(out),
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    root = xml_fromstring(out.read_text())
+
+    shared_addr_names = {e.get("name") for e in root.findall("./shared/address/entry")}
+    assert shared_addr_names == {"h-web1"}  # the leaf came up too
+    shared_group_names = {e.get("name") for e in root.findall("./shared/address-group/entry")}
+    assert shared_group_names == {"web"}
+
+    for dg in ("DG-A", "DG-B"):
+        entry = next(
+            e for e in root.findall("./devices/entry/device-group/entry") if e.get("name") == dg
+        )
+        assert entry.findall("./address/entry") == []  # both DG copies of the leaf gone
+        assert entry.findall("./address-group/entry") == []  # both DG copies of the group gone
+
+
+def test_name_and_group_together_is_a_usage_error(tmp_path: Path) -> None:
+    cp = run(
+        "-c",
+        str(_group_cfg(tmp_path)),
+        "dedup",
+        "promote",
+        "address-group",
+        "--name",
+        "web",
+        "--group",
+        "web",
+    )
+    assert cp.returncode != 0

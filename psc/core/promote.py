@@ -700,6 +700,7 @@ def plan_promote_all(
     *,
     kind: ObjectKind,
     dest_name: str = "shared",
+    cascade: bool = False,
 ) -> tuple[ChangeSet, list[SkippedBucket]]:
     """Promote every promotable bucket of `kind` in one plan.
 
@@ -714,7 +715,12 @@ def plan_promote_all(
     planned: list[tuple[DuplicateGroup, ChangeSet]] = []
     for bucket in buckets_for_kind(snapshot, graph, kind):
         plan = plan_promote(
-            snapshot, graph, kind=kind, members=list(bucket.members), dest_name=dest_name
+            snapshot,
+            graph,
+            kind=kind,
+            members=list(bucket.members),
+            dest_name=dest_name,
+            cascade=cascade,
         )
         if plan.is_blocked:
             skipped.append(SkippedBucket(value=bucket.value, reason="; ".join(plan.blockers)))

@@ -370,3 +370,53 @@ def session_with_divergent_dups(tmp_path) -> WorkbenchSession:
     sess.add(SelectionItem(kind="address", name="h-web1", location="dg1"))
     sess.add(SelectionItem(kind="address", name="web-primary", location="dg2"))
     return sess
+
+
+# Two sibling device-groups, each with its OWN copy of 'h-web1' and a 'web'
+# group over it — no shared-visible copy of either, so a bare promote of the
+# 'web' bucket blocks on the group's unresolved dependency (h-web1 isn't
+# visible at shared). This is the address-group bucket / --cascade case for
+# #154 phase 3: the same shape as the CLI's `_group_cfg` fixture, but for the
+# workbench's session-driven tests.
+WORKBENCH_XML_DUP_GROUPS = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="anchor"><ip-netmask>10.1.1.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <address>
+            <entry name="h-web1"><ip-netmask>10.2.2.2/32</ip-netmask></entry>
+          </address>
+          <address-group>
+            <entry name="web"><static><member>h-web1</member></static></entry>
+          </address-group>
+        </entry>
+        <entry name="dg2">
+          <address>
+            <entry name="h-web1"><ip-netmask>10.2.2.2/32</ip-netmask></entry>
+          </address>
+          <address-group>
+            <entry name="web"><static><member>h-web1</member></static></entry>
+          </address-group>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def session_with_dup_groups(tmp_path) -> WorkbenchSession:
+    """Selection pre-loaded with the two sibling `dg1`/`dg2` 'web' address-groups."""
+    p = tmp_path / "config_dup_groups.xml"
+    p.write_text(WORKBENCH_XML_DUP_GROUPS, encoding="utf-8")
+    sess = WorkbenchSession(source=OfflineSource(str(p)), output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="address-group", name="web", location="dg1"))
+    sess.add(SelectionItem(kind="address-group", name="web", location="dg2"))
+    return sess

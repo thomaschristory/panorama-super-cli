@@ -252,12 +252,19 @@ def _report_skipped(rt: Runtime, skipped: list[SkippedBucket]) -> None:
 @app.command("promote")
 def promote(
     ctx: typer.Context,
-    kind: ObjectKind = typer.Argument(..., help="Object kind: address | service."),
+    kind: ObjectKind = typer.Argument(..., help="Object kind: address | service | address-group."),
     group: str | None = typer.Option(
         None,
         "--group",
         help="Promote the duplicate bucket with this value (e.g. '10.0.0.10/32'). "
         "Run `dedup addresses` / `dedup services` to list buckets.",
+    ),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        help="Promote every address-group with this NAME (group buckets are name-keyed: "
+        "an effective-leaf-set selector is not something you can type). The members' "
+        "effective sets must match, or the plan is blocked.",
     ),
     all_buckets: bool = typer.Option(
         False,
@@ -278,6 +285,13 @@ def promote(
         "of the bucket's own names; every other copy's references are repointed onto it. "
         "Without this, a divergently-named bucket is a blocker.",
     ),
+    cascade: bool = typer.Option(
+        False,
+        "--cascade",
+        help="Also promote the objects the bucket depends on (a group's members, tags). "
+        "Without this, a dependency that is not already visible at the destination is a "
+        "blocker.",
+    ),
     apply: bool = typer.Option(False, "--apply", help="Execute the promotion (default: dry-run)."),
     out: str | None = OUT_OPTION,
     output_format: ConfigFormat = OUT_FORMAT_OPTION,
@@ -293,28 +307,41 @@ def promote(
     When the copies are named differently (`h-web1@DG-A` vs `web-primary@DG-B`),
     pass `--keep h-web1`: the survivor is created under that name and every
     reference to the other copies is repointed onto it before they are deleted.
+
+    `--group` and `--name` select the same bucket two different ways: `--group`
+    names a duplicate-address/service *value*, `--name` names an address-group by
+    its (possibly repeated) name. Exactly one of `--group`/`--name`/`--all` is
+    required.
     """
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
     graph = ReferenceGraph.build(snap)
 
-    if all_buckets == (group is not None):
-        raise PscError("promote needs exactly one of --group or --all", ErrorType.INPUT)
+    selectors = [s is not None for s in (group, name)]
+    if sum(selectors) + int(all_buckets) != 1:
+        raise PscError("promote needs exactly one of --group, --name, or --all", ErrorType.INPUT)
     if all_buckets and keep is not None:
         raise PscError(
             "--all and --keep are mutually exclusive (one survivor name cannot span "
-            "many buckets); promote the divergent bucket on its own with --group",
+            "many buckets); promote the divergent bucket on its own",
             ErrorType.INPUT,
         )
 
     if all_buckets:
-        cs, skipped = plan_promote_all(snap, graph, kind=kind, dest_name=to)
+        cs, skipped = plan_promote_all(snap, graph, kind=kind, dest_name=to, cascade=cascade)
         _report_skipped(rt, skipped)
     else:
-        assert group is not None  # guarded by the exactly-one check above
-        bucket = select_bucket(snap, graph, kind=kind, value=group)
+        selector = group if group is not None else name
+        assert selector is not None  # guarded by the exactly-one check above
+        bucket = select_bucket(snap, graph, kind=kind, value=selector)
         cs = plan_promote(
-            snap, graph, kind=kind, members=list(bucket.members), dest_name=to, keep_name=keep
+            snap,
+            graph,
+            kind=kind,
+            members=list(bucket.members),
+            dest_name=to,
+            keep_name=keep,
+            cascade=cascade,
         )
 
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)

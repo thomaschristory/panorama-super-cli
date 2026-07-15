@@ -229,3 +229,21 @@ def test_promoting_divergent_names_without_a_keep_is_blocked(
 ) -> None:
     _label, cs = plan_selection_bucket(session_with_divergent_dups, dest_name="shared")
     assert cs.is_blocked
+
+
+# --- address-group buckets + cascade (#154 phase 3) -------------------------
+
+
+def test_address_group_selections_bucket_too(session_with_dup_groups: WorkbenchSession) -> None:
+    found = selection_bucket(session_with_dup_groups)
+    assert found is not None
+    assert found[0] is ObjectKind.ADDRESS_GROUP
+
+
+def test_cascade_flag_reaches_the_engine(session_with_dup_groups: WorkbenchSession) -> None:
+    _label, blocked = plan_selection_bucket(session_with_dup_groups, dest_name="shared")
+    assert blocked.is_blocked  # DG-local members, no cascade
+
+    _label, cs = plan_selection_bucket(session_with_dup_groups, dest_name="shared", cascade=True)
+    assert not cs.is_blocked
+    assert any(u.kind is ObjectKind.ADDRESS for u in cs.upserts)  # the leaves came too

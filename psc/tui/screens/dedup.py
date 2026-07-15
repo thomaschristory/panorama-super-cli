@@ -23,10 +23,10 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import Footer, Select, Static
+from textual.widgets import Checkbox, Footer, Select, Static
 
 from psc.core.changeset import ChangeSet, ObjectKind
-from psc.core.dedup import ObjectRef, plan_merge_bucket
+from psc.core.dedup import ObjectRef, plan_merge_bucket, resolve_group_members
 from psc.core.normalize import service_key
 from psc.core.promote import plan_promote
 from psc.core.refs import ReferenceGraph
@@ -41,10 +41,16 @@ if TYPE_CHECKING:
 _MIN_DUP_COUNT = 2
 
 # Kinds the spoke can bucket. `plan_merge_bucket` is address-only, so a service
-# bucket can be promoted but not merged in place — the screen reflects that by
-# refusing to offer the blank (merge) destination option (see `compose`).
-_BUCKET_KINDS = frozenset({"address", "service"})
+# or address-group bucket can be promoted but not merged in place — the screen
+# reflects that by refusing to offer the blank (merge) destination option
+# (see `compose`).
+_BUCKET_KINDS = frozenset({"address", "service", "address-group"})
 _MERGEABLE_KINDS = frozenset({ObjectKind.ADDRESS})
+
+
+def _group_set_key(leaves: frozenset[str]) -> str:
+    """A stable, hashable bucketing key for a group's effective leaf-address set."""
+    return "|".join(sorted(leaves))
 
 
 def selection_bucket(session: WorkbenchSession) -> tuple[ObjectKind, list[ObjectRef]] | None:
@@ -54,6 +60,12 @@ def selection_bucket(session: WorkbenchSession) -> tuple[ObjectKind, list[Object
     bucket, and guessing which the user meant is worse than refusing. Items no
     longer in the working snapshot (stale selection) are skipped; if no bucket
     reaches two live members, the result is None.
+
+    Address-groups bucket by EFFECTIVE LEAF SET (`resolve_group_members`), not
+    name or raw member list — two same-named groups in different device-groups
+    can still mean different hosts, and two differently-named ones can mean the
+    same hosts. A dynamic or otherwise unresolvable group has no knowable set,
+    so it is excluded rather than guessed at.
     """
     items = session.selected_of_kinds(set(_BUCKET_KINDS))
     kinds = {i.kind for i in items}
@@ -65,6 +77,14 @@ def selection_bucket(session: WorkbenchSession) -> tuple[ObjectKind, list[Object
     keys: dict[tuple[str, str], str]
     if kind is ObjectKind.ADDRESS:
         keys = {(a.location.name, a.name): a.value for a in snap.addresses}
+    elif kind is ObjectKind.ADDRESS_GROUP:
+        graph = ReferenceGraph.build(snap)
+        keys = {}
+        for g in snap.address_groups:
+            leaves = resolve_group_members(snap, graph, g.name, g.location)
+            if leaves is None:
+                continue  # dynamic or unresolvable: no knowable set to bucket on
+            keys[(g.location.name, g.name)] = _group_set_key(leaves)
     else:
         keys = {(s.location.name, s.name): service_key(s) for s in snap.services}
 
@@ -104,17 +124,20 @@ def plan_selection_bucket(
     *,
     keep: ObjectRef | None = None,
     dest_name: str | None = None,
+    cascade: bool = False,
 ) -> tuple[str, ChangeSet] | None:
     """First duplicate bucket in the selection -> (label, plan).
 
     `dest_name` is the mode switch. None -> collapse the bucket onto one of its
     own members (`plan_merge_bucket`, today's behaviour, address-only). A
     location -> promote the whole bucket there (`plan_promote`), the only option
-    when the bucket has no in-place merge planner (e.g. services) or no member at
-    a common ancestor of every other member. On the promote path, `keep` doubles
-    as the survivor name (`keep_name`): the one dropdown picks both which member
-    "wins" a merge and, when promoting a divergently-named bucket, which name the
-    unified object takes.
+    when the bucket has no in-place merge planner (e.g. services, address-groups)
+    or no member at a common ancestor of every other member. On the promote
+    path, `keep` doubles as the survivor name (`keep_name`): the one dropdown
+    picks both which member "wins" a merge and, when promoting a
+    divergently-named bucket, which name the unified object takes. `cascade`
+    only matters on the promote path — it pulls each member's dependency closure
+    (a group's members, tags) up to the destination too.
     """
     found = selection_bucket(session)
     if found is None:
@@ -141,6 +164,7 @@ def plan_selection_bucket(
         members=members,
         dest_name=dest_name,
         keep_name=keep.name if keep is not None else None,
+        cascade=cascade,
     )
     return (f"promote {len(members)} {kind.value}(s) -> @{dest_name}", cs)
 
@@ -177,13 +201,18 @@ class DedupScreen(Screen[None]):
             yield Static("Promote to (leave blank to merge in place):")
             yield Select(
                 [(d, d) for d in promote_destinations(self.session, self._members)],
-                # A non-mergeable kind (e.g. service) has no in-place plan at all,
-                # so blank must not be offered — the honest UI for "this bucket
-                # can only be promoted".
+                # A non-mergeable kind (e.g. service, address-group) has no
+                # in-place plan at all, so blank must not be offered — the
+                # honest UI for "this bucket can only be promoted".
                 allow_blank=self._kind in _MERGEABLE_KINDS,
                 prompt="— merge in place —",
                 id="dedup-dest",
             )
+            if self._kind is ObjectKind.ADDRESS_GROUP:
+                # Only a group bucket has anything to cascade (its members,
+                # tags); an address/service bucket has no downward dependency
+                # to pull along, so the checkbox would be a no-op there.
+                yield Checkbox("cascade dependencies", id="dedup-cascade")
             yield ReviewPanel(id="review")
         yield Footer()
 
@@ -209,6 +238,13 @@ class DedupScreen(Screen[None]):
         select = self.query_one("#dedup-dest", Select)
         return None if select.is_blank() else str(select.value)
 
+    def _chosen_cascade(self) -> bool:
+        # The checkbox is only composed for a group bucket (see `compose`), so
+        # any other kind has nothing to query — and nothing to cascade.
+        if self._kind is not ObjectKind.ADDRESS_GROUP:
+            return False
+        return self.query_one("#dedup-cascade", Checkbox).value
+
     def _render_plan(self) -> None:
         # `plan_promote` raises PscError(INPUT) if `keep` names something that
         # isn't a bucket member. That can't happen through the survivor Select
@@ -217,7 +253,10 @@ class DedupScreen(Screen[None]):
         # rather than let a momentary bad combination crash the app.
         try:
             plan = plan_selection_bucket(
-                self.session, keep=self._chosen_keep(), dest_name=self._chosen_dest()
+                self.session,
+                keep=self._chosen_keep(),
+                dest_name=self._chosen_dest(),
+                cascade=self._chosen_cascade(),
             )
         except PscError:
             return
@@ -230,12 +269,20 @@ class DedupScreen(Screen[None]):
         if event.select.id in ("dedup-keep", "dedup-dest") and self._found is not None:
             self._render_plan()
 
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        # Re-render when the cascade checkbox is toggled, same as a Select change.
+        if event.checkbox.id == "dedup-cascade" and self._found is not None:
+            self._render_plan()
+
     def action_stage(self) -> None:
         # Re-plan against the CURRENT snapshot rather than trusting the plan built
         # at screen-open time, and never let an engine/apply error crash the app.
         try:
             plan = plan_selection_bucket(
-                self.session, keep=self._chosen_keep(), dest_name=self._chosen_dest()
+                self.session,
+                keep=self._chosen_keep(),
+                dest_name=self._chosen_dest(),
+                cascade=self._chosen_cascade(),
             )
             if plan is None or not can_apply(plan[1]):
                 self.app.bell()
