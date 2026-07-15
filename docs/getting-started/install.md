@@ -36,6 +36,19 @@ offline path; the live path talks to Panorama via
 [`pan-os-python`](https://github.com/PaloAltoNetworks/pan-os-python), which is
 installed automatically.
 
+## Install the agent Skill (optional)
+
+`psc` bundles an [Agent Skill](../guides/using-with-ai-agents.md#bundled-skill)
+so an AI coding agent can drive it correctly from a cold start. Drop it where
+your harness loads user-scoped skills (dry-run by default — add `--apply` to
+write):
+
+```console
+psc skill install --target claude-code --apply   # or: codex | gemini | copilot
+```
+
+See [Using with AI agents](../guides/using-with-ai-agents.md) for details.
+
 ## Get a config to point it at
 
 The fastest way to try `psc` is offline against an exported config:

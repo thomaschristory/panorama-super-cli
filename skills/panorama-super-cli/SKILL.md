@@ -77,8 +77,10 @@ psc -c cfg.xml -o json find object grp-web -x      # OPEN it: member tree + effe
 
 `exists: true` means there's an exact-match object. `matches[].match` is one of
 `exact` (equal), `contains` (object is broader), `within` (object is narrower).
-Pass `--exact`/`-e` to keep only `exact` matches — handy when a broad object
-like `10.0.0.0/8` would otherwise drown out the host you asked for.
+Each match carries its `tags` (a list in JSON/YAML, comma-joined in table/CSV,
+empty when untagged). Pass `--exact`/`-e` to keep only `exact` matches — handy
+when a broad object like `10.0.0.0/8` would otherwise drown out the host you
+asked for.
 `--resolve-fqdn` opts into DNS: FQDN objects are resolved and match when their
 A/AAAA include the IP (cached, timeout-bounded; failures counted on stderr). The
 default never touches DNS — leave it off for hermetic/offline runs.
@@ -406,6 +408,19 @@ whose name is shadowed there — is a blocker); `c` opens the create form, whose
 fields adapt to the chosen kind (predefined values — address type, service
 protocol, tag color — are dropdowns). For scripting/agents prefer the one-shot commands above; the
 workbench is for interactive sessions.
+
+### skill — install this Skill into a harness
+
+```bash
+psc skill install --target claude-code            # dry-run: prints source→destination plan
+psc skill install --target claude-code --apply    # copy to ~/.claude/skills/panorama-super-cli/
+psc skill export ./some/dir --apply               # copy to ./some/dir/panorama-super-cli/SKILL.md
+```
+
+Places this bundled Skill where an agent harness loads it. `--target` is one of
+`claude-code`, `codex`, `gemini`, `copilot`. Dry-run by default (like every
+write); `--apply` copies the file. A write failure (e.g. an unwritable path)
+exits `3` with the typed error envelope, never a traceback.
 
 ## Output formats
 

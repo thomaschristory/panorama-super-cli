@@ -51,8 +51,8 @@ pip install panorama-super-cli
 
 | Area | Commands |
 | --- | --- |
-| **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip --resolve-fqdn` (opt-in DNS), `find ip -f ips.txt`, `find object <name>` |
-| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup merge` (pairwise or `--group <value>`), `dedup merge-group`, `dedup promote` (cross-DG duplicate → `shared`) |
+| **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip --resolve-fqdn` (opt-in DNS), `find ip -f ips.txt`, `find object <name>` — listings carry a `tags` column |
+| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup tags`, `dedup merge` (pairwise or `--group <value>`), `dedup merge-group`, `dedup promote` (cross-DG duplicate → `shared`, incl. tags) |
 | **Audit** | `psc audit overlaps` (overlapping/contained CIDR ranges), `audit services-vs-wellknown` |
 | **Diff** | `psc diff a.xml b.xml`, `diff --device-group A --against B` |
 | **Object CRUD** | `psc set address\|address-group\|service\|service-group\|tag ...` (create/update with PAN-OS validation) |
@@ -98,7 +98,13 @@ See the [Workbench guide](https://thomaschristory.github.io/panorama-super-cli/g
 
 `psc` ships a bundled [Agent Skill](skills/panorama-super-cli/SKILL.md) and
 emits a stable JSON envelope + exit-code contract. Pass `--output json` and
-parse away. See [Using with AI agents](https://thomaschristory.github.io/panorama-super-cli/guides/using-with-ai-agents/).
+parse away. Drop the Skill where your harness loads it with `psc skill install`:
+
+```console
+psc skill install --target claude-code --apply   # or codex | gemini | copilot
+```
+
+See [Using with AI agents](https://thomaschristory.github.io/panorama-super-cli/guides/using-with-ai-agents/).
 
 ## License
 
