@@ -177,6 +177,111 @@ rather than blocks; the plan is yours to approve:
 By default both objects are taken from `--device-group` (or `shared`). Override
 per object with `--keep-location` / `--remove-location`.
 
+## Promote a cross-DG duplicate into `shared`
+
+`dedup merge` needs a survivor to collapse onto. The most common Panorama
+cleanup finds a duplicate that has **no** survivor to pick: the same object
+defined independently in `DG-A` and `DG-B`, and nowhere in `shared` or a common
+ancestor. There is nothing above the device-groups to merge into — `dedup
+merge` structurally cannot fix this one.
+
+`dedup promote` is the missing operation. It **creates** the object once at the
+destination (`shared` by default, or `--to <ancestor-DG>`) and **deletes** every
+device-group copy. Because promotion only ever moves upward, every reference
+falls through to the new definition by ordinary PAN-OS shadowing — the plan
+never needs to repoint a single reference:
+
+```console
+$ psc -c panorama.xml dedup promote address --group 10.0.0.1/32
+promote 2 address(s) -> @shared
+  • create address 'web' @shared
+  • delete address 'web' @DG-A
+  • delete address 'web' @DG-B
+dry-run — re-run with --apply to execute
+```
+
+```console
+$ psc -c panorama.xml -o set dedup promote address --group 10.0.0.1/32
+# promote 2 address(s) -> @shared
+set shared address web ip-netmask 10.0.0.1/32
+delete device-group DG-A address web
+delete device-group DG-B address web
+```
+
+### Selecting the bucket
+
+- `--group <value>` (address/service) selects a duplicate-*value* bucket, the
+  same values `dedup addresses`/`dedup services` list.
+- `--name <name>` (address-group) selects every group with that *name* —
+  address-group buckets are name-keyed, since there's no way to type an
+  effective-leaf-set selector. Their members' effective sets must match or the
+  plan is blocked (the same equivalence check `dedup groups` uses).
+- `--all` sweeps every promotable bucket of the kind in one plan. Buckets it
+  cannot promote are **skipped and reported on stderr**, never silently
+  dropped:
+
+  ```console
+  $ psc -c panorama.xml dedup promote address --all
+  note skipped 1 bucket(s):
+    - ip-netmask 10.0.0.10/32: bucket names diverge ('h-web1'@DG-A, 'web-primary'@DG-B); pass --keep NAME to unify them on one name
+  promote all duplicate address buckets -> @shared
+  ```
+
+  `--all` and `--keep` are mutually exclusive — one survivor name cannot span
+  every bucket in the sweep. Promote a divergent bucket on its own with
+  `--group`/`--name` and `--keep` instead.
+
+### Divergently named copies: `--keep`
+
+When the device-group copies were named differently (`h-web1`@`DG-A` vs.
+`web-primary`@`DG-B`), promote has no way to choose a survivor name on its own
+— `--keep NAME` picks it, and every reference to the *other* names is
+repointed onto it before their copies are deleted:
+
+```console
+$ psc -c panorama.xml dedup promote address --group 10.0.0.1/32 --keep h-web1
+promote 2 address(s) -> @shared
+  • create address 'h-web1' @shared
+  • security-rule 'allow-web-primary' @DG-B pre source: ['web-primary'] -> ['h-web1']
+  • delete address 'h-web1' @DG-A
+  • delete address 'web-primary' @DG-B
+dry-run — re-run with --apply to execute
+```
+
+Without `--keep`, a divergently-named bucket is a **blocker** (exit `6`) rather
+than a guess at which name should win.
+
+### `--cascade` for address-groups
+
+`--cascade` also promotes a group bucket's transitive dependencies (its
+members, their tags) to the same destination, deepest-first, in one plan —
+without it, a dependency not already visible at the destination blocks the
+promotion and is listed to promote first. This is the same cascade `move`
+offers for a single object, extended to a whole bucket: every device-group's
+copy of a shared dependency folds onto **one** upsert at the destination
+(sources still lose their own copy), and a dependency still needed by an
+object left behind is promoted but its source copy is retained (with a
+warning).
+
+### Safety
+
+The same gates as `move`/`merge` apply, run once per bucket member: a
+destination that isn't `shared` or a common ancestor of every member is
+rejected outright, an intermediate device-group already defining the name (a
+shadow) blocks, and a dependency invisible at the destination blocks unless
+`--cascade` is passed. Promote additionally requires every member to carry the
+same value (or, for groups, the same effective leaf-address set) — there's no
+`--allow-value-change` escape hatch, since promote never re-derives a
+canonical value. A sibling device-group that keeps defining the same name after
+the promotion is not a blocker — the plan still repoints the members it knows
+about — but it **warns**, since that sibling will keep shadowing the promoted
+object for its own subtree.
+
+Applies the same way as merge: dry-run by default, `--apply --out FILE`
+offline (never overwriting the source export), `--apply` alone on a live
+profile (candidate config, never committed), and `-o set`/`-of set` for the
+PAN-OS script.
+
 ## Duplicate address-groups
 
 `dedup addresses`/`services` finds duplicate *objects*; `dedup groups` finds
