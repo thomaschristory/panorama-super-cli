@@ -257,14 +257,15 @@ def promote(
         None,
         "--group",
         help="Promote the duplicate bucket with this value (e.g. '10.0.0.10/32'). "
-        "Run `dedup addresses` / `dedup services` to list buckets.",
+        "Only valid for `address`/`service` (value-keyed). Run `dedup addresses` / "
+        "`dedup services` to list buckets.",
     ),
     name: str | None = typer.Option(
         None,
         "--name",
-        help="Promote every address-group with this NAME (group buckets are name-keyed: "
-        "an effective-leaf-set selector is not something you can type). The members' "
-        "effective sets must match, or the plan is blocked.",
+        help="Promote every address-group with this NAME. Only valid for `address-group` "
+        "(name-keyed: an effective-leaf-set selector is not something you can type). The "
+        "members' effective sets must match, or the plan is blocked.",
     ),
     all_buckets: bool = typer.Option(
         False,
@@ -289,6 +290,7 @@ def promote(
         False,
         "--cascade",
         help="Also promote the objects the bucket depends on (a group's members, tags). "
+        "Only valid for `address-group` (only groups have a member closure to cascade). "
         "Without this, a dependency that is not already visible at the destination is a "
         "blocker.",
     ),
@@ -308,10 +310,11 @@ def promote(
     pass `--keep h-web1`: the survivor is created under that name and every
     reference to the other copies is repointed onto it before they are deleted.
 
-    `--group` and `--name` select the same bucket two different ways: `--group`
-    names a duplicate-address/service *value*, `--name` names an address-group by
-    its (possibly repeated) name. Exactly one of `--group`/`--name`/`--all` is
-    required.
+    `--group` and `--name` select buckets by kind: `--group` names a
+    duplicate-address/service *value* (address/service kinds are value-keyed),
+    `--name` names an address-group by its (possibly repeated) name
+    (address-group buckets are name-keyed). Exactly one of `--group`/`--name`/
+    `--all` is required; `--cascade` only applies to `address-group`.
     """
     rt: Runtime = ctx.obj
     snap = rt.snapshot()
@@ -324,6 +327,24 @@ def promote(
         raise PscError(
             "--all and --keep are mutually exclusive (one survivor name cannot span "
             "many buckets); promote the divergent bucket on its own",
+            ErrorType.INPUT,
+        )
+    if name is not None and kind is not ObjectKind.ADDRESS_GROUP:
+        raise PscError(
+            "--name only selects address-group buckets (name-keyed); "
+            "address/service buckets are value-keyed, use --group",
+            ErrorType.INPUT,
+        )
+    if group is not None and kind is ObjectKind.ADDRESS_GROUP:
+        raise PscError(
+            "--group only selects address/service buckets (value-keyed); "
+            "address-group buckets are name-keyed, use --name",
+            ErrorType.INPUT,
+        )
+    if cascade and kind is not ObjectKind.ADDRESS_GROUP:
+        raise PscError(
+            "--cascade only applies to address-group buckets (only groups have a "
+            "member closure to cascade)",
             ErrorType.INPUT,
         )
 

@@ -193,7 +193,7 @@ def test_empty_bucket_is_an_input_error() -> None:
         plan_promote(snap, ReferenceGraph.build(snap), kind=ObjectKind.ADDRESS, members=[])
 
 
-def test_a_sibling_device_group_still_defining_the_name_warns() -> None:
+def test_a_sibling_shadow_on_the_ancestor_chain_is_blocked() -> None:
     # APAC is not in the bucket, but defines its own `web`. After promoting the
     # EMEA/DC copies to shared, APAC keeps shadowing shared/web for its subtree.
     snap = _snap(
@@ -616,7 +616,7 @@ def test_cascade_with_conflicting_leaf_values_is_blocked() -> None:
     assert cs.upserts == [] and cs.deletes == []
 
 
-def test_cascade_conflict_on_a_leaf_the_equivalence_gate_cannot_see() -> None:
+def test_cascade_promotes_a_clean_nested_equivalent_bucket() -> None:
     # The groups ARE equivalent (both expand to 10.0.0.1), but each reaches it via a
     # DG-local object of the same name carrying a different literal spelling that
     # normalizes the same — so equivalence passes and the cascade must catch nothing.

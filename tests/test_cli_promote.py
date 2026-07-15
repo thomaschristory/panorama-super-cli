@@ -169,10 +169,40 @@ def test_set_output_renders_create_and_delete_lines(tmp_path: Path) -> None:
     assert "delete device-group DG-B address web" in cp.stdout
 
 
+# Two independent duplicate-address buckets across the same two DGs, so `--all`
+# has more than one bucket to aggregate in a single plan.
+_XML_TWO_BUCKETS = """<config><shared></shared><devices><entry \
+name="localhost.localdomain"><device-group>
+  <entry name="DG-A">
+    <address>
+      <entry name="web"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+      <entry name="db"><ip-netmask>10.0.0.2/32</ip-netmask></entry>
+    </address>
+  </entry>
+  <entry name="DG-B">
+    <address>
+      <entry name="web"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+      <entry name="db"><ip-netmask>10.0.0.2/32</ip-netmask></entry>
+    </address>
+  </entry>
+</device-group></entry></devices></config>"""
+
+
 def test_all_promotes_every_bucket(tmp_path: Path) -> None:
-    cp = run("-c", str(_cfg(tmp_path)), "dedup", "promote", "address", "--all")
+    cfg = _cfg(tmp_path, _XML_TWO_BUCKETS)
+    out = tmp_path / "out.xml"
+    cp = run("-c", str(cfg), "dedup", "promote", "address", "--all", "--apply", "--out", str(out))
     assert cp.returncode == 0, cp.stderr
-    assert "shared" in cp.stdout
+    root = xml_fromstring(out.read_text())
+
+    shared_names = {e.get("name") for e in root.findall("./shared/address/entry")}
+    assert shared_names == {"web", "db"}  # both buckets landed at shared
+
+    for dg in ("DG-A", "DG-B"):
+        entry = next(
+            e for e in root.findall("./devices/entry/device-group/entry") if e.get("name") == dg
+        )
+        assert entry.findall("./address/entry") == []  # both DG copies of both gone
 
 
 def test_group_and_all_together_is_a_usage_error(tmp_path: Path) -> None:
@@ -279,6 +309,30 @@ def _group_cfg(tmp_path: Path) -> Path:
     return _cfg(tmp_path, _GROUP_XML)
 
 
+# Same two sibling 'web' groups, but the leaf they both reference already lives
+# at shared — no unresolved dependency, so this bucket promotes cleanly WITHOUT
+# --cascade. Used to prove the --group/--name kind-scoping guard actually fires
+# (rather than the promote merely being blocked for an unrelated reason).
+_GROUP_XML_LEAF_SHARED = """<config><shared>
+  <address><entry name="h-web1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+</shared><devices><entry name="localhost.localdomain"><device-group>
+  <entry name="DG-A">
+    <address-group>
+      <entry name="web"><static><member>h-web1</member></static></entry>
+    </address-group>
+  </entry>
+  <entry name="DG-B">
+    <address-group>
+      <entry name="web"><static><member>h-web1</member></static></entry>
+    </address-group>
+  </entry>
+</device-group></entry></devices></config>"""
+
+
+def _group_cfg_leaf_shared(tmp_path: Path) -> Path:
+    return _cfg(tmp_path, _GROUP_XML_LEAF_SHARED)
+
+
 def test_group_promote_without_cascade_is_blocked(tmp_path: Path) -> None:
     cfg = _group_cfg(tmp_path)
     cp = run("-c", str(cfg), "dedup", "promote", "address-group", "--name", "web")
@@ -328,5 +382,45 @@ def test_name_and_group_together_is_a_usage_error(tmp_path: Path) -> None:
         "web",
         "--group",
         "web",
+    )
+    assert cp.returncode != 0
+
+
+# --- kind-scoped selectors: --group/--name/--cascade match their documented kind ---
+
+
+def test_name_on_a_value_keyed_kind_is_a_usage_error(tmp_path: Path) -> None:
+    # --name is address-group-only (name-keyed); address buckets are value-keyed.
+    cp = run("-c", str(_cfg(tmp_path)), "dedup", "promote", "address", "--name", "10.0.0.1/32")
+    assert cp.returncode != 0
+
+
+def test_group_on_a_name_keyed_kind_is_a_usage_error(tmp_path: Path) -> None:
+    # --group is address/service-only (value-keyed); address-group buckets are name-keyed.
+    # Uses the leaf-already-at-shared fixture, which promotes cleanly (no --cascade
+    # needed): without the guard this would exit 0 via the --group/--name alias bug.
+    cp = run(
+        "-c",
+        str(_group_cfg_leaf_shared(tmp_path)),
+        "dedup",
+        "promote",
+        "address-group",
+        "--group",
+        "web",
+    )
+    assert cp.returncode != 0
+
+
+def test_cascade_on_a_value_keyed_kind_is_a_usage_error(tmp_path: Path) -> None:
+    # --cascade only makes sense for address-group (only groups have a member closure).
+    cp = run(
+        "-c",
+        str(_cfg(tmp_path)),
+        "dedup",
+        "promote",
+        "address",
+        "--cascade",
+        "--group",
+        "10.0.0.1/32",
     )
     assert cp.returncode != 0
