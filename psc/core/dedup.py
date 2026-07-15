@@ -246,7 +246,7 @@ def _group_set_label(members: frozenset[str]) -> str:
     return "{" + ", ".join(sorted(members)) + "}"
 
 
-def _rewrite_members(before: list[str], drop: str, keep: str) -> list[str]:
+def rewrite_members(before: list[str], drop: str, keep: str) -> list[str]:
     """Replace `drop` with `keep`, de-duplicating while preserving order."""
     out: list[str] = []
     for m in before:
@@ -343,7 +343,7 @@ def _reachable_by_referrers_of(
 
     A referrer resolves a bare name up its own container chain, so a survivor
     outside that chain can never be repointed to. This is the necessary half of
-    the visibility gate in `_plan_repoints` (it cannot know about surviving
+    the visibility gate in `plan_repoints` (it cannot know about surviving
     shadows), used only to pick a default survivor that does not needlessly
     strand another member's rules.
     """
@@ -373,7 +373,7 @@ def _clear_if_blocked(cs: ChangeSet) -> None:
     cs.warnings.clear()
 
 
-def _plan_repoints(
+def plan_repoints(
     cs: ChangeSet,
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -390,6 +390,10 @@ def _plan_repoints(
     `address` namespace and rewrite flat member lists identically. `kind`
     (`address` / `address-group`) is what tells them apart *inside* that one
     namespace.
+
+    Also used by `core/promote.py`, which resolves against a *synthetic* snapshot
+    (the destination object added ahead of time) so the survivor is visible where
+    it will actually live once the plan applies.
     """
     collapsing = 0
     for ref in refs:
@@ -412,7 +416,7 @@ def _plan_repoints(
             continue
         collapsing += 1
         before = field_members(snapshot, ref)
-        after = _rewrite_members(before, drop.name, keep.name)
+        after = rewrite_members(before, drop.name, keep.name)
         if after == before:
             # Same-name collapse: the member list is untouched and the reference
             # simply re-resolves upward to the survivor. Emitting a no-op edit
@@ -486,7 +490,7 @@ def plan_merge(
         )
         return cs
 
-    _plan_repoints(
+    plan_repoints(
         cs,
         snapshot,
         graph,
@@ -532,6 +536,49 @@ def select_address_bucket(snapshot: Snapshot, value: str, *, strict: bool = True
         raise PscError(
             f"'{value}' matches {len(matches)} buckets; qualify it with the type prefix "
             "(e.g. 'ip-netmask 10.0.0.10/32')",
+            ErrorType.INPUT,
+        )
+    return matches[0]
+
+
+def select_group_bucket(snapshot: Snapshot, name: str) -> DuplicateGroup:
+    """Every address-group named `name`, across locations — a promote bucket.
+
+    Group promote buckets are **name-keyed**, not leaf-set-keyed: `find_duplicate_groups`
+    buckets by effective member set, which is not something a human can type on a
+    command line. Equivalence is not assumed here — `plan_promote` enforces that the
+    members' effective leaf sets match, so a same-named pair that means two different
+    things is a blocker, not a silent merge.
+    """
+    members = [
+        ObjectRef(name=g.name, location=g.location.name)
+        for g in snapshot.address_groups
+        if g.name == name
+    ]
+    if len(members) < 2:  # noqa: PLR2004 — "2" is "at least one duplicate", not a tunable
+        raise PscError(
+            f"address-group '{name}' is not defined in more than one location — "
+            "nothing to promote (run `dedup groups` to find redundant groups)",
+            ErrorType.INPUT,
+        )
+    return DuplicateGroup(
+        kind="address-group",
+        value=name,
+        members=sorted(members, key=lambda r: (r.location, r.name)),
+    )
+
+
+def select_service_bucket(snapshot: Snapshot, value: str) -> DuplicateGroup:
+    """Find the duplicate-service bucket matching a user-supplied `--group` value.
+
+    Simpler than the address case: `service_key` is already canonical and unique
+    per bucket, so no type prefix and no ambiguity are possible.
+    """
+    wanted = value.strip()
+    matches = [g for g in find_duplicate_services(snapshot) if g.value == wanted]
+    if not matches:
+        raise PscError(
+            f"no duplicate-service bucket matches '{value}' (run `dedup services` to list buckets)",
             ErrorType.INPUT,
         )
     return matches[0]
@@ -625,7 +672,7 @@ def plan_merge_bucket(
             else:
                 # Re-derive the rewrite against the already-accumulated `after`,
                 # so successive drops on one field compose instead of clobbering.
-                prior.after = _rewrite_members(prior.after, drop.name, keep.name)
+                prior.after = rewrite_members(prior.after, drop.name, keep.name)
         cs.deletes.extend(sub.deletes)
 
     # Re-run the shared teardown gate over the *combined* plan (individual subs
@@ -710,7 +757,7 @@ def plan_merge_group(
             and (r.referrer_name, r.referrer_location) == (keep.name, keep.loc)
         )
     ]
-    _plan_repoints(
+    plan_repoints(
         cs,
         snapshot,
         graph,

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import pytest
-from textual.widgets import DataTable, Input, Select, Static
+from textual.widgets import Checkbox, DataTable, Input, Select, Static
 
+from psc.core.changeset import ObjectKind
 from psc.core.models import AddressType
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
 from psc.tui.screens.audit import AuditScreen
 from psc.tui.screens.create import SERVICE_PROTOCOLS, CreateScreen
 from psc.tui.screens.dangling import DanglingScreen
+from psc.tui.screens.dedup import DedupScreen
 from psc.tui.screens.lint import LintScreen
 from psc.tui.screens.move import MoveScreen
 from psc.tui.screens.name_apply import NameApplyScreen
@@ -19,6 +21,7 @@ from psc.tui.screens.unused import UnusedScreen
 from psc.tui.screens.usage import UsageScreen
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode
+from psc.tui.widgets.review import ReviewPanel
 
 
 def _app(workbench_xml: str) -> WorkbenchApp:
@@ -139,6 +142,62 @@ async def test_dedup_spoke_collapses_three_toward_chosen_survivor(
         names = {a.name for a in app.session.working_snapshot.addresses}
         assert "web-srv-02" in names  # survivor remains
         assert "web-srv-01" not in names and "web-srv-03" not in names  # others gone
+
+
+@pytest.mark.asyncio
+async def test_dedup_cascade_checkbox_absent_for_address_bucket(workbench_xml: str) -> None:
+    # An address bucket has no in-place dependency to cascade (`compose` only
+    # yields the checkbox for ObjectKind.ADDRESS_GROUP) — confirm it stays off.
+    app = _app(workbench_xml)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "10.0.5.10"
+        await pilot.press("enter")
+        await pilot.pause()
+        results = app.query_one("#results", DataTable)
+        results.focus()
+        await pilot.press("space")  # row 0
+        results.move_cursor(row=1)
+        await pilot.press("space")  # row 1
+        await pilot.pause()
+        await pilot.press("d")  # open dedup screen
+        await pilot.pause()
+        assert isinstance(app.screen, DedupScreen)
+        assert list(app.screen.query("#dedup-cascade")) == []
+
+
+@pytest.mark.asyncio
+async def test_dedup_cascade_checkbox_toggles_group_bucket_plan(
+    session_with_dup_groups: WorkbenchSession,
+) -> None:
+    # Two sibling device-groups' 'web' address-groups (each over its own local
+    # 'h-web1') form an address-group bucket: the cascade checkbox must appear,
+    # and ticking it must pull the leaf address into the review panel's plan.
+    app = WorkbenchApp(session_with_dup_groups)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # focus off the search Input
+        await pilot.press("d")  # open dedup screen
+        await pilot.pause()
+        assert isinstance(app.screen, DedupScreen)
+        checkbox = app.screen.query_one("#dedup-cascade", Checkbox)
+        assert checkbox.value is False
+
+        dest = app.screen.query_one("#dedup-dest", Select)
+        dest.value = "shared"
+        await pilot.pause()
+
+        review = app.screen.query_one("#review", ReviewPanel)
+        before_cs = review._cs
+        assert before_cs.is_blocked  # h-web1 isn't visible at shared without cascade
+        assert not any(u.kind is ObjectKind.ADDRESS for u in before_cs.upserts)
+
+        checkbox.value = True
+        await pilot.pause()
+
+        after_cs = review._cs
+        assert not after_cs.is_blocked
+        # The leaf address came up too, alongside the promoted group.
+        assert any(u.kind is ObjectKind.ADDRESS for u in after_cs.upserts)
+        assert any(u.kind is ObjectKind.ADDRESS_GROUP for u in after_cs.upserts)
 
 
 @pytest.mark.asyncio

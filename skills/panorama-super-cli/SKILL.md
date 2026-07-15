@@ -113,6 +113,10 @@ psc -c cfg.xml -o json dedup merge --keep h-web1 --remove web-primary   # dry-ru
 psc -c cfg.xml dedup merge --keep h-web1 --remove web-primary --apply --out fixed.xml
 psc -c cfg.xml dedup merge --group 10.0.0.10/32 --keep h-web1 --apply --out fixed.xml  # whole bucket
 psc -c cfg.xml dedup merge-group --keep grp-a --remove grp-b --apply --out fixed.xml
+psc -c cfg.xml -o json dedup promote address --group 10.0.0.10/32           # dry-run: DG copies -> shared
+psc -c cfg.xml dedup promote address --group 10.0.0.10/32 --keep h-web1 --apply --out fixed.xml
+psc -c cfg.xml dedup promote address-group --name grp-web --cascade --apply --out fixed.xml
+psc -c cfg.xml dedup promote service --all --apply --out fixed.xml          # sweep every bucket
 ```
 
 `merge` repoints **every** group/security-rule/NAT reference onto `--keep`
@@ -143,6 +147,27 @@ noted on stderr (not exhaustive). `--location` scopes the comparison.
 delete engine, but has **no value-change override** — it **blocks** (exit `6`)
 unless both groups expand to the *same* set, on a nested/cyclic pair, or if the
 survivor isn't visible where a reference lives.
+
+`dedup promote` is the merge that `merge`/`merge-group` structurally cannot do:
+a duplicate defined in several device-groups but **nowhere above them**, so
+there's no existing survivor to collapse onto. It creates the object once at
+`--to` (`shared` by default, or a common ancestor device-group) and deletes
+every device-group copy; since promotion only ever moves upward, every
+reference falls through to the new definition by ordinary PAN-OS shadowing —
+nothing is repointed. Exactly one of `--group VALUE` (address/service — the
+same values `dedup addresses`/`dedup services` list), `--name NAME`
+(address-group — buckets are name-keyed), or `--all` (every promotable bucket
+of the kind, reporting any it skips on stderr, never silently dropping them)
+selects the bucket. `--keep NAME` unifies copies that were named differently,
+repointing their references onto the survivor name before deleting them; it's
+required whenever a bucket's copies disagree on a name, and mutually exclusive
+with `--all`. `--cascade` (address-groups only) also promotes a group bucket's
+transitive dependencies (members, tags) to the destination in one plan;
+without it, an unresolved dependency **blocks** the promotion. Same safety
+gates as `move` (direction, intermediate shadow, dependency visibility) plus a
+bucket-level one: every member must carry the same value (or, for groups, the
+same effective leaf-address set) — there's no `--allow-value-change` escape
+hatch.
 
 ### refs — where-used, unused, dangling
 

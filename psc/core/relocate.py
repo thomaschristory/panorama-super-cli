@@ -36,6 +36,11 @@ runs the per-object gates (intermediate-shadow, collision). A dependency still
 referenced by an object that *remains* in the source subtree is promoted but its
 source copy is retained (with a warning), never deleted out from under a local
 referrer.
+
+Several of this module's gates are public (`promotion_blocker`,
+`build_destination_upsert`, `cascade_closure`, …) because `core/promote.py`
+composes them to promote a whole duplicate *bucket* in one plan. They are the
+seam between the two engines; keep them behaviour-free of promote's concerns.
 """
 
 from __future__ import annotations
@@ -56,7 +61,7 @@ from psc.core.refs import PREDEFINED, ReferenceGraph, Target, dag_filter_tags
 
 # Each object kind resolves in exactly one namespace; address & address-group
 # share `address`, service & service-group share `service` (mirrors `refs`).
-_NAMESPACE: dict[ObjectKind, str] = {
+NAMESPACE: dict[ObjectKind, str] = {
     ObjectKind.ADDRESS: "address",
     ObjectKind.ADDRESS_GROUP: "address",
     ObjectKind.SERVICE: "service",
@@ -64,16 +69,16 @@ _NAMESPACE: dict[ObjectKind, str] = {
     ObjectKind.TAG: "tag",
 }
 
-_Obj = Address | AddressGroup | Service | ServiceGroup | Tag
+Obj = Address | AddressGroup | Service | ServiceGroup | Tag
 
 
-def _loc(name: str) -> Location:
+def to_location(name: str) -> Location:
     return Location.shared() if name == "shared" else Location.dg(name)
 
 
-def _find(snapshot: Snapshot, kind: ObjectKind, name: str, loc: Location) -> _Obj | None:
+def find_object(snapshot: Snapshot, kind: ObjectKind, name: str, loc: Location) -> Obj | None:
     """The object of `kind` defined *directly* at `loc` (no inheritance), or None."""
-    collections: dict[ObjectKind, list[_Obj]] = {
+    collections: dict[ObjectKind, list[Obj]] = {
         ObjectKind.ADDRESS: list(snapshot.addresses),
         ObjectKind.ADDRESS_GROUP: list(snapshot.address_groups),
         ObjectKind.SERVICE: list(snapshot.services),
@@ -83,7 +88,7 @@ def _find(snapshot: Snapshot, kind: ObjectKind, name: str, loc: Location) -> _Ob
     return next((o for o in collections[kind] if o.name == name and o.location == loc), None)
 
 
-def _same_value(kind: ObjectKind, a: _Obj, b: _Obj) -> bool:
+def same_value(kind: ObjectKind, a: Obj, b: Obj) -> bool:
     """Whether `a` and `b` carry the same match-affecting value.
 
     A collision at the destination only merges when the two objects mean the
@@ -112,7 +117,7 @@ def _same_value(kind: ObjectKind, a: _Obj, b: _Obj) -> bool:
     return True  # tag: no value to compare
 
 
-def _dependencies(kind: ObjectKind, obj: _Obj) -> list[tuple[str, str]]:
+def _dependencies(kind: ObjectKind, obj: Obj) -> list[tuple[str, str]]:
     """The `(namespace, name)` references the object itself carries downward.
 
     These must resolve from the destination after the move, since `psc` does not
@@ -137,13 +142,13 @@ def _blocked(cs: ChangeSet) -> ChangeSet:
     return cs
 
 
-def _promotion_blocker(
+def promotion_blocker(
     snapshot: Snapshot,
     graph: ReferenceGraph,
     *,
     kind: ObjectKind,
     name: str,
-    src_obj: _Obj,
+    src_obj: Obj,
     source: Location,
     dest: Location,
     namespace: str,
@@ -204,8 +209,8 @@ def _promotion_blocker(
     return None
 
 
-def _build_destination_upsert(
-    snapshot: Snapshot, kind: ObjectKind, obj: _Obj, dest: Location
+def build_destination_upsert(
+    snapshot: Snapshot, kind: ObjectKind, obj: Obj, dest: Location
 ) -> ChangeSet:
     """Plan the create-at-destination via the matching `crud` planner (DRY)."""
     if isinstance(obj, Address):
@@ -252,21 +257,21 @@ def _build_destination_upsert(
 _Node = tuple[ObjectKind, str, str]
 
 
-def _obj_at(snapshot: Snapshot, target: Target) -> _Obj | None:
+def _obj_at(snapshot: Snapshot, target: Target) -> Obj | None:
     """The concrete object a resolved `Target` names, or None if absent."""
-    return _find(snapshot, ObjectKind(target.kind), target.name, target.location)
+    return find_object(snapshot, ObjectKind(target.kind), target.name, target.location)
 
 
-def _cascade_closure(
+def cascade_closure(
     snapshot: Snapshot,
     graph: ReferenceGraph,
     *,
     root_kind: ObjectKind,
     root_name: str,
-    src_obj: _Obj,
+    src_obj: Obj,
     source: Location,
     dest: Location,
-) -> list[tuple[ObjectKind, str, _Obj]]:
+) -> list[tuple[ObjectKind, str, Obj]]:
     """Deepest-first list of the objects `--cascade` must promote to `dest`.
 
     Post-order DFS over each object's downward dependencies (`_dependencies`),
@@ -287,11 +292,11 @@ def _cascade_closure(
     chain = snapshot.ancestors(source)  # [source, …, dest, …, shared]
     local_locs = {loc.name for loc in chain[: chain.index(dest)]}
 
-    ordered: list[tuple[ObjectKind, str, _Obj]] = []
+    ordered: list[tuple[ObjectKind, str, Obj]] = []
     done: set[_Node] = set()
     visiting: set[_Node] = set()
 
-    def visit(kind: ObjectKind, name: str, obj: _Obj, obj_loc: Location) -> None:
+    def visit(kind: ObjectKind, name: str, obj: Obj, obj_loc: Location) -> None:
         node: _Node = (kind, name, obj_loc.name)
         if node in done or node in visiting:
             return  # already emitted, or an ancestor in this DFS branch (cycle)
@@ -321,7 +326,7 @@ def _plan_cascade(
     *,
     kind: ObjectKind,
     name: str,
-    src_obj: _Obj,
+    src_obj: Obj,
     source: Location,
     dest: Location,
 ) -> None:
@@ -339,7 +344,7 @@ def _plan_cascade(
     inheritance, so leaving the source copy is safe — deleting it would strand
     the local referrer. Such a retention emits a warning, never a blocker.
     """
-    closure = _cascade_closure(
+    closure = cascade_closure(
         snapshot,
         graph,
         root_kind=kind,
@@ -360,7 +365,7 @@ def _plan_cascade(
     # planning a single op, so no misleading "will be removed" warnings leak from
     # deps that were never going to move.
     for obj_kind, obj_name, obj in closure:
-        blocker = _promotion_blocker(
+        blocker = promotion_blocker(
             snapshot,
             graph,
             kind=obj_kind,
@@ -368,7 +373,7 @@ def _plan_cascade(
             src_obj=obj,
             source=obj.location,
             dest=dest,
-            namespace=_NAMESPACE[obj_kind],
+            namespace=NAMESPACE[obj_kind],
             check_dependencies=False,
         )
         if blocker is not None:
@@ -378,14 +383,14 @@ def _plan_cascade(
 
     # Second pass: emit the ordered plan (deepest deps first, root last).
     for obj_kind, obj_name, obj in closure:
-        namespace = _NAMESPACE[obj_kind]
+        namespace = NAMESPACE[obj_kind]
         obj_loc = obj.location
         # The named object always deletes its source copy — that *is* the move,
         # and its referrers fall through to the destination by shadowing. Only a
         # cascaded *dependency* is retain-eligible: it may still be needed by an
         # object staying behind in the source subtree.
         is_root = (obj_kind, obj_name, obj_loc.name) == (kind, name, source.name)
-        retain = not is_root and _has_remaining_local_referrer(
+        retain = not is_root and has_remaining_local_referrer(
             graph, kind=obj_kind, name=obj_name, loc=obj_loc, cascade_ids=cascade_ids
         )
         if retain:
@@ -408,7 +413,7 @@ def _plan_cascade(
         )
 
 
-def _has_remaining_local_referrer(
+def has_remaining_local_referrer(
     graph: ReferenceGraph,
     *,
     kind: ObjectKind,
@@ -430,7 +435,7 @@ def _has_remaining_local_referrer(
     return False
 
 
-def _revive_warnings(
+def revive_warnings(
     cs: ChangeSet,
     snapshot: Snapshot,
     graph: ReferenceGraph,
@@ -464,7 +469,7 @@ def _plan_one(
     *,
     kind: ObjectKind,
     name: str,
-    src_obj: _Obj,
+    src_obj: Obj,
     source: Location,
     dest: Location,
     namespace: str,
@@ -478,9 +483,9 @@ def _plan_one(
     cascaded dependency that must be retained (a local referrer still needs its
     source definition) — it is still promoted, just not deleted.
     """
-    dest_obj = _find(snapshot, kind, name, dest)
+    dest_obj = find_object(snapshot, kind, name, dest)
     if dest_obj is not None:
-        if not _same_value(kind, src_obj, dest_obj):
+        if not same_value(kind, src_obj, dest_obj):
             cs.blockers.append(
                 f"destination {dest.name} already defines {kind.value} '{name}' with a "
                 "different value; merge or rename one side first"
@@ -492,7 +497,7 @@ def _plan_one(
                 f"{source.name} copy will be removed and references will resolve to the destination"
             )
     else:
-        upsert_cs = _build_destination_upsert(snapshot, kind, src_obj, dest)
+        upsert_cs = build_destination_upsert(snapshot, kind, src_obj, dest)
         cs.upserts.extend(upsert_cs.upserts)
         cs.blockers.extend(upsert_cs.blockers)
         cs.warnings.extend(upsert_cs.warnings)
@@ -500,7 +505,7 @@ def _plan_one(
     if delete_source:
         cs.deletes.append(ObjectDelete(kind=kind, name=name, location=source.name))
 
-    _revive_warnings(cs, snapshot, graph, name=name, namespace=namespace, dest=dest)
+    revive_warnings(cs, snapshot, graph, name=name, namespace=namespace, dest=dest)
 
 
 def plan_move(
@@ -521,18 +526,18 @@ def plan_move(
     the object's transitive downward dependency closure is promoted too, in
     dependency order (see `_plan_cascade`).
     """
-    source, dest = _loc(source_name), _loc(dest_name)
-    namespace = _NAMESPACE[kind]
+    source, dest = to_location(source_name), to_location(dest_name)
+    namespace = NAMESPACE[kind]
     cs = ChangeSet(title=f"move {kind.value} '{name}' @{source.name} -> @{dest.name}")
 
-    src_obj = _find(snapshot, kind, name, source)
+    src_obj = find_object(snapshot, kind, name, source)
     if src_obj is None:
         cs.blockers.append(f"{kind.value} '{name}' is not defined at {source.name}")
         return _blocked(cs)
 
     # The named object's own gates always run. Under `cascade` the dependency
     # gate is skipped here — the closure walk pulls those deps up instead.
-    blocker = _promotion_blocker(
+    blocker = promotion_blocker(
         snapshot,
         graph,
         kind=kind,

@@ -5,6 +5,22 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
+## [Unreleased]
+
+### Added
+
+- `psc dedup promote` — collapse a duplicate object that exists in several
+  device-groups but nowhere above them into `shared` (or a common ancestor), in one
+  reference-safe plan. This is the merge `dedup merge` structurally could not do:
+  with no copy above the device-groups there is no existing survivor to collapse
+  onto, so promote *creates* it and deletes every device-group copy — references
+  fall through by PAN-OS shadowing, so nothing is repointed. Covers addresses,
+  services, and address-groups (`--cascade` pulls a group's members up with it);
+  `--keep` unifies copies that were named differently; `--all` sweeps every
+  promotable bucket, reporting (never silently dropping) the ones it cannot handle.
+  The workbench dedup spoke gains a destination dropdown that switches it between
+  merging in place and promoting.
+
 ## v1.8.0 — 2026-07-14
 
 ### Changed

@@ -77,6 +77,9 @@ psc dedup merge --group VALUE [--keep NAME] [--not-strict]
 psc dedup merge-group --keep NAME --remove NAME [--location LOC]
                [--keep-location LOC] [--remove-location LOC]
                [--apply] [--out PATH] [-of xml|set]
+psc dedup promote <address|service|address-group>
+               (--group VALUE | --name NAME | --all) [--to shared|DG]
+               [--keep NAME] [--cascade] [--apply] [--out PATH] [-of xml|set]
 ```
 
 Find duplicate objects (`addresses`/`services`) or address-groups with identical
@@ -88,7 +91,17 @@ that value into one survivor in a single plan (`--group`/`--remove` are mutually
 exclusive; `--keep` is optional and defaults to the first bucket member;
 `--not-strict` matches the bucket under host-bit masking). `merge-group` has
 **no** value-change override — it refuses unless the groups expand to the same
-set. See [Duplicates and merging](../guides/duplicates-and-merging.md).
+set. `dedup promote` handles the duplicate `merge` cannot: a bucket with no
+copy above its device-groups, so there's no existing survivor to collapse
+onto. It *creates* the object once at `--to` (`shared` by default, or a common
+ancestor) and deletes every device-group copy — references fall through by
+PAN-OS shadowing, so nothing is repointed. Exactly one of `--group` (a
+duplicate address/service value), `--name` (an address-group name — group
+buckets are name-keyed), or `--all` (every promotable bucket, reporting any it
+skips on stderr) selects the bucket; `--keep NAME` unifies copies that were
+named differently (repointing their references); `--cascade` also promotes an
+address-group bucket's members and tags to the destination. See
+[Duplicates and merging](../guides/duplicates-and-merging.md).
 
 ### audit
 

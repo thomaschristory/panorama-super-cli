@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import typer
+from rich.markup import escape
 
 from psc.cli._options import OUT_OPTION, optional_location
 from psc.cli._plan import OUT_FORMAT_OPTION, complete
 from psc.cli.runtime import Runtime
+from psc.core.changeset import ObjectKind
 from psc.core.dedup import (
     DuplicateGroup,
     ObjectRef,
@@ -18,6 +20,7 @@ from psc.core.dedup import (
     plan_merge_group,
     select_address_bucket,
 )
+from psc.core.promote import SkippedBucket, plan_promote, plan_promote_all, select_bucket
 from psc.core.refs import ReferenceGraph
 from psc.core.source import ConfigFormat
 from psc.output.errors import ErrorType, PscError
@@ -234,4 +237,132 @@ def merge_group(
         keep=ObjectRef(name=keep, location=keep_location or default_loc),
         drop=ObjectRef(name=remove, location=remove_location or default_loc),
     )
+    complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
+
+
+def _report_skipped(rt: Runtime, skipped: list[SkippedBucket]) -> None:
+    """Surface every bucket `--all` did not promote. Never let a sweep look total."""
+    if not skipped:
+        return
+    rt.stderr.print(f"[yellow]note[/yellow] skipped {len(skipped)} bucket(s):")
+    for s in skipped:
+        rt.stderr.print(f"  [yellow]-[/yellow] {escape(s.value)}: {escape(s.reason)}")
+
+
+@app.command("promote")
+def promote(
+    ctx: typer.Context,
+    kind: ObjectKind = typer.Argument(..., help="Object kind: address | service | address-group."),
+    group: str | None = typer.Option(
+        None,
+        "--group",
+        help="Promote the duplicate bucket with this value (e.g. '10.0.0.10/32'). "
+        "Only valid for `address`/`service` (value-keyed). Run `dedup addresses` / "
+        "`dedup services` to list buckets.",
+    ),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        help="Promote every address-group with this NAME. Only valid for `address-group` "
+        "(name-keyed: an effective-leaf-set selector is not something you can type). The "
+        "members' effective sets must match, or the plan is blocked.",
+    ),
+    all_buckets: bool = typer.Option(
+        False,
+        "--all",
+        help="Promote EVERY promotable bucket of this kind in one plan. Buckets that "
+        "cannot be promoted are skipped and reported on stderr, never silently dropped.",
+    ),
+    to: str = typer.Option(
+        "shared",
+        "--to",
+        help="Destination: 'shared' (default), or a device-group that is a common "
+        "ancestor of every bucket member.",
+    ),
+    keep: str | None = typer.Option(
+        None,
+        "--keep",
+        help="Survivor NAME when the bucket's copies are named differently. Must be one "
+        "of the bucket's own names; every other copy's references are repointed onto it. "
+        "Without this, a divergently-named bucket is a blocker.",
+    ),
+    cascade: bool = typer.Option(
+        False,
+        "--cascade",
+        help="Also promote the objects the bucket depends on (a group's members, tags). "
+        "Only valid for `address-group` (only groups have a member closure to cascade). "
+        "Without this, a dependency that is not already visible at the destination is a "
+        "blocker.",
+    ),
+    apply: bool = typer.Option(False, "--apply", help="Execute the promotion (default: dry-run)."),
+    out: str | None = OUT_OPTION,
+    output_format: ConfigFormat = OUT_FORMAT_OPTION,
+) -> None:
+    """Promote a cross-device-group duplicate into shared (or a common ancestor).
+
+    This is the merge `dedup merge` cannot do: when the same object is defined in
+    several device-groups and NOWHERE above them, there is no existing survivor to
+    collapse onto. `promote` creates it once at the destination and deletes every
+    device-group copy — references fall through by PAN-OS shadowing, so nothing is
+    repointed. Dry-run by default (use `-o set` for the PAN-OS script).
+
+    When the copies are named differently (`h-web1@DG-A` vs `web-primary@DG-B`),
+    pass `--keep h-web1`: the survivor is created under that name and every
+    reference to the other copies is repointed onto it before they are deleted.
+
+    `--group` and `--name` select buckets by kind: `--group` names a
+    duplicate-address/service *value* (address/service kinds are value-keyed),
+    `--name` names an address-group by its (possibly repeated) name
+    (address-group buckets are name-keyed). Exactly one of `--group`/`--name`/
+    `--all` is required; `--cascade` only applies to `address-group`.
+    """
+    rt: Runtime = ctx.obj
+    snap = rt.snapshot()
+    graph = ReferenceGraph.build(snap)
+
+    selectors = [s is not None for s in (group, name)]
+    if sum(selectors) + int(all_buckets) != 1:
+        raise PscError("promote needs exactly one of --group, --name, or --all", ErrorType.INPUT)
+    if all_buckets and keep is not None:
+        raise PscError(
+            "--all and --keep are mutually exclusive (one survivor name cannot span "
+            "many buckets); promote the divergent bucket on its own",
+            ErrorType.INPUT,
+        )
+    if name is not None and kind is not ObjectKind.ADDRESS_GROUP:
+        raise PscError(
+            "--name only selects address-group buckets (name-keyed); "
+            "address/service buckets are value-keyed, use --group",
+            ErrorType.INPUT,
+        )
+    if group is not None and kind is ObjectKind.ADDRESS_GROUP:
+        raise PscError(
+            "--group only selects address/service buckets (value-keyed); "
+            "address-group buckets are name-keyed, use --name",
+            ErrorType.INPUT,
+        )
+    if cascade and kind is not ObjectKind.ADDRESS_GROUP:
+        raise PscError(
+            "--cascade only applies to address-group buckets (only groups have a "
+            "member closure to cascade)",
+            ErrorType.INPUT,
+        )
+
+    if all_buckets:
+        cs, skipped = plan_promote_all(snap, graph, kind=kind, dest_name=to, cascade=cascade)
+        _report_skipped(rt, skipped)
+    else:
+        selector = group if group is not None else name
+        assert selector is not None  # guarded by the exactly-one check above
+        bucket = select_bucket(snap, graph, kind=kind, value=selector)
+        cs = plan_promote(
+            snap,
+            graph,
+            kind=kind,
+            members=list(bucket.members),
+            dest_name=to,
+            keep_name=keep,
+            cascade=cascade,
+        )
+
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)

@@ -52,7 +52,7 @@ pip install panorama-super-cli
 | Area | Commands |
 | --- | --- |
 | **Find / resolve** | `psc find ip <ip>`, `find ip -e <ip>` (exact only), `find ip --resolve-fqdn` (opt-in DNS), `find ip -f ips.txt`, `find object <name>` |
-| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup merge` (pairwise or `--group <value>`), `dedup merge-group` |
+| **Duplicates** | `psc dedup addresses`, `dedup services`, `dedup groups`, `dedup merge` (pairwise or `--group <value>`), `dedup merge-group`, `dedup promote` (cross-DG duplicate → `shared`) |
 | **Audit** | `psc audit overlaps` (overlapping/contained CIDR ranges), `audit services-vs-wellknown` |
 | **Diff** | `psc diff a.xml b.xml`, `diff --device-group A --against B` |
 | **Object CRUD** | `psc set address\|address-group\|service\|service-group\|tag ...` (create/update with PAN-OS validation) |

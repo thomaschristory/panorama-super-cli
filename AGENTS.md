@@ -28,6 +28,12 @@ UI would import `psc.core` directly and never touch `psc.cli`.
 - `psc/core/resolve.py` — `find` engine (IP/value/name → objects).
 - `psc/core/dedup.py` — duplicate detection + safe merge planning (objects and
   address-groups, the latter bucketed by effective leaf-address set).
+- `psc/core/promote.py` — collapse a cross-DG duplicate *bucket* into `shared` (or
+  a common ancestor): one upsert, N deletes, zero repoints (upward promotion falls
+  through by shadowing). Composes `dedup` (buckets, repointing) and `relocate`
+  (direction/shadow/dependency gates, cascade). The `--keep` rename path resolves
+  against a *synthetic* snapshot that already carries the destination object —
+  without it, the survivor is invisible where it will actually live.
 - `psc/core/audit.py` — overlap/containment audit over address ranges (pure
   read; ip-netmask/ip-range only).
 - `psc/core/crud.py` — single-object create/update validation + `ObjectUpsert`

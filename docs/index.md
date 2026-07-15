@@ -39,7 +39,7 @@ See [Concepts](getting-started/concepts.md) for the mental model, or jump to
 | Area | Commands |
 | --- | --- |
 | Find / resolve | `find ip`, `find object`, `show` (open an object) |
-| Duplicates | `dedup addresses`, `dedup services`, `dedup merge` |
+| Duplicates | `dedup addresses`, `dedup services`, `dedup merge`, `dedup promote` |
 | References | `refs used`, `refs unused`, `refs dangling` |
 | Edit | `set`, `rule edit-member`, `group edit-member`, `move`, `decommission` |
 | Naming | `name lint`, `name rename`, `name apply` |
