@@ -808,15 +808,23 @@ def _prune_retained_orphans(
     references keeps a referrer outside the delete set, so it is never touched. Runs to a
     fixpoint so a retained group whose only referrer is another pruned copy also falls.
     """
-    promoted = {(u.kind, u.name) for u in cs.upserts if u.location == dest.name}
-    if not promoted:
-        return
     collections: dict[ObjectKind, list[PromotableObj]] = {
         ObjectKind.ADDRESS: list(snapshot.addresses),
         ObjectKind.SERVICE: list(snapshot.services),
         ObjectKind.ADDRESS_GROUP: list(snapshot.address_groups),
         ObjectKind.TAG: list(snapshot.tags),
     }
+    # Names that will live at `dest` after the plan: freshly upserted OR already
+    # there. The adopt path (`_plan_destination`) emits NO upsert when the survivor
+    # already exists at `dest`, so upserts alone miss it — the case #157 also
+    # reproduces in (a leaf already in `shared`). Keep the existing dest object so a
+    # candidate can be value-checked against it.
+    dest_objs = {
+        (k, o.name): o for k, objs in collections.items() for o in objs if o.location == dest
+    }
+    promoted = {(u.kind, u.name) for u in cs.upserts if u.location == dest.name} | set(dest_objs)
+    if not promoted:
+        return
     deleted_keys = {(d.kind.value, d.name, d.location) for d in cs.deletes}
     pruned_prefixes: set[str] = set()
 
@@ -831,6 +839,12 @@ def _prune_retained_orphans(
                     continue
                 if loc == dest or dest not in snapshot.ancestors(loc):
                     continue  # only a copy strictly below the destination can be redundant
+                # When `dest` already defines this name, the copy is only a redundant
+                # duplicate if it carries the SAME value; a distinct same-named object
+                # is not an orphan of this promotion, so leave it.
+                dest_obj = dest_objs.get((kind, obj.name))
+                if dest_obj is not None and not same_value(kind, obj, dest_obj):
+                    continue
                 refs = graph.where_used(kind.value, obj.name, loc)
                 # A cascade-retained copy always had at least one local referrer; a copy
                 # with none was never retained (it would already have been deleted).

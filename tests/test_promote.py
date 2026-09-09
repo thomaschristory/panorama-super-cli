@@ -368,6 +368,37 @@ def test_promote_all_cascade_prunes_a_cross_bucket_retained_orphan() -> None:
     assert not any("h-x" in w and "copy is retained" in w for w in cs.warnings)
 
 
+def test_promote_all_cascade_prunes_orphan_even_when_leaf_already_at_dest() -> None:
+    # Same cross-bucket shape, but the leaf h-x ALSO already lives at shared. The
+    # cascade ADOPTS shared/h-x (emitting no upsert), so a prune keyed only on the
+    # plan's upserts would miss the orphaned DG copies — the common migration shape
+    # #157 still reproduced in. They must still be pruned once nothing references
+    # them (adopted-at-dest survivors count as "promoted" too).
+    snap = _snap(
+        addresses=[
+            _addr("h-x", "shared"),
+            _addr("h-x", EMEA),
+            _addr("h-x", APAC),
+            _addr("h-y", EMEA, value="10.0.0.2/32"),
+            _addr("h-y", APAC, value="10.0.0.2/32"),
+        ],
+        address_groups=[
+            _grp("web", EMEA, ["h-x", "h-y"]),
+            _grp("web", APAC, ["h-x", "h-y"]),
+            _grp("db", EMEA, ["h-x"]),
+            _grp("db", APAC, ["h-x"]),
+        ],
+    )
+    cs, skipped = _promote_all(snap, kind=ObjectKind.ADDRESS_GROUP, cascade=True)
+
+    assert not cs.is_blocked
+    assert skipped == []
+    deleted = {(d.kind.value, d.name, d.location) for d in cs.deletes}
+    assert ("address", "h-x", EMEA) in deleted
+    assert ("address", "h-x", APAC) in deleted
+    assert not any("h-x" in w and "copy is retained" in w for w in cs.warnings)
+
+
 def test_select_bucket_finds_an_address_bucket_by_value() -> None:
     snap = _snap(addresses=[_addr("web", EMEA), _addr("web", APAC)])
     bucket = select_bucket(
