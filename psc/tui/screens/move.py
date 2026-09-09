@@ -7,14 +7,15 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
-from textual.widgets import Footer, Select, Static
+from textual.widgets import Checkbox, Footer, Select, Static
 
 from psc.core.changeset import ChangeSet, ObjectKind
 from psc.core.refs import ReferenceGraph
 from psc.core.relocate import plan_move
+from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import SelectionItem
-from psc.tui.widgets.review import can_apply
+from psc.tui.widgets.review import ReviewPanel, can_apply
 
 if TYPE_CHECKING:
     from psc.tui.app import WorkbenchApp
@@ -41,8 +42,15 @@ def move_destinations(session: WorkbenchSession) -> list[str]:
     return ["shared", *sorted(session.working_snapshot.device_groups)]
 
 
-def plan_move_item(session: WorkbenchSession, item: SelectionItem, dest_name: str) -> ChangeSet:
-    """Plan promoting one selected object toward `dest_name` (e.g. 'shared')."""
+def plan_move_item(
+    session: WorkbenchSession, item: SelectionItem, dest_name: str, *, cascade: bool = False
+) -> ChangeSet:
+    """Plan promoting one selected object toward `dest_name` (e.g. 'shared').
+
+    `cascade` mirrors `psc move --cascade`: instead of blocking when the object's
+    dependencies aren't yet visible at the destination, pull that downward closure
+    (a group's members, any object's tags) up to `dest_name` too.
+    """
     graph = ReferenceGraph.build(session.working_snapshot)
     return plan_move(
         session.working_snapshot,
@@ -51,6 +59,7 @@ def plan_move_item(session: WorkbenchSession, item: SelectionItem, dest_name: st
         name=item.name,
         source_name=item.location,
         dest_name=dest_name,
+        cascade=cascade,
     )
 
 
@@ -80,14 +89,78 @@ class MoveScreen(Screen[None]):
                 allow_blank=False,
                 id="move-dest",
             )
-            yield Static(f"Move: {names}\n[ctrl+y] confirm  [esc] cancel", id="move-plan")
+            yield Static(f"Move: {names}", id="move-plan")
+            if self._can_cascade():
+                # Only a non-tag object has a downward dependency (a group's
+                # members, any object's tags) to pull along; a plain tag has
+                # nothing to cascade, so the checkbox would be a no-op there.
+                yield Checkbox("cascade dependencies", id="move-cascade")
+            # A single-item preview of one representative subject (see
+            # `_preview_item`); the chosen dest + cascade apply to every selected
+            # item, and each is re-planned and gated independently at confirm time.
+            yield ReviewPanel(id="review")
         yield Footer()
+
+    def on_mount(self) -> None:
+        if self._items:
+            self._render_plan()
+
+    def _can_cascade(self) -> bool:
+        return any(i.kind != "tag" for i in self._items)
 
     def _selected_dest(self) -> str:
         select = self.query_one("#move-dest", Select)
         value = select.value
         # allow_blank=False keeps a concrete value selected; guard the typing only.
         return str(value) if value is not Select.BLANK else "shared"
+
+    def _chosen_cascade(self) -> bool:
+        # The checkbox is only composed when something can be cascaded (see
+        # `compose`), so absent it there is nothing to pull along.
+        if not self._can_cascade():
+            return False
+        return self.query_one("#move-cascade", Checkbox).value
+
+    def _preview_item(self, dest: str) -> SelectionItem | None:
+        """The item whose plan the review previews for `dest`, or None.
+
+        `action_stage` skips items already at `dest` (`continue`), so the preview
+        must too — otherwise choosing an item's own device-group as the dest shows
+        a misleading source==destination BLOCKED banner while staging silently
+        does nothing (#158). Among the items that WOULD move, prefer one that can
+        cascade so ticking the checkbox visibly changes the preview; fall back to
+        the first when the selection is tags only.
+        """
+        movable = [i for i in movable_items(self.session) if i.location != dest]
+        if not movable:
+            return None
+        return next((i for i in movable if i.kind != "tag"), movable[0])
+
+    def _render_plan(self) -> None:
+        dest = self._selected_dest()
+        panel = self.query_one("#review", ReviewPanel)
+        subject = self._preview_item(dest)
+        if subject is None:
+            # Nothing to move to this dest (every selected item is already there);
+            # say so rather than leave a stale plan — matches action_stage's skip.
+            panel.show(ChangeSet(title=f"nothing to move to @{dest} (already there)"))
+            return
+        try:
+            cs = plan_move_item(self.session, subject, dest, cascade=self._chosen_cascade())
+        except PscError:
+            # A transient bad input mid-interaction must not crash the app; the
+            # confirm path re-plans and gates for real. Narrow to PscError (like
+            # the dedup spoke) so a genuine bug still surfaces.
+            return
+        panel.show(cs)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "move-dest" and self._items:
+            self._render_plan()
+
+    def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        if event.checkbox.id == "move-cascade" and self._items:
+            self._render_plan()
 
     def action_stage(self) -> None:
         hub = cast("WorkbenchApp", self.app)
@@ -97,11 +170,12 @@ class MoveScreen(Screen[None]):
             self.app.bell()
             return
         dest = self._selected_dest()
+        cascade = self._chosen_cascade()
         try:
             for item in items:
                 if item.location == dest:
                     continue  # already at the chosen destination — nothing to move
-                cs = plan_move_item(self.session, item, dest)
+                cs = plan_move_item(self.session, item, dest, cascade=cascade)
                 if not can_apply(cs):
                     # A blocked move stops here rather than silently popping with
                     # a partial result: preceding items are already staged

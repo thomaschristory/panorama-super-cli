@@ -20,7 +20,7 @@ from psc.tui.screens.staged import StagedScreen
 from psc.tui.screens.unused import UnusedScreen
 from psc.tui.screens.usage import UsageScreen
 from psc.tui.session import WorkbenchSession
-from psc.tui.state import OutputMode
+from psc.tui.state import OutputMode, SelectionItem
 from psc.tui.widgets.review import ReviewPanel
 
 
@@ -518,6 +518,119 @@ async def test_move_to_chosen_dg_stages_that_destination(workbench_xml_two_dg: s
         await pilot.pause()
         assert len(app.session.staging) == 1
         assert app.session.staging[0].label == "move dg-only -> shared"
+
+
+@pytest.mark.asyncio
+async def test_move_cascade_checkbox_absent_for_a_plain_tag(workbench_xml_dg_group: str) -> None:
+    # A plain tag has no downward dependency to cascade, so the move spoke offers
+    # no cascade checkbox when the selection is only a tag (#158).
+    src = OfflineSource(workbench_xml_dg_group)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="tag", name="t-local", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # focus off the search Input
+        await pilot.press("m")
+        await pilot.pause()
+        assert isinstance(app.screen, MoveScreen)
+        assert list(app.screen.query("#move-cascade")) == []
+
+
+@pytest.mark.asyncio
+async def test_move_cascade_checkbox_toggles_group_plan(workbench_xml_dg_group: str) -> None:
+    # A group over a DG-local member: the cascade checkbox must appear, and ticking
+    # it must turn the dependency-blocked plan into a valid one, pulling the leaf
+    # address into the review panel's plan (#158).
+    src = OfflineSource(workbench_xml_dg_group)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="address-group", name="web", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()  # focus off the search Input
+        await pilot.press("m")
+        await pilot.pause()
+        assert isinstance(app.screen, MoveScreen)
+        checkbox = app.screen.query_one("#move-cascade", Checkbox)
+        assert checkbox.value is False
+
+        review = app.screen.query_one("#review", ReviewPanel)
+        assert review._cs.is_blocked  # h-web1 isn't visible at shared without cascade
+        assert not any(u.kind is ObjectKind.ADDRESS for u in review._cs.upserts)
+
+        checkbox.value = True
+        await pilot.pause()
+
+        after = review._cs
+        assert not after.is_blocked
+        # The leaf address came up too, alongside the promoted group.
+        assert any(u.kind is ObjectKind.ADDRESS and u.name == "h-web1" for u in after.upserts)
+        assert any(u.kind is ObjectKind.ADDRESS_GROUP and u.name == "web" for u in after.upserts)
+
+
+@pytest.mark.asyncio
+async def test_move_cascade_stages_the_dependency_closure(workbench_xml_dg_group: str) -> None:
+    # End-to-end: tick cascade, confirm, and the staged plan promotes both the
+    # group and its DG-local member (the CLI `psc move --cascade` parity, #158).
+    src = OfflineSource(workbench_xml_dg_group)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="address-group", name="web", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("m")
+        await pilot.pause()
+        app.screen.query_one("#move-cascade", Checkbox).value = True
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        names = {a.name for a in app.session.working_snapshot.addresses}
+        assert "h-web1" in names  # the member was pulled up to shared too
+        groups = {g.name for g in app.session.working_snapshot.address_groups}
+        assert "web" in groups
+
+
+@pytest.mark.asyncio
+async def test_move_preview_skips_items_already_at_dest(workbench_xml_two_dg: str) -> None:
+    # Choosing an item's OWN device-group as the destination means "nothing to
+    # move" (action_stage skips same-location items with `continue`). The preview
+    # must reflect that, not a misleading source==destination BLOCKED banner (#158).
+    src = OfflineSource(workbench_xml_two_dg)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="address", name="dg-only", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("m")
+        await pilot.pause()
+        app.screen.query_one("#move-dest", Select).value = "dg1"  # the item's own DG
+        await pilot.pause()
+        review = app.screen.query_one("#review", ReviewPanel)
+        assert not review._cs.is_blocked
+        assert "nothing to move" in review._cs.title
+
+
+@pytest.mark.asyncio
+async def test_move_preview_prefers_a_cascadable_subject(workbench_xml_dg_group: str) -> None:
+    # A tag + a group are both selected. The cascade checkbox appears (a group is
+    # present), and the preview must pick the GROUP (not the first-selected tag) so
+    # toggling cascade visibly affects the plan (#158 review finding A).
+    src = OfflineSource(workbench_xml_dg_group)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="tag", name="t-local", location="dg1"))  # selected first
+    sess.add(SelectionItem(kind="address-group", name="web", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("m")
+        await pilot.pause()
+        review = app.screen.query_one("#review", ReviewPanel)
+        # Group 'web' -> shared is dependency-blocked without cascade; a tag move is
+        # never blocked, so a BLOCKED preview proves the group is the subject.
+        assert review._cs.is_blocked
+        app.screen.query_one("#move-cascade", Checkbox).value = True
+        await pilot.pause()
+        assert not review._cs.is_blocked
 
 
 @pytest.mark.asyncio

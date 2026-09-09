@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from psc.core.changeset import ObjectKind
 from psc.core.source import OfflineSource
 from psc.tui.screens.move import movable_items, move_destinations, plan_move_item
 from psc.tui.session import WorkbenchSession
@@ -45,3 +46,24 @@ def test_plan_move_item_to_non_ancestor_dg_is_blocked(workbench_xml_two_dg: str)
 def test_destinations_lists_shared_and_device_groups(workbench_xml_two_dg: str) -> None:
     sess = _session(workbench_xml_two_dg)
     assert move_destinations(sess) == ["shared", "dg1", "dg2"]
+
+
+def test_plan_move_item_group_with_local_member_is_blocked_without_cascade(
+    workbench_xml_dg_group: str,
+) -> None:
+    sess = _session(workbench_xml_dg_group)
+    item = SelectionItem(kind="address-group", name="web", location="dg1")
+    cs = plan_move_item(sess, item, "shared")
+    # h-web1 (dg1-local) isn't visible at shared, so the dependency gate blocks.
+    assert cs.is_blocked
+    assert not can_apply(cs)
+
+
+def test_plan_move_item_cascade_pulls_the_local_member_up(workbench_xml_dg_group: str) -> None:
+    sess = _session(workbench_xml_dg_group)
+    item = SelectionItem(kind="address-group", name="web", location="dg1")
+    cs = plan_move_item(sess, item, "shared", cascade=True)
+    assert not cs.is_blocked
+    # The group AND its DG-local member both come up to shared.
+    assert any(u.kind is ObjectKind.ADDRESS and u.name == "h-web1" for u in cs.upserts)
+    assert any(u.kind is ObjectKind.ADDRESS_GROUP and u.name == "web" for u in cs.upserts)

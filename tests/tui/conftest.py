@@ -420,3 +420,42 @@ def session_with_dup_groups(tmp_path) -> WorkbenchSession:
     sess.add(SelectionItem(kind="address-group", name="web", location="dg1"))
     sess.add(SelectionItem(kind="address-group", name="web", location="dg2"))
     return sess
+
+
+# A single device-group holding a group over a DG-LOCAL member, plus a plain
+# DG-local tag. Moving 'web'@dg1 -> shared blocks without --cascade (its 'h-web1'
+# member isn't visible at shared); --cascade pulls the member up too. The tag has
+# no downward dependency, so the move spoke offers it no cascade box (#158).
+WORKBENCH_XML_DG_GROUP = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address>
+      <entry name="anchor"><ip-netmask>10.1.1.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg1">
+          <tag><entry name="t-local"/></tag>
+          <address>
+            <entry name="h-web1"><ip-netmask>10.2.2.2/32</ip-netmask></entry>
+          </address>
+          <address-group>
+            <entry name="web"><static><member>h-web1</member></static></entry>
+          </address-group>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_dg_group(tmp_path):
+    """A device-group group 'web' over a DG-local 'h-web1', plus a DG-local tag
+    't-local' — the cascade-vs-plain-tag case for the move spoke (#158)."""
+    p = tmp_path / "config_dg_group.xml"
+    p.write_text(WORKBENCH_XML_DG_GROUP, encoding="utf-8")
+    return str(p)
