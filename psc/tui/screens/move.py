@@ -12,6 +12,7 @@ from textual.widgets import Checkbox, Footer, Select, Static
 from psc.core.changeset import ChangeSet, ObjectKind
 from psc.core.refs import ReferenceGraph
 from psc.core.relocate import plan_move
+from psc.output.errors import PscError
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import SelectionItem
 from psc.tui.widgets.review import ReviewPanel, can_apply
@@ -94,9 +95,9 @@ class MoveScreen(Screen[None]):
                 # members, any object's tags) to pull along; a plain tag has
                 # nothing to cascade, so the checkbox would be a no-op there.
                 yield Checkbox("cascade dependencies", id="move-cascade")
-            # Preview the FIRST movable item's plan; the chosen dest + cascade apply
-            # uniformly to every item, so it is representative (and, unlike before,
-            # gives the move spoke a live plan preview at all).
+            # A single-item preview of one representative subject (see
+            # `_preview_item`); the chosen dest + cascade apply to every selected
+            # item, and each is re-planned and gated independently at confirm time.
             yield ReviewPanel(id="review")
         yield Footer()
 
@@ -120,21 +121,38 @@ class MoveScreen(Screen[None]):
             return False
         return self.query_one("#move-cascade", Checkbox).value
 
+    def _preview_item(self, dest: str) -> SelectionItem | None:
+        """The item whose plan the review previews for `dest`, or None.
+
+        `action_stage` skips items already at `dest` (`continue`), so the preview
+        must too — otherwise choosing an item's own device-group as the dest shows
+        a misleading source==destination BLOCKED banner while staging silently
+        does nothing (#158). Among the items that WOULD move, prefer one that can
+        cascade so ticking the checkbox visibly changes the preview; fall back to
+        the first when the selection is tags only.
+        """
+        movable = [i for i in movable_items(self.session) if i.location != dest]
+        if not movable:
+            return None
+        return next((i for i in movable if i.kind != "tag"), movable[0])
+
     def _render_plan(self) -> None:
-        # Re-derive from the current selection; the first movable item is the
-        # preview subject (the stage loop applies the same dest + cascade to all).
-        items = movable_items(self.session)
-        if not items:
+        dest = self._selected_dest()
+        panel = self.query_one("#review", ReviewPanel)
+        subject = self._preview_item(dest)
+        if subject is None:
+            # Nothing to move to this dest (every selected item is already there);
+            # say so rather than leave a stale plan — matches action_stage's skip.
+            panel.show(ChangeSet(title=f"nothing to move to @{dest} (already there)"))
             return
         try:
-            cs = plan_move_item(
-                self.session, items[0], self._selected_dest(), cascade=self._chosen_cascade()
-            )
-        except Exception:
-            # A transient bad state mid-interaction must not crash the app; the
-            # confirm path re-plans and gates for real.
+            cs = plan_move_item(self.session, subject, dest, cascade=self._chosen_cascade())
+        except PscError:
+            # A transient bad input mid-interaction must not crash the app; the
+            # confirm path re-plans and gates for real. Narrow to PscError (like
+            # the dedup spoke) so a genuine bug still surfaces.
             return
-        self.query_one("#review", ReviewPanel).show(cs)
+        panel.show(cs)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "move-dest" and self._items:

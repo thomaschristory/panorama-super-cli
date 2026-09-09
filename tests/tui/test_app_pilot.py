@@ -591,6 +591,49 @@ async def test_move_cascade_stages_the_dependency_closure(workbench_xml_dg_group
 
 
 @pytest.mark.asyncio
+async def test_move_preview_skips_items_already_at_dest(workbench_xml_two_dg: str) -> None:
+    # Choosing an item's OWN device-group as the destination means "nothing to
+    # move" (action_stage skips same-location items with `continue`). The preview
+    # must reflect that, not a misleading source==destination BLOCKED banner (#158).
+    src = OfflineSource(workbench_xml_two_dg)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="address", name="dg-only", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("m")
+        await pilot.pause()
+        app.screen.query_one("#move-dest", Select).value = "dg1"  # the item's own DG
+        await pilot.pause()
+        review = app.screen.query_one("#review", ReviewPanel)
+        assert not review._cs.is_blocked
+        assert "nothing to move" in review._cs.title
+
+
+@pytest.mark.asyncio
+async def test_move_preview_prefers_a_cascadable_subject(workbench_xml_dg_group: str) -> None:
+    # A tag + a group are both selected. The cascade checkbox appears (a group is
+    # present), and the preview must pick the GROUP (not the first-selected tag) so
+    # toggling cascade visibly affects the plan (#158 review finding A).
+    src = OfflineSource(workbench_xml_dg_group)
+    sess = WorkbenchSession(source=src, output_mode=OutputMode.SET)
+    sess.add(SelectionItem(kind="tag", name="t-local", location="dg1"))  # selected first
+    sess.add(SelectionItem(kind="address-group", name="web", location="dg1"))
+    app = WorkbenchApp(sess)
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("m")
+        await pilot.pause()
+        review = app.screen.query_one("#review", ReviewPanel)
+        # Group 'web' -> shared is dependency-blocked without cascade; a tag move is
+        # never blocked, so a BLOCKED preview proves the group is the subject.
+        assert review._cs.is_blocked
+        app.screen.query_one("#move-cascade", Checkbox).value = True
+        await pilot.pause()
+        assert not review._cs.is_blocked
+
+
+@pytest.mark.asyncio
 async def test_create_spoke_stages_new_address(workbench_xml: str) -> None:
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
