@@ -781,12 +781,85 @@ def plan_promote_all(
         cs.deletes.extend(plan.deletes)
         cs.warnings.extend(plan.warnings)
 
+    _prune_retained_orphans(cs, snapshot, graph, dest=dest)
+
     if skipped:
         cs.warnings.append(
             f"skipped {len(skipped)} bucket(s) that cannot be promoted to {dest.name}; "
             "see the skipped report"
         )
     return cs, skipped
+
+
+def _prune_retained_orphans(
+    cs: ChangeSet, snapshot: Snapshot, graph: ReferenceGraph, *, dest: Location
+) -> None:
+    """Delete cascade-retained copies that no *surviving* object still references (#157).
+
+    Each bucket's `--cascade` retain decision (`has_remaining_local_referrer`) is made
+    per-bucket against the pre-aggregate graph, so a leaf kept "because something local
+    still needs it" can be left behind even when that local referrer is itself deleted
+    by a *sibling* bucket in the same `--all` sweep. After aggregation such a copy is a
+    redundant duplicate of the object already promoted to `dest`. Recompute the decision
+    against the *combined* teardown: a promoted copy every one of whose referrers is
+    being deleted is downgraded retain->delete.
+
+    The safety property is preserved by construction — a copy any surviving object still
+    references keeps a referrer outside the delete set, so it is never touched. Runs to a
+    fixpoint so a retained group whose only referrer is another pruned copy also falls.
+    """
+    collections: dict[ObjectKind, list[PromotableObj]] = {
+        ObjectKind.ADDRESS: list(snapshot.addresses),
+        ObjectKind.SERVICE: list(snapshot.services),
+        ObjectKind.ADDRESS_GROUP: list(snapshot.address_groups),
+        ObjectKind.TAG: list(snapshot.tags),
+    }
+    # Names that will live at `dest` after the plan: freshly upserted OR already
+    # there. The adopt path (`_plan_destination`) emits NO upsert when the survivor
+    # already exists at `dest`, so upserts alone miss it — the case #157 also
+    # reproduces in (a leaf already in `shared`). Keep the existing dest object so a
+    # candidate can be value-checked against it.
+    dest_objs = {
+        (k, o.name): o for k, objs in collections.items() for o in objs if o.location == dest
+    }
+    promoted = {(u.kind, u.name) for u in cs.upserts if u.location == dest.name} | set(dest_objs)
+    if not promoted:
+        return
+    deleted_keys = {(d.kind.value, d.name, d.location) for d in cs.deletes}
+    pruned_prefixes: set[str] = set()
+
+    changed = True
+    while changed:
+        changed = False
+        for kind, objs in collections.items():
+            for obj in objs:
+                loc = obj.location
+                key = (kind.value, obj.name, loc.name)
+                if key in deleted_keys or (kind, obj.name) not in promoted:
+                    continue
+                if loc == dest or dest not in snapshot.ancestors(loc):
+                    continue  # only a copy strictly below the destination can be redundant
+                # When `dest` already defines this name, the copy is only a redundant
+                # duplicate if it carries the SAME value; a distinct same-named object
+                # is not an orphan of this promotion, so leave it.
+                dest_obj = dest_objs.get((kind, obj.name))
+                if dest_obj is not None and not same_value(kind, obj, dest_obj):
+                    continue
+                refs = graph.where_used(kind.value, obj.name, loc)
+                # A cascade-retained copy always had at least one local referrer; a copy
+                # with none was never retained (it would already have been deleted).
+                if not refs or any(
+                    (r.referrer_kind, r.referrer_name, r.referrer_location.name) not in deleted_keys
+                    for r in refs
+                ):
+                    continue  # a surviving object still needs this copy — leave it
+                cs.deletes.append(ObjectDelete(kind=kind, name=obj.name, location=loc.name))
+                deleted_keys.add(key)
+                pruned_prefixes.add(f"{kind.value} '{obj.name}'@{loc.name} is still referenced")
+                changed = True
+
+    if pruned_prefixes:
+        cs.warnings = [w for w in cs.warnings if not any(w.startswith(p) for p in pruned_prefixes)]
 
 
 def _colliding_buckets(
