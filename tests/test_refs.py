@@ -243,6 +243,77 @@ def test_reference_tags_survive_a_device_group_shadow() -> None:
     assert shared.tags == ("shared-tag",)
 
 
+def test_every_referrer_field_carries_the_referrer_tags() -> None:
+    """Pin `Reference.tags` on every field of the walk (#184).
+
+    `_walk` wires the referrer tags at 16 call sites. A miss on one site drops
+    the tags of a whole field, and no other test sees it. One tagged referrer of
+    each kind covers every site in one table.
+    """
+    snap = Snapshot(
+        tags=[Tag(name=n) for n in ("tg-ag", "tg-addr", "tg-svc", "tg-sec", "tg-nat", "tg-pol")],
+        addresses=[_addr("a1", ["tg-addr"]), _addr("nh", [])],
+        address_groups=[AddressGroup(name="ag", static_members=["a1"], tags=["tg-ag"])],
+        services=[Service(name="s1", protocol="tcp", destination_port="443", tags=["tg-svc"])],
+        service_groups=[ServiceGroup(name="sg", members=["s1"], tags=["tg-sg"])],
+        security_rules=[
+            SecurityRule(
+                name="sec",
+                source=["a1"],
+                destination=["a1"],
+                service=["s1"],
+                tags=["tg-sec"],
+            )
+        ],
+        nat_rules=[
+            NatRule(
+                name="nat",
+                source=["a1"],
+                destination_translation="a1",
+                source_translation=["a1"],
+                service="s1",
+                tags=["tg-nat"],
+            )
+        ],
+        policy_rules=[
+            PolicyRule(
+                name="pbf",
+                rule_type=RuleType.PBF,
+                source=["a1"],
+                destination=["a1"],
+                service=["s1"],
+                nexthop="nh",
+                tags=["tg-pol"],
+            )
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    by_field = {(r.referrer_name, r.field): r.tags for r in g.references}
+    # A duplicate key would hide a site behind another row.
+    assert len(by_field) == len(g.references)
+    assert by_field == {
+        ("ag", "static"): ("tg-ag",),
+        ("ag", "tag"): ("tg-ag",),
+        ("sg", "members"): ("tg-sg",),
+        ("a1", "tag"): ("tg-addr",),
+        ("s1", "tag"): ("tg-svc",),
+        ("sec", "source"): ("tg-sec",),
+        ("sec", "destination"): ("tg-sec",),
+        ("sec", "service"): ("tg-sec",),
+        ("sec", "tag"): ("tg-sec",),
+        ("nat", "source"): ("tg-nat",),
+        ("nat", "source-translation"): ("tg-nat",),
+        ("nat", "destination-translation"): ("tg-nat",),
+        ("nat", "service"): ("tg-nat",),
+        ("nat", "tag"): ("tg-nat",),
+        ("pbf", "source"): ("tg-pol",),
+        ("pbf", "destination"): ("tg-pol",),
+        ("pbf", "service"): ("tg-pol",),
+        ("pbf", "tag"): ("tg-pol",),
+        ("pbf", "nexthop"): ("tg-pol",),
+    }
+
+
 def test_reference_stays_hashable_with_tags() -> None:
     # `Reference` is a frozen dataclass, so it has a generated __hash__. A list
     # field makes every hash raise; the tags field must stay a tuple.

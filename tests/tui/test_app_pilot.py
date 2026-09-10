@@ -251,6 +251,30 @@ async def test_usage_spoke_opens_from_hub(workbench_xml: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_usage_spoke_table_shows_referrer_tags(workbench_xml_tagged_refs: str) -> None:
+    # The workbench mirrors the CLI `refs used` listing, so the last column of
+    # the table holds the tags of the referrer (#184).
+    app = _app(workbench_xml_tagged_refs)
+    async with app.run_test() as pilot:
+        app.query_one("#search", Input).value = "a1"
+        await pilot.press("enter")
+        await pilot.pause()
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("space")
+        await pilot.pause()
+        await pilot.press("u")
+        await pilot.pause()
+        assert isinstance(app.screen, UsageScreen)
+        table = app.screen.query_one("#usage-table", DataTable)
+        assert [str(c.label) for c in table.columns.values()][-1] == "tags"
+        rows = [table.get_row_at(i) for i in range(table.row_count)]
+        tagged = [r for r in rows if r[4] == "g1"]
+        assert tagged and tagged[0][-1] == "ticket-42"
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
 async def test_audit_spoke_opens_from_hub(workbench_xml: str) -> None:
     app = _app(workbench_xml)
     async with app.run_test() as pilot:
@@ -291,6 +315,9 @@ async def test_dangling_spoke_opens_and_lists(workbench_xml_dangling: str) -> No
         assert isinstance(app.screen, DanglingScreen)
         table = app.screen.query_one("#dangling-table", DataTable)
         assert table.row_count == 1  # web-pool -> ghost-host
+        # The dangling listing carries the referrer tags, like `refs used` (#184).
+        assert [str(c.label) for c in table.columns.values()][-1] == "tags"
+        assert table.get_row_at(0)[-1] == "ticket-42"
         await pilot.press("escape")
         await pilot.pause()
 

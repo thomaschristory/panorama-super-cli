@@ -62,6 +62,14 @@ def test_dangling_rows_finds_missing_member(tmp_path) -> None:  # type: ignore[n
     )
 
 
+def test_dangling_rows_carry_referrer_tags(workbench_xml_dangling: str) -> None:
+    # The row shows the tags of the referrer, like the CLI `refs dangling`
+    # field. A tuple keeps the frozen row hashable (#184).
+    rows = dangling_rows(_session(workbench_xml_dangling))
+    assert [r.tags for r in rows] == [("ticket-42",)]
+    assert len({*rows}) == len(rows)
+
+
 def test_dangling_rows_empty_when_clean(workbench_xml: str) -> None:
     assert dangling_rows(_session(workbench_xml)) == []
 

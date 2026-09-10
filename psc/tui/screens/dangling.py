@@ -21,6 +21,9 @@ class DanglingRow:
     referrer_location: str
     field: str
     target_name: str
+    tags: tuple[str, ...]
+    """The tags of the referrer, like the `refs dangling` field of the CLI. A
+    tuple keeps this frozen dataclass hashable, like `Reference.tags` (#184)."""
 
 
 def dangling_rows(session: WorkbenchSession) -> list[DanglingRow]:
@@ -33,6 +36,7 @@ def dangling_rows(session: WorkbenchSession) -> list[DanglingRow]:
             referrer_location=r.referrer_location.name,
             field=r.field,
             target_name=r.target_name,
+            tags=r.tags,
         )
         for r in graph.dangling()
     ]
@@ -59,7 +63,9 @@ class DanglingScreen(Screen[None]):
     def on_mount(self) -> None:
         if self._rows:
             table = self.query_one("#dangling-table", DataTable)
-            table.add_columns("referrer kind", "referrer", "location", "field", "missing target")
+            table.add_columns(
+                "referrer kind", "referrer", "location", "field", "missing target", "tags"
+            )
             for r in self._rows:
                 table.add_row(
                     r.referrer_kind,
@@ -67,4 +73,5 @@ class DanglingScreen(Screen[None]):
                     r.referrer_location,
                     r.field,
                     r.target_name,
+                    ", ".join(r.tags),
                 )

@@ -90,6 +90,19 @@ def test_where_used_rows_carry_referrer_tags(tmp_path) -> None:  # type: ignore[
     sess = _session(str(p))
     sess.toggle(SelectionItem(kind="address", name="a1", location="shared"))
     tags = {r.referrer_name: r.tags for r in selection_where_used(sess)}
-    assert tags["sec-tagged"] == ["ticket-42"]
-    assert tags["g1"] == ["grp-tag"]
-    assert tags["sec-bare"] == []
+    assert tags["sec-tagged"] == ("ticket-42",)
+    assert tags["g1"] == ("grp-tag",)
+    assert tags["sec-bare"] == ()
+
+
+def test_usage_row_stays_hashable_with_tags(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # `UsageRow` is a frozen dataclass, so it has a generated __hash__. A list
+    # field makes every hash raise; the tags field must stay a tuple, like
+    # `Reference.tags` (#184).
+    p = tmp_path / "tagged.xml"
+    p.write_text(_TAGGED_REFERRERS_XML, encoding="utf-8")
+    sess = _session(str(p))
+    sess.toggle(SelectionItem(kind="address", name="a1", location="shared"))
+    rows = selection_where_used(sess)
+    assert rows
+    assert len({*rows}) == len(rows)

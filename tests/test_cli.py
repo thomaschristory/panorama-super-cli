@@ -280,6 +280,62 @@ def test_used_with_no_referrers_stays_empty(tmp_path: Path) -> None:
         assert cp.stdout.strip() == expected
 
 
+# --- `refs dangling` referrer tags (#184) ---
+
+# A tagged group names a missing member, so every dangling row has a referrer
+# tag to show.
+_DANGLING_TAGS_XML = """<config><shared>
+  <tag><entry name="ticket-42"/></tag>
+  <address-group><entry name="g1"><static><member>ghost</member></static>
+    <tag><member>ticket-42</member></tag></entry></address-group>
+</shared></config>"""
+
+
+def _dangling_tags_config(tmp_path: Path) -> Path:
+    cfg = tmp_path / "dangling-tags.xml"
+    cfg.write_text(_DANGLING_TAGS_XML)
+    return cfg
+
+
+def test_dangling_json_keeps_reference_contract_keys(tmp_path: Path) -> None:
+    # `dangling` renders the same `Reference` model as `used`, so it carries the
+    # referrer `tags` field too. The key order is the contract.
+    cp = run("-c", str(_dangling_tags_config(tmp_path)), "-o", "json", "refs", "dangling")
+    assert cp.returncode == 0
+    rows = json.loads(cp.stdout)
+    assert rows
+    for row in rows:
+        assert list(row) == [
+            "target_name",
+            "namespace",
+            "referrer_kind",
+            "referrer_name",
+            "referrer_location",
+            "field",
+            "rulebase",
+            "resolved",
+            "referrer_disabled",
+            "tags",
+        ]
+    assert rows[0]["target_name"] == "ghost"
+    assert rows[0]["tags"] == ["ticket-42"]
+
+
+def test_dangling_table_and_csv_show_the_tags_column(tmp_path: Path) -> None:
+    # The table and the csv view read `rows`, not the model, so they need their
+    # own proof that the six formats agree.
+    cfg = _dangling_tags_config(tmp_path)
+    table = run("-c", str(cfg), "-o", "table", "refs", "dangling")
+    assert table.returncode == 0
+    assert "tags" in table.stdout.lower()
+    assert "ticket-42" in table.stdout
+    csv_out = run("-c", str(cfg), "-o", "csv", "refs", "dangling")
+    assert csv_out.returncode == 0
+    lines = csv_out.stdout.splitlines()
+    assert lines[0].endswith(",tags")
+    assert lines[1].endswith(",ticket-42")
+
+
 def test_unparseable_dag_filter_warns_on_stderr(tmp_path: Path) -> None:
     # An unparseable DAG filter must not crash the audit; psc warns on stderr
     # (naming the DAG) that its membership is unverified, and stdout stays clean.

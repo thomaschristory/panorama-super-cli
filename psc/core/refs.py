@@ -87,13 +87,13 @@ class Reference:
     """The config tags of the *referrer*, or () when it carries none.
 
     The referrer is the rule or the group that names the object. The where-used
-    listing shows these tags, because a rule tag often records a ticket or an
-    owner, and that tells the operator who must approve a delete (#184).
+    listing shows these tags. A rule tag often records a ticket or an owner.
+    Thus the row tells the operator who must approve a delete (#184).
 
     The walk reads the tags off the referrer itself. It does not use
-    `_tags_by_target`: that index holds objects only, and a rule key also needs
-    the `rulebase`, because one location can hold a `pre` rule and a `post` rule
-    with one name. A tuple keeps this frozen dataclass hashable.
+    `_tags_by_target`. That index holds objects only. A rule key also needs the
+    `rulebase`, because one location can hold a `pre` rule and a `post` rule
+    with the same name. A tuple keeps this frozen dataclass hashable.
     """
 
     @property
