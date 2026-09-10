@@ -21,6 +21,7 @@ from psc.core.models import (
     Location,
     NatRule,
     PolicyRule,
+    Rulebase,
     RuleType,
     SecurityRule,
     Snapshot,
@@ -664,12 +665,53 @@ def test_shadowed_target_warns_about_the_fall_through() -> None:
     )
 
 
-def test_shadowed_target_with_keep_groups_leaves_the_member_alone() -> None:
+def test_shadowed_target_with_keep_groups_still_scrubs_the_member() -> None:
+    """`--keep-groups` deletes nothing, so no name falls through and the scrub runs."""
     snap = _shadow_snapshot()
     cs = _plan(snap, _shadow_target(snap, DG), keep_groups=True)
-    assert cs.reference_edits == []
+    assert [(e.referrer_name, e.before, e.after) for e in cs.reference_edits] == [
+        ("g", ["web"], [])
+    ]
     assert cs.deletes == []
-    assert any("falls through" in w or "points to" in w for w in cs.warnings)
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+def test_no_fall_through_warning_for_a_rule_the_plan_deletes() -> None:
+    """A deleted referrer keeps no name, so the plan must not warn about one."""
+    snap = Snapshot(
+        addresses=[
+            _addr("web", "10.0.0.1/32"),
+            _addr("web", "10.9.9.9/32", loc=DG),
+            _addr("doomed", "10.9.9.10/32", loc=DG),
+        ],
+        security_rules=[
+            SecurityRule(name="r1", location=DG, source=["doomed"], destination=["web"])
+        ],
+        device_groups=["dg-edge"],
+    )
+    targets = [a for a in snap.addresses if a.location == DG]
+    cs = _plan(snap, *targets)
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "dg-edge")]
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+def test_a_surviving_rule_still_gets_its_fall_through_warning() -> None:
+    """The filter drops a note only for a referrer the plan removes."""
+    snap = Snapshot(
+        addresses=[
+            _addr("web", "10.0.0.1/32"),
+            _addr("web", "10.9.9.9/32", loc=DG),
+            _addr("doomed", "10.9.9.10/32", loc=DG),
+        ],
+        security_rules=[
+            SecurityRule(name="r1", location=DG, source=["doomed", "any"], destination=["web"])
+        ],
+        device_groups=["dg-edge"],
+    )
+    targets = [a for a in snap.addresses if a.location == DG]
+    cs = _plan(snap, *targets)
+    assert cs.rule_deletes == []
+    assert [w for w in cs.warnings if "points to" in w]
 
 
 def test_shadowed_member_named_directly_in_a_rule_field() -> None:
@@ -737,7 +779,11 @@ def test_deleting_only_the_shared_object_keeps_the_shadowed_group() -> None:
 
 
 def test_a_dangling_member_never_empties_its_group() -> None:
-    """A name that already dangles is still scrubbed, and keeps the group alive."""
+    """A name that already dangles stays in the group, so the group stays alive.
+
+    `ghost` resolves to nothing before this plan starts, so the plan does not
+    cause that condition and leaves the name alone (see `refs.reference_breaks`).
+    """
     target = _addr("h1", "10.0.0.1/32")
     snap = Snapshot(
         addresses=[target],
@@ -887,3 +933,82 @@ def test_keep_rules_warning_names_the_location() -> None:
     assert cs.rule_deletes == []
     assert any("'r1' @dg-a" in w for w in cs.warnings)
     assert not any("'r1' @dg-b" in w for w in cs.warnings)
+
+
+# -- the orphaned rule keeps its own rulebase ----------------------------
+
+
+def test_a_post_rulebase_orphan_keeps_its_rulebase() -> None:
+    """Two rules share one name in one device group; only the POST one is orphaned."""
+    dg = Location.dg("dg-a")
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.1.0.5/32"), _addr("h2", "10.1.0.6/32")],
+        security_rules=[
+            SecurityRule(name="r1", location=dg, source=["h2"], destination=["any"]),
+            SecurityRule(
+                name="r1",
+                location=dg,
+                rulebase=Rulebase.POST,
+                source=["h1"],
+                destination=["any"],
+            ),
+        ],
+        device_groups=["dg-a"],
+    )
+    target = next(a for a in snap.addresses if a.name == "h1")
+    cs = _plan(snap, target)
+    assert [(r.name, r.location, r.rulebase) for r in cs.rule_deletes] == [("r1", "dg-a", "post")]
+    (line,) = rule_delete_lines(cs.rule_deletes[0])
+    assert line == "delete device-group dg-a post-rulebase security rules r1"
+
+
+def test_a_post_rulebase_nat_orphan_keeps_its_rulebase() -> None:
+    dg = Location.dg("dg-a")
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.1.0.5/32")],
+        nat_rules=[
+            NatRule(
+                name="n1",
+                location=dg,
+                rulebase=Rulebase.POST,
+                source=["h1"],
+                destination=["any"],
+            )
+        ],
+        device_groups=["dg-a"],
+    )
+    target = next(a for a in snap.addresses if a.name == "h1")
+    cs = _plan(snap, target)
+    assert [(r.name, r.location, r.rulebase) for r in cs.rule_deletes] == [("n1", "dg-a", "post")]
+    (line,) = rule_delete_lines(cs.rule_deletes[0])
+    assert line == "delete device-group dg-a post-rulebase nat rules n1"
+
+
+# -- the cascade fixpoint really iterates --------------------------------
+
+
+def test_cascade_reaches_the_fixpoint_with_the_outer_group_listed_first() -> None:
+    """A single pass over the snapshot order is not enough, so the loop must repeat.
+
+    `_newly_empty_groups` scans the snapshot list in order. With the outer group
+    first, pass 1 can only find `inner`, pass 2 finds `mid`, and pass 3 finds
+    `outer`. A one-pass engine leaves two live empty groups and no orphan rule.
+    """
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.1.0.5/32")],
+        address_groups=[
+            AddressGroup(name="outer", location=SHARED, static_members=["mid"]),
+            AddressGroup(name="mid", location=SHARED, static_members=["inner"]),
+            AddressGroup(name="inner", location=SHARED, static_members=["h1"]),
+        ],
+        security_rules=[SecurityRule(name="r1", source=["outer"], destination=["any"])],
+    )
+    target = snap.addresses[0]
+    cs = _plan(snap, target)
+    assert _deleted(cs) == {
+        ("address", "h1", "shared"),
+        ("address-group", "inner", "shared"),
+        ("address-group", "mid", "shared"),
+        ("address-group", "outer", "shared"),
+    }
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "shared")]

@@ -648,14 +648,15 @@ def reference_breaks(
 ) -> bool:
     """Whether `name`, seen from `referrer_location`, stops resolving after the delete.
 
-    This is the shadowing rule. A name resolves up the device-group chain, so a
-    device-group object hides a shared object of the same name. Deleting the
-    device-group object therefore does NOT break a reference to that name: the
-    reference falls through to the shared object. Only a name that resolves to
-    nothing afterwards is really broken, and only that name may be scrubbed.
+    This is the shadowing rule. A name resolves up the device-group chain. An
+    object in a device group therefore hides a same-named object above it: a
+    parent device group, or `shared`. A delete of the lower object does not break
+    a reference to that name. The reference falls through to the object above.
+    Only a name that resolves to nothing afterwards is really broken. An engine
+    scrubs only such a name.
 
     A name that already resolves to nothing is dangling before this plan starts.
-    That is somebody else's problem, so the answer is `False`.
+    This plan does not cause that condition, so the answer is `False`.
     """
     if graph.resolve(namespace, name, referrer_location) is None:
         return False
@@ -663,15 +664,31 @@ def reference_breaks(
     return survivor is None
 
 
+# The identity of one referrer: (kind, name, location name, rulebase). A group
+# carries no rulebase, so its rulebase is `None`. `changeset.removed_referrers`
+# returns the same shape.
+ReferrerId = tuple[str, str, str, str | None]
+
+
+def referrer_id(ref: Reference) -> ReferrerId:
+    """The identity of the object that holds `ref`."""
+    return (
+        ref.referrer_kind,
+        ref.referrer_name,
+        ref.referrer_location.name,
+        ref.rulebase.value if ref.rulebase else None,
+    )
+
+
 def fall_through_note(
     graph: ReferenceGraph, ref: Reference, delete_set: AbstractSet[ObjId]
 ) -> str | None:
     """One warning line for a reference that keeps its name but changes its meaning.
 
-    A referrer that survives a shadow delete is not broken, but it is not the
-    same either: the name now binds to another object, possibly with another
-    value. A rule keeps its match and matches another host. The engines cannot
-    decide that for the operator, so they report it. `None` means nothing
+    A referrer that keeps a shadowed name is not broken. It is also not the
+    same. The name now binds to another object, possibly with another value. A
+    rule keeps its match and matches another host. The engines cannot make that
+    decision for the operator, so they report it. `None` means that nothing
     changes for this reference.
     """
     before = graph.resolve(ref.namespace, ref.target_name, ref.referrer_location)

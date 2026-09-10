@@ -494,3 +494,58 @@ def test_fall_through_note_is_none_when_the_survivor_is_the_same_object() -> Non
     g = _shadow_graph()
     (ref,) = [r for r in g.references if r.referrer_name == "g"]
     assert fall_through_note(g, ref, {("address", "web", "shared")}) is None
+
+
+def test_fall_through_note_reads_the_survivors_own_value() -> None:
+    """The lookup matches on location, not on name alone.
+
+    The snapshot lists the device-group object FIRST. A name-only lookup then
+    reports the value of the object the plan deletes.
+    """
+    dg = Location.dg("dg-edge")
+    snap = Snapshot(
+        addresses=[
+            Address(name="web", location=dg, type=AddressType.IP_NETMASK, value="10.9.9.9/32"),
+            Address(name="web", location=SHARED, type=AddressType.IP_NETMASK, value="10.0.0.1/32"),
+        ],
+        address_groups=[AddressGroup(name="g", location=dg, static_members=["web"])],
+        device_groups=["dg-edge"],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = [r for r in g.references if r.referrer_name == "g"]
+    note = fall_through_note(g, ref, {("address", "web", "dg-edge")})
+    assert note is not None
+    assert "address 'web'@shared (10.0.0.1/32)" in note
+    assert "10.9.9.9/32" not in note
+
+
+def _shadow_service_graph(port: str | None) -> ReferenceGraph:
+    """`web` defined as a service in shared AND in dg-edge, with a dg-local group."""
+    dg = Location.dg("dg-edge")
+    snap = Snapshot(
+        services=[
+            Service(name="web", location=SHARED, protocol="tcp", destination_port=port),
+            Service(name="web", location=dg, protocol="tcp", destination_port="8443"),
+        ],
+        service_groups=[ServiceGroup(name="sg", location=dg, members=["web"])],
+        device_groups=["dg-edge"],
+    )
+    return ReferenceGraph.build(snap)
+
+
+def test_fall_through_note_names_a_surviving_service_with_its_port() -> None:
+    """The port change is the hazard, so the note must carry the new port."""
+    g = _shadow_service_graph("80")
+    (ref,) = [r for r in g.references if r.referrer_name == "sg"]
+    note = fall_through_note(g, ref, {("service", "web", "dg-edge")})
+    assert note is not None
+    assert "service 'web'@shared (tcp/80)" in note
+    assert "8443" not in note
+
+
+def test_fall_through_note_names_a_portless_service_by_protocol() -> None:
+    g = _shadow_service_graph(None)
+    (ref,) = [r for r in g.references if r.referrer_name == "sg"]
+    note = fall_through_note(g, ref, {("service", "web", "dg-edge")})
+    assert note is not None
+    assert "service 'web'@shared (tcp)" in note

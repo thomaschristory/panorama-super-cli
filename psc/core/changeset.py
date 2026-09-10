@@ -197,6 +197,23 @@ def reference_edit_is_mappable(edit: ReferenceEdit) -> bool:
     return edit.field in FLAT_RULE_FIELDS
 
 
+def removed_referrers(cs: ChangeSet) -> set[tuple[str, str, str, str | None]]:
+    """The identity of every referrer `cs` removes.
+
+    A referrer is a group or a rule that names another object. The identity is
+    (kind, name, location, rulebase), the shape of `refs.ReferrerId`. A group
+    carries no rulebase, so its rulebase is `None`.
+
+    A planner uses this set to drop a message about a referrer that the same plan
+    deletes. Such a message and the delete contradict each other.
+    """
+    removed: set[tuple[str, str, str, str | None]] = {
+        (rd.referrer_kind, rd.name, rd.location, rd.rulebase) for rd in cs.rule_deletes
+    }
+    removed |= {(d.kind.value, d.name, d.location, None) for d in cs.deletes}
+    return removed
+
+
 def gate_unmappable_reference_edits(cs: ChangeSet) -> None:
     """Promote unsafe unmappable reference edits to blockers, in place.
 

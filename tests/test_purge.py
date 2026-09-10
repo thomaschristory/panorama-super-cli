@@ -705,3 +705,87 @@ def test_shadow_plan_matches_decommission() -> None:
     fall_through = [w for w in pur.warnings if "points to" in w]
     assert fall_through == [w for w in dec.warnings if "points to" in w]
     assert fall_through
+
+
+# -- `--keep-groups` deletes nothing, so the shadow gate does not apply ---
+
+
+def test_keep_groups_scrubs_a_shadowed_member() -> None:
+    """`--keep-groups` deletes nothing, so no name falls through and the scrub runs."""
+    cs = _plan(_shadow_snapshot(), _t("address", "web", DG), keep_groups=True)
+    assert [(e.referrer_name, e.before, e.after) for e in cs.reference_edits] == [
+        ("g", ["web"], [])
+    ]
+    assert cs.deletes == []
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+def test_keep_groups_still_lets_a_shadowed_tag_carrier_pass() -> None:
+    """The gate still answers the blocker paths: nothing here is stranded."""
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED), Tag(name="web", location=DG)],
+        addresses=[_addr("h1", "10.0.0.1/32", loc=DG, tags=["web"])],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _t("tag", "web", DG), keep_groups=True)
+    assert not cs.is_blocked, cs.blockers
+    assert cs.deletes == []
+
+
+def test_keep_groups_never_turns_a_dag_edge_into_an_edit() -> None:
+    """A `dynamic` edge has no member list, so it must never reach the plan."""
+    snap = Snapshot(
+        tags=[Tag(name="prod", location=SHARED)],
+        addresses=[_addr("h1", "10.0.0.1/32", tags=["prod"])],
+        address_groups=[AddressGroup(name="dag", location=SHARED, dynamic_filter="'prod'")],
+    )
+    cs = _plan(snap, _t("address", "h1"), keep_groups=True)
+    assert cs.reference_edits == []
+    assert cs.op_count == 0
+
+
+def test_no_fall_through_warning_for_a_rule_the_plan_deletes() -> None:
+    """A deleted referrer keeps no name, so the plan must not warn about one."""
+    snap = Snapshot(
+        addresses=[
+            _addr("web", "10.0.0.1/32"),
+            _addr("web", "10.9.9.9/32", loc=DG),
+            _addr("doomed", "10.9.9.10/32", loc=DG),
+        ],
+        security_rules=[
+            SecurityRule(name="r1", location=DG, source=["doomed"], destination=["web"])
+        ],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _t("address", "web", DG), _t("address", "doomed", DG))
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "dg-edge")]
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+# -- the cascade fixpoint really iterates --------------------------------
+
+
+def test_cascade_reaches_the_fixpoint_with_the_outer_group_listed_first() -> None:
+    """A single pass over the snapshot order is not enough, so the loop must repeat.
+
+    `_newly_empty_groups` scans the snapshot list in order. With the outer group
+    first, pass 1 can only find `inner`, pass 2 finds `mid`, and pass 3 finds
+    `outer`. A one-pass engine leaves two live empty groups and no orphan rule.
+    """
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.1.0.5/32")],
+        address_groups=[
+            AddressGroup(name="outer", location=SHARED, static_members=["mid"]),
+            AddressGroup(name="mid", location=SHARED, static_members=["inner"]),
+            AddressGroup(name="inner", location=SHARED, static_members=["h1"]),
+        ],
+        security_rules=[SecurityRule(name="r1", source=["outer"], destination=["any"])],
+    )
+    cs = _plan(snap, _t("address", "h1"))
+    assert _deleted(cs) == {
+        ("address", "h1", "shared"),
+        ("address-group", "inner", "shared"),
+        ("address-group", "mid", "shared"),
+        ("address-group", "outer", "shared"),
+    }
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "shared")]

@@ -41,16 +41,19 @@ from psc.core.changeset import (
     ReferenceEdit,
     RuleDelete,
     gate_unmappable_reference_edits,
+    removed_referrers,
 )
 from psc.core.dedup import field_members
 from psc.core.models import Location, NatRule, PolicyRule, SecurityRule, Snapshot
 from psc.core.refs import (
     Reference,
     ReferenceGraph,
+    ReferrerId,
     Target,
     dag_filter_tags,
     fall_through_note,
     reference_breaks,
+    referrer_id,
 )
 from psc.core.rulebases import FLAT_RULE_FIELDS, rule_container
 
@@ -121,12 +124,12 @@ def _newly_empty_groups(
     """Static groups this plan empties.
 
     A group is emptied when no member name still resolves to an object. A member
-    that falls through to a shared object of the same name still resolves, so a
-    shadowed member never empties the group (see `refs.reference_breaks`).
+    that falls through to a same-named object above still resolves, so a shadowed
+    member never empties the group (see `refs.reference_breaks`).
 
-    A dynamic address-group has no member list to empty, so the scan skips it.
-    A group that is already empty stays: emptying is a consequence of this
-    teardown, so a group that was empty before is somebody else's problem.
+    A dynamic address-group has no member list to empty, so the scan skips it. A
+    group that is already empty stays. Emptiness is then not a consequence of
+    this teardown.
     """
     found: list[Target] = []
     for group, kind, members in (
@@ -277,14 +280,18 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
         return edit
 
     # Phase 1 — grow the delete set to a fixpoint, BEFORE any scrub. Emptiness
-    # depends only on the delete set, so the two can separate. They must: a scrub
+    # depends only on the delete set, so the two can separate. They must. A scrub
     # decision needs the FINAL delete set to answer "does this name still resolve
-    # afterwards", and a later pass can add the very object that answer turns on.
+    # afterwards". A later pass can add the very object that answer turns on.
     if not keep_groups:
         while _newly_empty_groups(snapshot, graph, delete_set):
             pass
 
     # Phase 2 — scrub each deleted object out of every reference it breaks.
+    # A note is kept with the identity of its referrer, because a referrer this
+    # plan removes must not also carry a "the name still works" note. Orphan-rule
+    # detection runs later, so the filter waits for the final plan.
+    notes: list[tuple[ReferrerId, str]] = []
     for doomed_kind, doomed_name, doomed_loc_name in sorted(delete_set):
         doomed_loc = (
             Location.shared() if doomed_loc_name == "shared" else Location.dg(doomed_loc_name)
@@ -301,14 +308,21 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
             if not reference_breaks(
                 graph, ref.namespace, ref.referrer_location, ref.target_name, delete_set
             ):
-                # The name still resolves — a shared object of the same name
-                # shadowed by this one. The reference is not stranded, so psc
-                # rewrites nothing and refuses nothing. It says what the name
-                # means now, because the referrer changed meaning in silence.
-                note = fall_through_note(graph, ref, delete_set)
-                if note is not None:
-                    cs.warnings.append(note)
-                continue
+                # The name still resolves. An object above keeps the same name,
+                # and this object only shadows it. The reference is not stranded,
+                # so psc rewrites nothing and refuses nothing. The plan says what
+                # the name means now, because the change is otherwise silent.
+                if keep_groups:
+                    # `keep_groups` deletes nothing, so no name falls through and
+                    # no reference is stranded. A flat member list still loses
+                    # the member, because that is what the operator asks for.
+                    if not flat:
+                        continue
+                else:
+                    note = fall_through_note(graph, ref, delete_set)
+                    if note is not None:
+                        notes.append((referrer_id(ref), note))
+                    continue
             if flat:
                 edit = _edit_for(ref)
                 edit.after = _remove_members(edit.after, {ref.target_name})
@@ -390,7 +404,12 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
                 ObjectDelete(kind=_KIND_TO_OBJECT_KIND[kind], name=name, location=location)
             )
 
-    # Phase 7 — the operator warnings `unused` cannot decide for them.
+    # Phase 7 — the operator warnings `unused` cannot decide for them. A note
+    # tells the operator that a referrer keeps a name with a new meaning. A
+    # referrer this plan removes has no meaning to keep, so drop its note. The
+    # kept notes go first, in discovery order.
+    removed = removed_referrers(cs)
+    cs.warnings[0:0] = [note for rid, note in notes if rid not in removed]
     cs.warnings.extend(_candidate_warnings(graph, matched))
 
     # Phase 8 — refuse a reference psc cannot repoint.

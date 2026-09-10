@@ -15,10 +15,10 @@ The teardown CASCADES to a fixpoint: scrubbing the matched addresses out of a
 static group can empty it, so that group is deleted too — which means the
 references *to that group* must in turn be scrubbed, possibly emptying a parent
 group, and so on. The delete set therefore reaches its fixpoint BEFORE the first
-scrub. That order is load-bearing: emptiness depends only on the delete set, and
-a scrub decision needs the FINAL delete set to answer "does this name still
-resolve afterwards" (see `refs.reference_breaks`). A later pass can add the very
-object that answer turns on. The result upholds the core invariant: a referent is
+scrub. That order is load-bearing. Emptiness depends only on the delete set. A
+scrub decision needs the FINAL delete set to answer "does this name still resolve
+afterwards" (see `refs.reference_breaks`). A later pass can add the very object
+that answer turns on. The result upholds the core invariant: a referent is
 never removed before the references to it are rewritten, so an executor walking
 the plan top-to-bottom can never strand a dangling reference — even when the
 referent is a group emptied mid-teardown. This composes the existing engines —
@@ -31,11 +31,13 @@ Two predefined sentinels are load-bearing for orphan detection: `'any'` is a
 *real* surviving value (a rule matching `any` source still works), so a field is
 orphaned only when it is *truly empty* — no members at all, not even `'any'`.
 
-PAN-OS shadowing is the other load-bearing rule. A device-group object hides a
-shared object of the same name, so a delete of the device-group object does not
-break a reference to that name: the reference falls through to the shared
-object. `decommission` scrubs a name only when the name resolves to nothing
-after the plan applies, and it warns about every name that falls through (#187).
+PAN-OS shadowing is the other load-bearing rule. An object in a device group
+hides a same-named object above it: a parent device group, or `shared`. A delete
+of the lower object does not break a reference to that name. The reference falls
+through to the object above. `decommission` scrubs a name only when the name
+resolves to nothing after the plan applies. It warns about every name that falls
+through (#187). `--keep-groups` deletes nothing, so no name falls through there
+and the scrub always runs.
 """
 
 from __future__ import annotations
@@ -47,16 +49,19 @@ from psc.core.changeset import (
     ReferenceEdit,
     RuleDelete,
     gate_unmappable_reference_edits,
+    removed_referrers,
 )
 from psc.core.dedup import field_members
 from psc.core.models import Address, Location, Snapshot
 from psc.core.refs import (
     Reference,
     ReferenceGraph,
+    ReferrerId,
     Target,
     dag_filter_tags,
     fall_through_note,
     reference_breaks,
+    referrer_id,
 )
 
 # The two address-member rule fields decommission scrubs. `service`/`tag` are
@@ -163,9 +168,9 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — explicit safety phases + fi
     # -- phase 1: grow the delete set to a fixpoint, BEFORE any scrub ---------
     # `delete_set` is every object slated for deletion (matched addresses, then
     # any group emptied by the cascade). Emptiness depends only on the delete
-    # set, so the two phases separate. They must: a scrub decision needs the
-    # FINAL delete set to answer "does this name still resolve afterwards", and
-    # a later pass can add the very object that answer turns on.
+    # set, so the two phases separate. They must. A scrub decision needs the
+    # FINAL delete set to answer "does this name still resolve afterwards". A
+    # later pass can add the very object that answer turns on.
     # `keep_groups` deletes no group, so there is no cascade to chase.
     delete_set: set[_ObjId] = {("address", a.name, a.location.name) for a in matched}
     if not keep_groups:
@@ -173,6 +178,10 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — explicit safety phases + fi
             pass
 
     # -- phase 2: scrub each deleted object out of every reference it breaks --
+    # A note is kept with the identity of its referrer, because a referrer this
+    # plan removes must not also carry a "the name still works" note. Orphan-rule
+    # detection runs later, so the filter waits for the final plan.
+    notes: list[tuple[ReferrerId, str]] = []
     for doomed_kind, doomed_name, doomed_loc_name in sorted(delete_set):
         doomed_loc = (
             Location.shared() if doomed_loc_name == "shared" else Location.dg(doomed_loc_name)
@@ -185,14 +194,21 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — explicit safety phases + fi
             if not reference_breaks(
                 graph, ref.namespace, ref.referrer_location, ref.target_name, delete_set
             ):
-                # The name still resolves — a shared object of the same name
-                # shadowed by this one. The reference is not stranded, so psc
-                # rewrites nothing and refuses nothing. It says what the name
-                # means now, because the referrer changed meaning in silence.
-                note = fall_through_note(graph, ref, delete_set)
-                if note is not None:
-                    cs.warnings.append(note)
-                continue
+                # The name still resolves. An object above keeps the same name,
+                # and this object only shadows it. The reference is not stranded,
+                # so psc rewrites nothing and refuses nothing. The plan says what
+                # the name means now, because the change is otherwise silent.
+                if keep_groups:
+                    # `keep_groups` deletes nothing, so no name falls through and
+                    # no reference is stranded. A flat member list still loses
+                    # the member, because that is what the operator asks for.
+                    if not scrubbable:
+                        continue
+                else:
+                    note = fall_through_note(graph, ref, delete_set)
+                    if note is not None:
+                        notes.append((referrer_id(ref), note))
+                    continue
             edit = _edit_for(ref)
             if scrubbable:
                 edit.after = _remove_members(edit.after, {ref.target_name})
@@ -294,6 +310,12 @@ def plan_decommission(  # noqa: PLR0912, PLR0915 — explicit safety phases + fi
                     "(kept per --keep-groups) — it may dangle; delete it by hand if unused"
                 )
 
+    # A note tells the operator that a referrer keeps a name with a new meaning.
+    # A referrer this plan removes has no meaning to keep, so drop its note. The
+    # kept notes go first, in discovery order.
+    removed = removed_referrers(cs)
+    cs.warnings[0:0] = [note for rid, note in notes if rid not in removed]
+
     # The shared gate: refuse any scrub edit the appliers would silently skip
     # (NAT translation / PBF nexthop) now that the plan tears the object down —
     # a skipped repoint + delete is a dangling reference. RuleDelete and
@@ -315,12 +337,12 @@ def _newly_empty_groups(
     """Static address-groups this plan empties.
 
     A group is emptied when no member name still resolves to an object. A member
-    that falls through to a shared object of the same name still resolves, so a
-    shadowed member never empties the group (see `refs.reference_breaks`).
+    that falls through to a same-named object above still resolves, so a shadowed
+    member never empties the group (see `refs.reference_breaks`).
 
-    A dynamic address-group has no member list to empty, so the scan skips it.
-    A group that is already empty stays: emptying is a consequence of this
-    teardown, so a group that was empty before is somebody else's problem.
+    A dynamic address-group has no member list to empty, so the scan skips it. A
+    group that is already empty stays. Emptiness is then not a consequence of
+    this teardown.
     """
     found: list[Target] = []
     for group in snapshot.address_groups:
