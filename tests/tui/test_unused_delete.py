@@ -11,7 +11,7 @@ the candidate list and the change.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import DataTable
+from textual.widgets import Checkbox, DataTable
 
 from psc.core.source import OfflineSource
 from psc.tui.app import WorkbenchApp
@@ -19,6 +19,7 @@ from psc.tui.screens.delete import DeleteScreen, deletable_items, plan_delete
 from psc.tui.screens.unused import UnusedScreen, add_rows_to_selection, unused_rows
 from psc.tui.session import WorkbenchSession
 from psc.tui.state import OutputMode, SelectionItem
+from psc.tui.widgets.review import ReviewPanel, review_lines
 
 TAGGED_XML = """<?xml version="1.0"?>
 <config>
@@ -194,3 +195,110 @@ async def test_unused_spoke_stages_nothing_by_itself(workbench_xml_refs: str) ->
         await pilot.press("a")
         await pilot.pause()
         assert app.session.staging == []
+
+
+# -- the blocker gate ----------------------------------------------------
+
+
+BLOCKED_XML = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <tag><entry name="web"><color>color1</color></entry></tag>
+    <address>
+      <entry name="h-tagged">
+        <ip-netmask>10.0.0.2/32</ip-netmask>
+        <tag><member>web</member></tag>
+      </entry>
+    </address>
+    <address-group>
+      <entry name="dag-web"><dynamic><filter>'web'</filter></dynamic></entry>
+    </address-group>
+  </shared>
+  <devices><entry name="localhost.localdomain"><device-group/></entry></devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_blocked(tmp_path):
+    p = tmp_path / "config_blocked.xml"
+    p.write_text(BLOCKED_XML, encoding="utf-8")
+    return str(p)
+
+
+def test_a_surviving_dag_blocks_the_plan(workbench_xml_blocked: str) -> None:
+    sess = _session(workbench_xml_blocked)
+    sess.add(SelectionItem(kind="address", name="h-tagged", location="shared"))
+    cs = plan_delete(sess, deletable_items(sess))
+    assert cs.is_blocked
+    assert cs.op_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_plan_is_never_staged(workbench_xml_blocked: str) -> None:
+    app = _app(workbench_xml_blocked)
+    app.session.add(SelectionItem(kind="address", name="h-tagged", location="shared"))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("X")
+        await pilot.pause()
+        assert isinstance(app.screen, DeleteScreen)
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert app.session.staging == []
+        # Stay on the spoke so the operator reads the blocker.
+        assert isinstance(app.screen, DeleteScreen)
+
+
+@pytest.mark.asyncio
+async def test_the_review_panel_shows_the_blocker(workbench_xml_blocked: str) -> None:
+    app = _app(workbench_xml_blocked)
+    app.session.add(SelectionItem(kind="address", name="h-tagged", location="shared"))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("X")
+        await pilot.pause()
+        panel = app.screen.query_one("#review", ReviewPanel)
+        assert not panel.can_apply
+
+
+@pytest.mark.asyncio
+async def test_the_review_panel_shows_the_candidate_warnings(workbench_xml_tagged: str) -> None:
+    app = _app(workbench_xml_tagged)
+    app.session.add(SelectionItem(kind="address", name="h-tagged", location="shared"))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("X")
+        await pilot.pause()
+        panel = app.screen.query_one("#review", ReviewPanel)
+        rendered = "\n".join(review_lines(panel._cs))
+        assert "dynamic address-group" in rendered
+        assert "is a shared address" in rendered
+
+
+@pytest.mark.asyncio
+async def test_keep_rules_is_read_at_stage_time(workbench_xml_rule: str) -> None:
+    """Ticking the box must change the staged plan, not only the preview.
+
+    The selection here is a *used* address — `allow-web` sources it and nothing
+    else. Deleting it empties the rule's source, so the box decides whether the
+    plan removes the rule.
+    """
+    app = _app(workbench_xml_rule)
+    app.session.add(SelectionItem(kind="address", name="web-srv-01", location="shared"))
+    async with app.run_test() as pilot:
+        app.query_one("#results", DataTable).focus()
+        await pilot.press("X")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, DeleteScreen)
+        # Unticked, the orphaned rule goes.
+        assert plan_delete(app.session, deletable_items(app.session)).rule_deletes
+        screen.query_one("#delete-keep-rules", Checkbox).value = True
+        await pilot.pause()
+        await pilot.press("ctrl+y")
+        await pilot.pause()
+        assert len(app.session.staging) == 1
+        staged = app.session.staging[0].changeset
+        assert not staged.rule_deletes
+        assert any("keep-rules" in w for w in staged.warnings)

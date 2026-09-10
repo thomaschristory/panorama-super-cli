@@ -67,8 +67,13 @@ def parse_spec(
         kind = kind.strip()
     location = default_location
     if "@" in text:
-        text, _, location = text.partition("@")
-        location = location.strip()
+        # The location is a suffix, so split from the right.
+        text, _, suffix = text.rpartition("@")
+        location = suffix.strip()
+        if not location:
+            # An empty suffix is a typo, most often an unset shell variable. It
+            # must never fall back to shared: that silently retargets the delete.
+            raise PscError(f"target '{spec}' has an empty location after '@'", ErrorType.VALIDATION)
     name = text.strip()
     if not name:
         raise PscError(f"target '{spec}' names no object", ErrorType.VALIDATION)
@@ -104,6 +109,15 @@ def resolve_target(snapshot: Snapshot, kind: str, name: str, location: str | Non
     return Target(kind=kind, name=name, location=location_from_name(hits[0]))
 
 
+def _as_row(value: Any) -> dict[str, Any]:
+    """One JSON row as a mapping, or an input error."""
+    if not isinstance(value, dict):
+        raise PscError(
+            f"expected a JSON object per row, got {type(value).__name__}", ErrorType.INPUT
+        )
+    return value
+
+
 def _spec_from_row(row: dict[str, Any]) -> str:
     """A `kind:name@location` spec from one `refs unused` output row."""
     try:
@@ -128,7 +142,9 @@ def specs_from_text(text: str) -> list[str]:
             rows = json.loads(stripped)
         except ValueError as exc:
             raise PscError(f"cannot parse JSON input: {exc}", ErrorType.INPUT) from exc
-        return [_spec_from_row(r) for r in rows]
+        if not isinstance(rows, list):
+            raise PscError("JSON input must be an array of rows", ErrorType.INPUT)
+        return [_spec_from_row(_as_row(r)) for r in rows]
     out: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -136,7 +152,7 @@ def specs_from_text(text: str) -> list[str]:
             continue
         if line.startswith("{"):
             try:
-                out.append(_spec_from_row(json.loads(line)))
+                out.append(_spec_from_row(_as_row(json.loads(line))))
             except ValueError as exc:
                 raise PscError(f"cannot parse JSON line: {exc}", ErrorType.INPUT) from exc
         else:
@@ -150,7 +166,7 @@ def _read_targets_file(path: str) -> list[str]:
     try:
         with open(path, encoding="utf-8") as handle:
             return specs_from_text(handle.read())
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise PscError(f"cannot read {path}: {exc}", ErrorType.INPUT) from exc
 
 
@@ -216,25 +232,21 @@ def delete(
     specs = list(targets or []) + list(target or [])
     if file:
         specs += _read_targets_file(file)
-    if not specs:
+    if not specs and not file:
         raise PscError(
             "provide one or more targets ([kind:]name[@location]), or --file",
             ErrorType.VALIDATION,
         )
 
     snap = rt.snapshot()
-    default_location = location if location is not None else _scope_name(rt)
+    # Only an explicit --location sets a default. The global --device-group is a
+    # read scope everywhere else in psc; letting it choose the target of a delete
+    # would also silence the ambiguity refusal below.
     resolved = [
-        resolve_target(snap, *parse_spec(s, default_kind=kind, default_location=default_location))
+        resolve_target(snap, *parse_spec(s, default_kind=kind, default_location=location))
         for s in specs
     ]
 
     graph = ReferenceGraph.build(snap)
     cs = plan_purge(snap, graph, resolved, keep_groups=keep_groups, keep_rules=keep_rules)
     complete(rt, cs, apply=apply, out_path=out, out_format=output_format)
-
-
-def _scope_name(rt: Runtime) -> str | None:
-    """The global `--device-group` as a location name, or `None`."""
-    scope = rt.scope()
-    return None if scope is None else scope.name

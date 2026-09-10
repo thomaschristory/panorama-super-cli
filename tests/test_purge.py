@@ -23,6 +23,8 @@ from psc.core.models import (
     AddressType,
     Location,
     NatRule,
+    PolicyRule,
+    RuleType,
     SecurityRule,
     Service,
     ServiceGroup,
@@ -418,3 +420,203 @@ def test_delete_kinds_are_object_kinds() -> None:
         ObjectKind.SERVICE,
         ObjectKind.TAG,
     }
+
+
+# -- PAN-OS shadowing ----------------------------------------------------
+
+
+def _shadow_snapshot() -> Snapshot:
+    """`web` defined in shared AND in dg-edge, with a dg-local group and rule."""
+    return Snapshot(
+        addresses=[_addr("web", "10.0.0.1/32"), _addr("web", "10.9.9.9/32", loc=DG)],
+        address_groups=[AddressGroup(name="g", location=DG, static_members=["web"])],
+        security_rules=[SecurityRule(name="r1", location=DG, source=["g"], destination=["any"])],
+        device_groups=["dg-edge"],
+    )
+
+
+def test_deleting_a_shadow_leaves_the_group_and_rule_alone() -> None:
+    """The member falls through to the shared object, so nothing else breaks."""
+    cs = _plan(_shadow_snapshot(), _t("address", "web", DG))
+    assert _deleted(cs) == {("address", "web", "dg-edge")}
+    assert not cs.rule_deletes
+    assert not cs.reference_edits
+
+
+def test_deleting_both_shadow_and_shared_cascades() -> None:
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _t("address", "web", DG), _t("address", "web", SHARED))
+    assert ("address-group", "g", "dg-edge") in _deleted(cs)
+    assert [r.name for r in cs.rule_deletes] == ["r1"]
+
+
+def test_deleting_only_the_shared_object_keeps_the_shadowed_group() -> None:
+    """`g`'s member resolves to the dg-local `web`, which survives."""
+    cs = _plan(_shadow_snapshot(), _t("address", "web", SHARED))
+    assert _deleted(cs) == {("address", "web", "shared")}
+    assert not cs.reference_edits
+
+
+def test_a_dangling_member_never_empties_its_group() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.0.0.1/32")],
+        address_groups=[AddressGroup(name="g", location=SHARED, static_members=["h1", "ghost"])],
+    )
+    cs = _plan(snap, _t("address", "h1"))
+    assert _deleted(cs) == {("address", "h1", "shared")}
+    assert cs.reference_edits[0].after == ["ghost"]
+
+
+# -- an object's own tag list -------------------------------------------
+
+
+def test_deleting_a_tag_an_address_group_carries_blocks() -> None:
+    """`field_members` cannot read a tag list, so an edit here would corrupt it."""
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED)],
+        addresses=[_addr("h1", "10.0.0.1/32"), _addr("h2", "10.0.0.2/32")],
+        address_groups=[
+            AddressGroup(name="g", location=SHARED, static_members=["h1", "h2"], tags=["web"])
+        ],
+    )
+    cs = _plan(snap, _t("tag", "web"))
+    assert cs.is_blocked
+    assert cs.op_count == 0
+    assert any("carries tag 'web'" in b for b in cs.blockers)
+
+
+def test_a_tag_edit_never_reaches_the_plan() -> None:
+    """A tag edit on a group would be applied to its member list — never emit one."""
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED)],
+        addresses=[_addr("h1", "10.0.0.1/32"), _addr("h2", "10.0.0.2/32")],
+        address_groups=[
+            AddressGroup(name="g", location=SHARED, static_members=["h1", "h2"], tags=["web"])
+        ],
+    )
+    cs = _plan(snap, _t("address", "h1"), _t("tag", "web"))
+    assert cs.is_blocked
+    assert cs.op_count == 0
+    assert not [e for e in cs.reference_edits if e.field == "tag"]
+
+
+def test_deleting_a_tag_with_its_only_carrier_does_not_block() -> None:
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED)],
+        addresses=[_addr("h1", "10.0.0.1/32", tags=["web"])],
+    )
+    cs = _plan(snap, _t("address", "h1"), _t("tag", "web"))
+    assert not cs.is_blocked, cs.blockers
+    assert _deleted(cs) == {("address", "h1", "shared"), ("tag", "web", "shared")}
+
+
+def test_deleting_a_tag_with_a_group_carrier_in_the_same_plan_does_not_block() -> None:
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED)],
+        addresses=[_addr("h1", "10.0.0.1/32")],
+        address_groups=[
+            AddressGroup(name="g", location=SHARED, static_members=["h1"], tags=["web"])
+        ],
+    )
+    cs = _plan(snap, _t("address-group", "g"), _t("tag", "web"))
+    assert not cs.is_blocked, cs.blockers
+
+
+# -- rulebase coverage ---------------------------------------------------
+
+
+def test_pbf_nexthop_reference_blocks() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-hop", "10.0.0.1/32")],
+        policy_rules=[
+            PolicyRule(
+                name="p1",
+                rule_type=RuleType.PBF,
+                source=["any"],
+                destination=["any"],
+                nexthop="h-hop",
+            )
+        ],
+    )
+    cs = _plan(snap, _t("address", "h-hop"))
+    assert cs.is_blocked
+    assert cs.op_count == 0
+
+
+def test_nat_source_and_destination_are_scrubbed() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-dead", "10.0.0.1/32"), _addr("h-keep", "10.0.0.2/32")],
+        nat_rules=[NatRule(name="n1", source=["h-dead", "h-keep"], destination=["h-keep"])],
+    )
+    cs = _plan(snap, _t("address", "h-dead"))
+    assert not cs.is_blocked, cs.blockers
+    edit = next(e for e in cs.reference_edits if e.referrer_name == "n1")
+    assert edit.after == ["h-keep"]
+
+
+def test_nat_scalar_service_reference_blocks() -> None:
+    """`NatRule.service` is a scalar, so psc cannot rewrite it as a member list."""
+    snap = Snapshot(
+        services=[_svc("tcp-8443", "8443")],
+        nat_rules=[NatRule(name="n1", source=["any"], destination=["any"], service="tcp-8443")],
+    )
+    cs = _plan(snap, _t("service", "tcp-8443"))
+    assert cs.is_blocked
+    assert cs.op_count == 0
+
+
+def test_a_rule_that_loses_its_last_destination_is_deleted() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-dead", "10.0.0.1/32")],
+        security_rules=[SecurityRule(name="r-dst", source=["any"], destination=["h-dead"])],
+    )
+    cs = _plan(snap, _t("address", "h-dead"))
+    assert [r.name for r in cs.rule_deletes] == ["r-dst"]
+
+
+def test_a_service_group_cascade_orphans_the_rule_that_uses_it() -> None:
+    snap = Snapshot(
+        services=[_svc("tcp-8443", "8443")],
+        service_groups=[ServiceGroup(name="svcgrp", location=SHARED, members=["tcp-8443"])],
+        security_rules=[
+            SecurityRule(name="r-svc", source=["any"], destination=["any"], service=["svcgrp"])
+        ],
+    )
+    cs = _plan(snap, _t("service", "tcp-8443"))
+    assert ("service-group", "svcgrp", "shared") in _deleted(cs)
+    assert [r.name for r in cs.rule_deletes] == ["r-svc"]
+
+
+# -- plan shape ----------------------------------------------------------
+
+
+def test_a_carrier_is_deleted_before_the_tag_it_carries() -> None:
+    """The applier walks `deletes` in order, so a tag must come last."""
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.0.0.1/32", tags=["web"])],
+        tags=[Tag(name="web", location=SHARED)],
+    )
+    cs = _plan(snap, _t("tag", "web"), _t("address", "h1"))
+    assert [(d.kind.value, d.name) for d in cs.deletes] == [("address", "h1"), ("tag", "web")]
+
+
+def test_a_repeated_target_yields_one_delete() -> None:
+    snap = Snapshot(addresses=[_addr("h1", "10.0.0.1/32")])
+    cs = _plan(snap, _t("address", "h1"), _t("address", "h1"))
+    assert len(cs.deletes) == 1
+
+
+def test_an_undeletable_kind_blocks() -> None:
+    snap = Snapshot(addresses=[_addr("h1", "10.0.0.1/32")])
+    cs = _plan(snap, _t("security-rule", "r1"))
+    assert cs.is_blocked
+    assert any("not a deletable kind" in b for b in cs.blockers)
+
+
+def test_keep_groups_warns_that_an_emptied_group_may_dangle() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-dead", "10.0.0.1/32")],
+        address_groups=[AddressGroup(name="g-only", location=SHARED, static_members=["h-dead"])],
+    )
+    cs = _plan(snap, _t("address", "h-dead"), keep_groups=True)
+    assert any("keep-groups" in w for w in cs.warnings)

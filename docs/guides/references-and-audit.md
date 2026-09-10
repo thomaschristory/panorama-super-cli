@@ -92,6 +92,10 @@ psc -c panorama.xml -o jsonl refs unused --kind address --no-caveat \
 That is a **dry-run**: it prints the plan and changes nothing. Read the plan and
 the warnings first, then re-run with `--apply --out`.
 
+An empty candidate list is a clean no-op. `delete -f` with zero targets prints
+an empty plan and exits `0`, so a filter that matches nothing never breaks a
+`set -e` script.
+
 Put a `jq` filter between the two commands to narrow the list. Each `unused`
 row carries a `tags` field, so this drops every tagged candidate — a tagged
 address may join a dynamic address group at runtime:

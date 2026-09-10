@@ -247,7 +247,10 @@ and the location to `--location`. A target that omits the location is looked up
 in the config; a name in several locations is a validation error (exit `4`).
 `-f/--file` reads targets from a path or from `-` (stdin), and accepts plain
 `[kind:]name[@location]` lines with `#` comments, JSON lines, or one JSON array
-— so the machine output of `refs unused` pipes straight in.
+— so the machine output of `refs unused` pipes straight in. A `--file` that
+yields zero targets is a clean no-op (exit `0`), not a usage error. The global
+`-d/--device-group` is a read scope only: it never chooses the target of a
+delete.
 
 The plan follows the `decommission` cascade: scrub from groups → scrub from
 rules → delete orphaned rules (an empty `source`/`destination`/`service`/

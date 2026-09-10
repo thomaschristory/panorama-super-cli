@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 FIXTURE = Path(__file__).parent / "fixtures" / "purge-config.xml"
 
 
@@ -135,7 +137,6 @@ def test_dry_run_is_the_default_and_writes_nothing(tmp_path: Path) -> None:
     assert cp.returncode == 0, cp.stderr
     assert "dry-run" in cp.stderr
     assert out.exists()  # --out is honoured in a dry-run, like every other command
-    assert FIXTURE.read_text().count("h-unused") >= 1  # the source is never rewritten
 
 
 def test_apply_writes_the_rewritten_config(tmp_path: Path) -> None:
@@ -226,3 +227,108 @@ def test_json_plan_shape() -> None:
     data = json.loads(cp.stdout)
     for key in ("title", "reference_edits", "rule_deletes", "deletes", "blockers", "warnings"):
         assert key in data
+
+
+# -- the location guard --------------------------------------------------
+
+
+DUP_XML = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <address><entry name="h-dup"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+  </shared>
+  <devices><entry name="localhost.localdomain"><device-group>
+    <entry name="DG-EDGE">
+      <address><entry name="h-dup"><ip-netmask>10.9.9.9/32</ip-netmask></entry></address>
+    </entry>
+  </device-group></entry></devices>
+</config>
+"""
+
+
+@pytest.fixture
+def dup_config(tmp_path: Path) -> Path:
+    p = tmp_path / "dup.xml"
+    p.write_text(DUP_XML)
+    return p
+
+
+def test_an_ambiguous_name_is_refused(dup_config: Path) -> None:
+    cp = run("-c", str(dup_config), "-o", "json", "delete", "h-dup")
+    assert cp.returncode == 4, cp.stdout + cp.stderr
+    data = json.loads(cp.stdout)
+    assert data["type"] == "validation"
+    assert data["details"]["candidates"] == ["DG-EDGE", "shared"]
+
+
+def test_an_empty_location_is_refused(dup_config: Path) -> None:
+    """An unset shell variable must never silently retarget the delete to shared."""
+    cp = run("-c", str(dup_config), "-o", "json", "delete", "h-dup@")
+    assert cp.returncode == 4, cp.stdout + cp.stderr
+    assert "empty location" in json.loads(cp.stdout)["error"]
+
+
+def test_the_device_group_scope_never_chooses_the_target(dup_config: Path) -> None:
+    """`-d` is a read scope everywhere in psc; it must not select a delete target."""
+    cp = run("-c", str(dup_config), "-d", "DG-EDGE", "-o", "json", "delete", "h-dup")
+    assert cp.returncode == 4, cp.stdout + cp.stderr
+    assert json.loads(cp.stdout)["type"] == "validation"
+
+
+def test_location_option_qualifies_an_unqualified_target(dup_config: Path) -> None:
+    cp = run("-c", str(dup_config), "-o", "json", "delete", "h-dup", "--location", "DG-EDGE")
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    assert json.loads(cp.stdout)["deletes"][0]["location"] == "DG-EDGE"
+
+
+def test_target_option_is_equivalent_to_a_positional(dup_config: Path) -> None:
+    cp = run("-c", str(dup_config), "-o", "json", "delete", "--target", "h-dup@shared")
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    assert json.loads(cp.stdout)["deletes"][0]["location"] == "shared"
+
+
+# -- input handling ------------------------------------------------------
+
+
+def test_an_empty_candidate_list_is_a_clean_no_op() -> None:
+    """The `unused | jq | delete` pipe must not fail when the filter matches nothing."""
+    cp = run("-c", str(FIXTURE), "-o", "json", "delete", "-f", "-", stdin="[]\n")
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+    assert json.loads(cp.stdout)["deletes"] == []
+
+
+def test_a_json_array_of_non_objects_is_an_input_error() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "delete", "-f", "-", stdin='["h-unused"]')
+    assert cp.returncode == 3, cp.stdout + cp.stderr
+    assert json.loads(cp.stdout)["type"] == "input"
+
+
+def test_a_row_without_a_name_is_an_input_error() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "delete", "-f", "-", stdin='{"kind": "address"}')
+    assert cp.returncode == 3, cp.stdout + cp.stderr
+
+
+def test_a_non_text_file_is_an_input_error(tmp_path: Path) -> None:
+    binary = tmp_path / "blob.bin"
+    binary.write_bytes(b"\xff\xfe\x00\x01")
+    cp = run("-c", str(FIXTURE), "-o", "json", "delete", "-f", str(binary))
+    assert cp.returncode == 3, cp.stdout + cp.stderr
+
+
+# -- the blocker gate ----------------------------------------------------
+
+
+def test_a_blocked_plan_writes_no_artifact(tmp_path: Path) -> None:
+    out = tmp_path / "never.xml"
+    cp = run("-c", str(FIXTURE), "delete", "h-ghost", "--apply", "--out", str(out))
+    assert cp.returncode == 6, cp.stdout + cp.stderr
+    assert not out.exists()
+
+
+def test_the_source_export_is_never_rewritten(tmp_path: Path) -> None:
+    copy = tmp_path / "copy.xml"
+    copy.write_text(FIXTURE.read_text())
+    before = copy.read_text()
+    cp = run("-c", str(copy), "delete", "h-unused", "--apply", "--out", str(tmp_path / "o.xml"))
+    assert cp.returncode == 0, cp.stderr
+    assert copy.read_text() == before

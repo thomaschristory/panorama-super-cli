@@ -75,7 +75,12 @@ class DeleteScreen(Screen[None]):
     def __init__(self, session: WorkbenchSession) -> None:
         super().__init__()
         self.session = session
+        # `check_action` refuses every hub action while a spoke is stacked, and
+        # this screen has no selection-editing binding, so the captured list and
+        # the live selection cannot diverge while the spoke is open. A future
+        # spoke that edits the selection must re-derive here too.
         self._items = deletable_items(session)
+        self._previewed = False
 
     def compose(self) -> ComposeResult:
         if not self._items:
@@ -98,10 +103,14 @@ class DeleteScreen(Screen[None]):
         panel = self.query_one("#review", ReviewPanel)
         try:
             cs = plan_delete(self.session, self._items, keep_rules=self._keep_rules())
-        except PscError:
-            # A transient bad state must not crash the app. `action_stage`
-            # re-plans and gates for real.
+        except PscError as exc:
+            # A delete must never stage a plan the operator has not seen. Every
+            # other spoke leaves a stale panel here; this one shows the failure
+            # and refuses, because there is no safe reading of a blank panel.
+            self._previewed = False
+            panel.show(ChangeSet(title="cannot plan this delete", blockers=[str(exc)]))
             return
+        self._previewed = True
         panel.show(cs)
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -113,7 +122,7 @@ class DeleteScreen(Screen[None]):
         # Re-derive from the live selection, which can change while the spoke is
         # open (a staged plan reconciles the selection).
         items = deletable_items(self.session)
-        if not items:
+        if not items or not self._previewed:
             self.app.bell()
             return
         try:

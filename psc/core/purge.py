@@ -108,30 +108,38 @@ def _defined_index(snapshot: Snapshot) -> dict[_ObjId, object]:
     return out
 
 
-def _member_deleted(
+def _reference_breaks(
     graph: ReferenceGraph,
     namespace: str,
-    group_location: Location,
-    member_name: str,
+    referrer_location: Location,
+    name: str,
     delete_set: set[_ObjId],
 ) -> bool:
-    """Whether `member_name`, seen from `group_location`, is being deleted.
+    """Whether `name`, seen from `referrer_location`, stops resolving after the delete.
 
-    The name resolves through the group's own location chain, so this respects
-    PAN-OS shadowing: a device-group object hides a shared object of the same
-    name. A member that resolves to nothing is dangling; treat it as present so
-    a dangling member never makes the group look empty.
+    This is the shadowing rule. A name resolves up the device-group chain, so a
+    device-group object hides a shared object of the same name. Deleting the
+    device-group object therefore does NOT break a reference to that name: the
+    reference falls through to the shared object. Only a name that resolves to
+    nothing afterwards is really broken, and only that name may be scrubbed.
+
+    A name that already resolves to nothing is dangling before this plan starts.
+    That is somebody else's problem, so the answer is `False`.
     """
-    target = graph.resolve(namespace, member_name, group_location)
-    if target is None:
+    if graph.resolve(namespace, name, referrer_location) is None:
         return False
-    return (target.kind, target.name, target.location.name) in delete_set
+    survivor = graph.resolve(namespace, name, referrer_location, ignoring=frozenset(delete_set))
+    return survivor is None
 
 
 def _newly_empty_groups(
     snapshot: Snapshot, graph: ReferenceGraph, delete_set: set[_ObjId]
 ) -> list[Target]:
-    """Static groups whose every member is now in `delete_set`.
+    """Static groups this plan empties.
+
+    A group is emptied when no member name still resolves to an object. A member
+    that falls through to a shared object of the same name still resolves, so a
+    shadowed member never empties the group (see `_reference_breaks`).
 
     A dynamic address-group has no member list to empty, so the scan skips it.
     A group that is already empty stays: emptying is a consequence of this
@@ -150,7 +158,7 @@ def _newly_empty_groups(
         if gid in delete_set or not members:
             continue
         namespace = _GROUP_NAMESPACE[kind]
-        if all(_member_deleted(graph, namespace, group.location, m, delete_set) for m in members):
+        if all(_reference_breaks(graph, namespace, group.location, m, delete_set) for m in members):
             delete_set.add(gid)
             found.append(Target(kind=kind, name=group.name, location=group.location))
     return found
@@ -285,32 +293,56 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
             edits[key] = edit
         return edit
 
-    # Phase 1 — scrub and cascade to a fixpoint.
-    worklist = list(matched)
-    while worklist:
-        for target in worklist:
-            drop = {target.name}
-            for ref in graph.where_used(target.kind, target.name, target.location):
-                kind, field = ref.referrer_kind, ref.field
-                if _GROUP_MEMBER_FIELD.get(kind) == field or (
-                    rule_container(kind) is not None and field in FLAT_RULE_FIELDS
-                ):
-                    edit = _edit_for(ref)
-                    edit.after = _remove_members(edit.after, drop)
-                elif field in _NESTED_FIELDS or (field == "tag" and kind in _TAG_BEARING_KINDS):
-                    # No flat list to rewrite. Record the edit so the gate refuses
-                    # the plan rather than stranding the reference.
-                    _edit_for(ref)
-                # A `dynamic` edge is a DAG filter match. `_dag_blockers` owns it.
-        if keep_groups:
-            break
-        worklist = _newly_empty_groups(snapshot, graph, delete_set)
+    # Phase 1 — grow the delete set to a fixpoint, BEFORE any scrub. Emptiness
+    # depends only on the delete set, so the two can separate. They must: a scrub
+    # decision needs the FINAL delete set to answer "does this name still resolve
+    # afterwards", and a later pass can add the very object that answer turns on.
+    if not keep_groups:
+        while _newly_empty_groups(snapshot, graph, delete_set):
+            pass
 
-    # Phase 2 — refuse a delete a surviving DAG filter still selects.
+    # Phase 2 — scrub each deleted object out of every reference it breaks.
+    for doomed_kind, doomed_name, doomed_loc_name in sorted(delete_set):
+        doomed_loc = (
+            Location.shared() if doomed_loc_name == "shared" else Location.dg(doomed_loc_name)
+        )
+        for ref in graph.where_used(doomed_kind, doomed_name, doomed_loc):
+            rk, field = ref.referrer_kind, ref.field
+            if _GROUP_MEMBER_FIELD.get(rk) == field or (
+                rule_container(rk) is not None and field in FLAT_RULE_FIELDS
+            ):
+                if not _reference_breaks(
+                    graph, ref.namespace, ref.referrer_location, ref.target_name, delete_set
+                ):
+                    # The name still resolves — a shared object of the same name
+                    # shadowed by this one. Removing the member would change what
+                    # the referrer matches.
+                    continue
+                edit = _edit_for(ref)
+                edit.after = _remove_members(edit.after, {ref.target_name})
+            elif field in _NESTED_FIELDS:
+                # No flat list to rewrite. Record the edit so the gate refuses the
+                # plan rather than stranding the reference.
+                _edit_for(ref)
+            elif field == "tag" and rk in _TAG_BEARING_KINDS:
+                # An object's own tag list. psc has no repoint path for it, and
+                # `field_members` cannot even read it, so never build an edit —
+                # block instead. A carrier this plan also deletes is fine.
+                carrier: _ObjId = (rk, ref.referrer_name, ref.referrer_location.name)
+                if carrier not in delete_set:
+                    cs.blockers.append(
+                        f"{rk} '{ref.referrer_name}'@{ref.referrer_location.name} carries tag "
+                        f"'{doomed_name}'; psc cannot rewrite an object's tag list — remove "
+                        "the tag "
+                        "there, or delete that object too, then re-run"
+                    )
+            # A `dynamic` edge is a DAG filter match. `_dag_blockers` owns it.
+
+    # Phase 3 — refuse a delete a surviving DAG filter still selects.
     if not keep_groups:
         cs.blockers.extend(_dag_blockers(snapshot, matched, index, delete_set))
 
-    # Phase 3 — a rule that loses the last member of a required field is orphaned.
+    # Phase 4 — a rule that loses the last member of a required field is orphaned.
     rule_fields: dict[tuple[str, str, str, str | None], dict[str, list[str]]] = {}
     for edit in edits.values():
         if edit.referrer_kind in _GROUP_MEMBER_FIELD:
@@ -338,7 +370,7 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
             f"({which} empty after the delete — verify no traffic depends on it)"
         )
 
-    # Phase 4 — emit the edits. An edit on a referrer this plan deletes is
+    # Phase 5 — emit the edits. An edit on a referrer this plan deletes is
     # redundant, so drop it. A rule edit survives even when the rule goes, so the
     # plan stays readable.
     group_edits: list[ReferenceEdit] = []
@@ -352,7 +384,7 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
             rule_edits.append(edit)
     cs.reference_edits = group_edits + rule_edits
 
-    # Phase 5 — the deletes. `sorted` puts an address before an address-group and
+    # Phase 6 — the deletes. `sorted` puts an address before an address-group and
     # a tag last, so a carrier is always removed before the tag it carries.
     if keep_groups:
         for edit in group_edits:
@@ -367,13 +399,13 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
                 ObjectDelete(kind=_KIND_TO_OBJECT_KIND[kind], name=name, location=location)
             )
 
-    # Phase 6 — the operator warnings `unused` cannot decide for them.
+    # Phase 7 — the operator warnings `unused` cannot decide for them.
     cs.warnings.extend(_candidate_warnings(graph, matched))
 
-    # Phase 7 — refuse a reference psc cannot repoint.
+    # Phase 8 — refuse a reference psc cannot repoint.
     gate_unmappable_reference_edits(cs)
 
-    # Phase 8 — a blocked plan carries zero ops.
+    # Phase 9 — a blocked plan carries zero ops.
     if cs.blockers:
         cs.reference_edits.clear()
         cs.rule_deletes.clear()
