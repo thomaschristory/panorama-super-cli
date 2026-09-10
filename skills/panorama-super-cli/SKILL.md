@@ -316,20 +316,22 @@ scrub groups → scrub rules → delete orphaned rules (empty source OR destinat
 `any` survives) → delete emptied groups → delete the objects, cascading to a
 fixpoint. **Only EXACT + WITHIN matches** are removed (a broader containing
 object is left in place). `--keep-groups`/`--keep-rules` stop short of deleting
-those. **Blocks** (exit `6`) on NAT-translation/PBF-next-hop references and
-DAG-filter-tag matches; orphan-rule deletions are warnings. This is the safe
+those. It **blocks** (exit `6`) on a DAG-filter-tag match. It blocks on a
+NAT-translation or PBF-next-hop reference only when the name resolves to nothing
+after the plan applies. Orphan-rule deletions are warnings. This is the safe
 teardown path for an **IP or range** — prefer it over hand-scrubbing. To tear
 down objects by **name**, use `delete` instead.
 
-**A shadowed name is never scrubbed.** A device-group object hides a `shared`
-object of the same name, so a delete of the device-group object does not break a
-reference to that name: the reference falls through to the `shared` object. Both
-`decommission` and `delete` scrub a name only when the name resolves to nothing
-after the plan applies. A shadow delete therefore keeps the group non-empty and
-the rule alive. Each such reference produces one warning that names the referrer
-and the surviving object with its value — read it, because the referrer now
-matches another host. To remove the name completely, put the `shared` object in
-the same run.
+**A shadowed name is never scrubbed.** An object in a device group hides a
+same-named object above it: a parent device group, or `shared`. A delete of the
+lower object does not break a reference to that name. The reference falls
+through to the object above. Both `decommission` and `delete` scrub a name only
+when the name resolves to nothing after the plan applies. The group therefore
+stays non-empty and the rule stays alive. Each such reference gives one warning.
+The warning names the referrer and the surviving object with its value. Read the
+warning, because the referrer now matches another host. To remove the name
+completely, delete the surviving object in the same run. `--keep-groups` deletes
+nothing, so no name falls through in that mode.
 
 ### delete — reference-safe deletion by name
 
@@ -348,14 +350,15 @@ several locations. Targets come from positional args, repeated `--target`, and
 `#` comments, JSONL, and a JSON array, so the machine output of `refs unused`
 pipes straight in. All five `unused` kinds work: address, address-group,
 service, service-group and tag. The plan scrubs every group member list and
-rule field that names the object, deletes a rule left with an empty required
-field, deletes a group the scrub empties, cascades to a fixpoint, and removes
-the objects last. `--keep-groups`/`--keep-rules` stop short of deleting those.
-It **blocks** (exit `6`) on a name that matches nothing, a NAT-translation or
-PBF-next-hop reference, a surviving DAG filter that selects the object by tag,
-and a surviving object's own tag list. A shared or tagged candidate produces a
-warning: read it, and verify that candidate in Panorama first. A name that only
-falls through to a same-named object above also warns (see `decommission`).
+rule field whose name stops resolving after the plan applies, deletes a rule
+left with an empty required field, deletes a group the scrub empties, cascades
+to a fixpoint, and removes the objects last. `--keep-groups`/`--keep-rules` stop short of deleting those.
+It **blocks** (exit `6`) on a name that matches nothing, a surviving DAG filter
+that selects the object by tag, and a surviving object's own tag list. It also
+blocks on a NAT-translation or PBF-next-hop reference whose name resolves to
+nothing after the plan applies. A shared or tagged candidate produces a warning:
+read it, and verify that candidate in Panorama first. A name that only falls
+through to a same-named object above also warns (see `decommission`).
 
 ### move — promote an object toward shared
 

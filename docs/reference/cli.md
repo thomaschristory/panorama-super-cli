@@ -225,11 +225,12 @@ IP/CIDR/range (or a `-f/--file` list): scrub from groups → scrub from rules �
 delete orphaned rules (empty `source`/`destination`; `any` survives) → delete
 emptied groups → delete the objects, repeating to a fixpoint. Only exact and
 within matches are torn down (a broader containing object is left in place).
-`--keep-groups`/`--keep-rules` stop short of deleting those. Blocks on
-NAT-translation/PBF-next-hop references and DAG-filter-tag matches; orphan-rule
-deletions are warnings. A name that a device-group object only **shadows** is
-never scrubbed: the reference falls through to the `shared` object, so the group
-and the rule survive, and the plan warns about the new meaning. See
+`--keep-groups`/`--keep-rules` stop short of deleting those. Blocks on a
+DAG-filter-tag match. Blocks on a NAT-translation or PBF-next-hop reference only
+when the name resolves to nothing after the plan applies. Orphan-rule deletions
+are warnings. A device-group object can **shadow** a same-named object above it.
+`decommission` does not scrub such a name. The group and the rule stay. The plan
+gives one warning for the new meaning of the name. See
 [Editing objects](../guides/editing-objects.md#decommission-an-address) and
 [A shadowed name falls through](../guides/safety.md#a-shadowed-name-falls-through).
 
@@ -259,10 +260,11 @@ The plan follows the `decommission` cascade: scrub from groups → scrub from
 rules → delete orphaned rules (an empty `source`/`destination`/`service`/
 `application`; `any` survives) → delete emptied groups → delete the objects,
 repeating to a fixpoint. `--keep-groups`/`--keep-rules` stop short of deleting
-those. Blocks (exit `6`) on a target that names no object, a NAT-translation or
-PBF-next-hop reference, a surviving dynamic address-group that selects the
-object by tag, and a tag a surviving object still carries. A `shared` or tagged
-candidate raises a warning, not a blocker, and so does a reference whose name
+those. Blocks (exit `6`) on a target that names no object, a surviving dynamic
+address-group that selects the object by tag, and a tag a surviving object still
+carries. It also blocks on a NAT-translation or PBF-next-hop reference whose
+name resolves to nothing after the plan applies. A `shared` or tagged candidate
+raises a warning, not a blocker, and so does a reference whose name
 [falls through](../guides/safety.md#a-shadowed-name-falls-through) to a
 same-named object above. See
 [References and audit](../guides/references-and-audit.md#from-unused-to-deleted).

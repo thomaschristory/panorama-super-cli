@@ -5,33 +5,44 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
-## v1.13.0 — 2026-09-10
+## Unreleased
 
 ### Fixed
 
 - `decommission` no longer tears down a group and a rule when it deletes a
-  device-group object that only **shadows** a `shared` object of the same name
+  device-group object that only **shadows** a same-named object above it
   ([#187](https://github.com/thomaschristory/panorama-super-cli/issues/187)).
-  PAN-OS resolves a bare name up the device-group chain, so the reference falls
-  through to the `shared` object and stays valid. `plan_decommission` scrubbed
-  the name anyway, saw the group as empty, deleted the group, and then deleted
-  the rule that group orphaned — with no blocker to stop `--apply`. The engine
-  now grows the delete set to its fixpoint before the first scrub, and scrubs a
+  PAN-OS resolves a bare name up the device-group chain. The reference falls
+  through to the object above, and it stays valid. `plan_decommission` scrubbed
+  the name anyway. It then saw the group as empty and deleted the group. It then
+  deleted the rule that group orphaned. No blocker stopped `--apply`. The engine
+  now grows the delete set to its fixpoint before the first scrub. It scrubs a
   name only when the name resolves to nothing after the plan applies. `delete`
-  (`plan_purge`) already had this gate; both engines now share one
+  (`plan_purge`) already had this gate. Both engines now share one
   implementation, `refs.reference_breaks`.
-- `decommission` keyed an orphaned rule by name and rulebase only, so two device
-  groups holding one rule name collapsed into a single `RuleDelete`. The plan
-  could name the wrong device group in the rendered `delete` line. The rule
-  location is now part of that identity, and the `--keep-rules` warning names it
-  too.
+- `decommission` keyed an orphaned rule by name and rulebase only. Two device
+  groups that hold one rule name therefore collapsed into a single `RuleDelete`.
+  The plan could name the wrong device group in the rendered `delete` line. The
+  rule location is now part of that identity. The `--keep-rules` warning names
+  the location too.
+- `--keep-groups` deletes nothing, so no name can fall through in that mode.
+  `decommission --keep-groups` and `delete --keep-groups` therefore always scrub
+  the group and rule member fields. They give no fall-through warning.
+
+### Changed
+
+- `decommission` and `delete` no longer block on a NAT-translation or a
+  PBF-next-hop reference when the name still resolves after the plan applies.
+  The plan strands nothing, so it gives a warning and exits `0`. A reference
+  whose name resolves to nothing still blocks with exit `6`. A DAG-filter-tag
+  match still blocks.
 
 ### Added
 
-- `decommission` and `delete` warn about every reference that keeps a name which
+- `decommission` and `delete` warn about every reference that keeps a name that
   falls through to another object after the plan applies. The warning names the
-  referrer, the name, and the surviving object with its value, because the
-  referrer keeps matching traffic — against another host. Warnings never block.
+  referrer, the name, and the surviving object with its value. The referrer
+  keeps matching traffic, but against another host. Warnings never block.
 
 ## v1.12.1 — 2026-07-15
 

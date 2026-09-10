@@ -238,16 +238,16 @@ target is left in place — decommissioning `10.1.0.5` never deletes the superne
 
 ### A shadowed name is never scrubbed
 
-A device-group object hides a `shared` object of the same name. A delete of the
-device-group object therefore does not break a reference to that name: the
-reference falls through to the `shared` object.
+An object in a device group hides a same-named object above it: a parent device
+group, or `shared`. A delete of the lower object does not break a reference to
+that name. The reference falls through to the object above.
 
 `decommission` scrubs a name only when the name resolves to nothing after the
-plan applies. Take an address `web` in `shared` and a second `web` in `dg-a`,
-with a group `g`@dg-a that holds `web` and a rule that sources `g`. A
-`decommission` of the `dg-a` value deletes that one address and stops. `g` keeps
-`web`, `g` does not become empty, and the rule is not orphaned. The plan warns
-about the new meaning of the name:
+plan applies. Take an address `web` in `shared`. Add a second `web` in `dg-a`. A
+group `g`@dg-a holds `web`, and a rule uses `g` as its source. A `decommission`
+of the `dg-a` value deletes that one address and stops. `g` keeps `web`, so `g`
+does not become empty and the rule keeps its source. The plan warns about the
+new meaning of the name:
 
 ```
 decommission address objects
@@ -256,10 +256,11 @@ decommission address objects
 ```
 
 Read the warning and confirm that the referrer is still correct. To remove the
-name completely, decommission the `shared` value in the same run. The same rule
-holds for [`delete`](../reference/cli.md#delete), and for `--keep-groups`: a
-shadowed name is left alone there too, so the run can end with no operation at
-all.
+name completely, decommission the surviving object that the warning names. The
+same rule applies to [`delete`](../reference/cli.md#delete).
+
+`--keep-groups` deletes nothing, so no name falls through in that mode. The
+scrub of the group and rule member fields always runs there.
 
 ### Keep groups / keep rules
 
@@ -271,15 +272,16 @@ all.
 
 ### Blockers and warnings
 
-- **Blockers** (exit `6`, refuse to apply): a matched object referenced by a
-  **NAT translation** field or a **PBF forwarding next-hop** (neither is a flat
-  member list `psc` can safely rewrite), or matched by a **DAG filter tag**
-  (dynamic membership psc can't enumerate). Resolve the reference by hand, then
-  re-run.
+- **Blockers** (exit `6`, refuse to apply): a matched object that a **DAG filter
+  tag** selects (dynamic membership psc can't enumerate), or a matched object that
+  a **NAT translation** field or a **PBF forwarding next-hop** names (neither is a
+  flat member list `psc` can safely rewrite). The NAT and PBF blocker fires only
+  when the name resolves to nothing after the plan applies. Resolve the reference
+  by hand, then re-run.
 - **Warnings** (surfaced, don't block): every orphan-rule deletion is a warning
-  — verify no traffic depends on the rule before you `--apply`. A reference that
-  keeps a name which now [falls through](#a-shadowed-name-is-never-scrubbed) to
-  another object is a warning too.
+  — verify no traffic depends on the rule before you `--apply`. A kept name that
+  [falls through](#a-shadowed-name-is-never-scrubbed) to a same-named object
+  above is a warning too.
 
 ### Applying
 

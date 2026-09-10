@@ -74,18 +74,20 @@ applies before any change is made.
 
 ### A shadowed name falls through
 
-PAN-OS resolves a bare name up the device-group chain. A device-group object
-therefore hides a `shared` object of the same name. A delete of the device-group
-object does not break a reference to that name: the reference falls through to
-the `shared` object.
+PAN-OS resolves a bare name up the device-group chain. An object in a device
+group therefore hides a same-named object above it. The object above is in a
+parent device group, or in `shared`.
+
+A delete of the lower object does not break a reference to that name. The
+reference falls through to the object above.
 
 `decommission` and `delete` ask this question before they touch a reference.
 They scrub a name only when the name resolves to nothing after the plan applies.
 A name that still resolves stays in the group member list or the rule field. The
-group therefore does not become empty, and the rule is not orphaned.
+group therefore does not become empty, and the plan does not orphan the rule.
 
 The referrer keeps the name, but the name can point to another object with
-another value. Each plan prints one warning for each reference that falls
+another value. The plan prints one warning for each reference that falls
 through. The warning gives the referrer, the name, and the surviving object with
 its value:
 
@@ -95,8 +97,11 @@ points to address 'web'@shared (10.0.0.1/32) — make sure that the referrer is
 still correct
 ```
 
-Read each warning before you `--apply`. To remove the name completely, put the
-`shared` object in the same run.
+Read each warning before you `--apply`. To remove the name completely, remove
+the surviving object that the warning names, in the same run.
+
+`--keep-groups` deletes nothing, so no name falls through in that mode. The
+scrub of the group and rule member fields always runs there.
 
 ## Reference-safe deletion by name
 
@@ -154,8 +159,8 @@ Warnings are surfaced in the plan and never block. Read them before you
   device config outside this export depends on it,
 - a candidate **carries a tag**, so a dynamic address-group may select it at
   runtime through an externally registered IP; verify it in Panorama first,
-- a reference keeps a name that **falls through** to another object, because
-  this delete only removes the shadow (see
+- a reference keeps a name that **falls through** to a same-named object above,
+  because this delete removes only the lower object (see
   [A shadowed name falls through](#a-shadowed-name-falls-through)).
 
 ## Offline apply never overwrites your export
