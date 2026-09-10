@@ -136,12 +136,13 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | `v` | **inspect** | Open the focused results row read-only: its member tree and effective leaves (the TUI form of [`show`](finding-objects.md#open-an-object)). Nested groups start collapsed — drill in with enter. Acts on the highlighted row, no selection needed. |
 | `m` | **move** | Promote selected objects toward `shared`; a destination drop-down offers the valid ancestors. |
 | `x` | **decommission** | Reference-safe cascading teardown of the selected addresses. |
+| `X` | **delete** | Reference-safe deletion of the selected objects, of any of the five kinds. One plan covers the whole selection, so a group and its last member tear down together. The sink for the `i` spoke — see [below](#i-x-from-unused-to-deleted). |
 | `r` | **rename** | Reference-aware rename; choose which selected entry to rename and its new name. |
 | `e` | **rule** | Add the selected objects as members of an existing rule field. |
 | `G` | **group** | Add the selected objects as members of an existing address-/service-group (the TUI form of [`group edit-member --add`](editing-objects.md#edit-group-membership); removal is CLI-only). |
 | `N` | **new group** | Build a *new* group out of the selection (see [below](#n-a-group-from-the-selection)). The kind follows what you picked — addresses make an address-group, services a service-group — and the location picker defaults to the narrowest one that can see every member. |
 | `c` | **create** | Object creation (address / group / service / service-group / tag), the TUI form for `psc set`. The form is **dynamic** — it shows only the fields the chosen kind uses, and predefined values (address type, service protocol, tag color) are **dropdowns**. |
-| `i` | **refs-unused** | List objects no rule reaches (read-only). |
+| `i` | **refs-unused** | List objects no rule reaches. A `tags` column carries the runtime-DAG signal. `space` sends the row under the cursor to the selection, `a` sends every listed row. The spoke itself changes nothing. |
 | `g` | **dangling** | List references to names that resolve to nothing (read-only). |
 | `l` | **name-lint** | Report objects that drift from the configured naming scheme. |
 | `n` | **name-apply** | Rename drifting object(s) to their scheme name; choose an entry to apply. |
@@ -152,6 +153,30 @@ The mutating spokes are the same engines as their CLI counterparts, so the
 behaviour — and the [blockers](safety.md#blockers-are-a-hard-gate) that refuse an
 unsafe plan — is identical. A spoke with an empty or unusable selection rings the
 bell instead of staging.
+
+## `i` + `X` — from unused to deleted
+
+`refs unused` finds cleanup candidates. The `i` spoke lists them and the `X`
+spoke removes them, and nothing happens in between without a plan.
+
+1. `i` opens the candidate list. Pick the kind in the drop-down.
+2. `space` sends the row under the cursor to the selection. `a` sends every
+   listed row.
+3. `escape` returns to the hub. Repeat from step 1 for another kind — the
+   selection holds every kind at once.
+4. `X` plans the deletion of the whole selection, and shows the plan.
+5. `ctrl+y` stages it. `ctrl+a` in the `s` spoke applies the batch.
+
+The `X` spoke builds **one** plan for the whole selection. That matters: a group
+and its last member delete together, and the cascade sees the complete delete set
+instead of one object at a time.
+
+!!! warning "`unused` lists candidates, not a kill-list"
+    The caveat banner in the `i` spoke is not decoration. psc does not scan
+    templates, network or device config, or dynamic-address-group membership from
+    externally registered IPs. Read the `tags` column: a tagged address can join a
+    dynamic address-group at runtime. Verify a `shared` or tagged candidate in
+    Panorama before you stage the delete. The plan warns about both.
 
 ## `N` — a group from the selection
 

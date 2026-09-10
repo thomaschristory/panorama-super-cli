@@ -230,6 +230,38 @@ NAT-translation/PBF-next-hop references and DAG-filter-tag matches; orphan-rule
 deletions are warnings. See
 [Editing objects](../guides/editing-objects.md#decommission-an-address).
 
+### delete
+
+```
+psc delete [kind:]name[@location]... [--target T]... [-f FILE|-]
+           [--kind KIND] [--location LOC] [--keep-groups] [--keep-rules]
+           [--apply] [--out PATH] [-of xml|set]
+```
+
+Reference-safe teardown of objects named on the command line — the name-based
+counterpart of [`decommission`](#decommission), and the sink for a verified
+[`refs unused`](#refs) list. It takes all five `unused` kinds: `address`,
+`address-group`, `service`, `service-group`, `tag`. A target is written
+`[kind:]name[@location]`; the kind falls back to `--kind` (default `address`)
+and the location to `--location`. A target that omits the location is looked up
+in the config; a name in several locations is a validation error (exit `4`).
+`-f/--file` reads targets from a path or from `-` (stdin), and accepts plain
+`[kind:]name[@location]` lines with `#` comments, JSON lines, or one JSON array
+— so the machine output of `refs unused` pipes straight in. A `--file` that
+yields zero targets is a clean no-op (exit `0`), not a usage error. The global
+`-d/--device-group` is a read scope only: it never chooses the target of a
+delete.
+
+The plan follows the `decommission` cascade: scrub from groups → scrub from
+rules → delete orphaned rules (an empty `source`/`destination`/`service`/
+`application`; `any` survives) → delete emptied groups → delete the objects,
+repeating to a fixpoint. `--keep-groups`/`--keep-rules` stop short of deleting
+those. Blocks (exit `6`) on a target that names no object, a NAT-translation or
+PBF-next-hop reference, a surviving dynamic address-group that selects the
+object by tag, and a tag a surviving object still carries. A `shared` or tagged
+candidate raises a warning, not a blocker. See
+[References and audit](../guides/references-and-audit.md#from-unused-to-deleted).
+
 ### move
 
 ```

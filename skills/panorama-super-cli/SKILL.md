@@ -201,7 +201,8 @@ psc -c cfg.xml -o json refs dangling              # references to missing object
 default; `--no-caveat` silences it (stdout is unaffected). Each `unused` row also
 carries a `tags` field (a joined list in table/csv, a real list in
 json/jsonl/yaml): a tag-bearing candidate may be reached at runtime by a DAG that
-matches on that tag, so verify its tags before deleting.
+matches on that tag, so verify its tags before deleting. Send the verified rows
+to `delete` — it is the reference-safe sink for an `unused` list.
 
 `refs used` may need `--kind` and `--location` if a name is ambiguous. Coverage
 spans groups and **every** object-referencing rulebase — security, NAT, PBF,
@@ -216,10 +217,13 @@ only a non-security rule reaches. A `referrer_kind` like `qos-rule` or
 > static routes), dynamic-address-group membership from **externally registered
 > IPs** (config-tag DAG membership *is* resolved), or
 > profiles/schedules/EDLs/regions/applications. Any object referenced only
-> there is falsely reported `unused`. **Never auto-delete on an `unused` result
-> — surface it as a candidate and have a human verify in Panorama**, especially
-> `shared` objects. `merge`/`rename` are safe (they block when a reference
-> can't be repointed); **deletion is the unprotected operation.**
+> there is falsely reported `unused`. **`unused` gives you candidates, not a
+> kill-list.** A human must verify each candidate in Panorama, especially a
+> `shared` object. Delete a verified candidate with `delete` (below): it scrubs
+> every reference psc scans before it removes the object, and it blocks (exit
+> `6`) on a reference it cannot rewrite. That protection covers only what psc
+> scans. It cannot see the blind spots above, so it does **not** replace the
+> human check of the candidate list.
 
 ### name — opt-in naming templates
 
@@ -314,7 +318,33 @@ fixpoint. **Only EXACT + WITHIN matches** are removed (a broader containing
 object is left in place). `--keep-groups`/`--keep-rules` stop short of deleting
 those. **Blocks** (exit `6`) on NAT-translation/PBF-next-hop references and
 DAG-filter-tag matches; orphan-rule deletions are warnings. This is the safe
-teardown path — prefer it over hand-scrubbing then `refs unused` + manual delete.
+teardown path for an **IP or range** — prefer it over hand-scrubbing. To tear
+down objects by **name**, use `delete` instead.
+
+### delete — reference-safe deletion by name
+
+```bash
+psc -c cfg.xml -o json delete h-unused                      # dry-run plan
+psc -c cfg.xml -o json delete service:tcp-old@DG-EDGE tag:t-retired
+psc -c cfg.xml -o jsonl refs unused --kind address --no-caveat | psc -c cfg.xml delete -f -
+psc -c cfg.xml delete -f dead-objects.txt --apply --out cleaned.xml
+```
+
+This is the sink for a verified `refs unused` list. A target is written
+`[kind:]name[@location]`. The kind defaults to `--kind` (`address`). psc looks
+up a target that omits the location, and exits `4` when the name lives in
+several locations. Targets come from positional args, repeated `--target`, and
+`-f/--file` (a path, or `-` for stdin). The file accepts plain spec lines with
+`#` comments, JSONL, and a JSON array, so the machine output of `refs unused`
+pipes straight in. All five `unused` kinds work: address, address-group,
+service, service-group and tag. The plan scrubs every group member list and
+rule field that names the object, deletes a rule left with an empty required
+field, deletes a group the scrub empties, cascades to a fixpoint, and removes
+the objects last. `--keep-groups`/`--keep-rules` stop short of deleting those.
+It **blocks** (exit `6`) on a name that matches nothing, a NAT-translation or
+PBF-next-hop reference, a surviving DAG filter that selects the object by tag,
+and a surviving object's own tag list. A shared or tagged candidate produces a
+warning: read it, and verify that candidate in Panorama first.
 
 ### move — promote an object toward shared
 
@@ -402,7 +432,10 @@ dry-run/stage, blocker gate, and repoint-before-delete safety as the CLI.
 Alongside the
 selection-scoped action spokes are config-wide *discovery* spokes: `D`
 duplicates scan, `f` device-group diff, `o` NDJSON export, and a well-known-port
-mode on the `a` audit spoke. `v` opens a read-only inspect view of the focused
+mode on the `a` audit spoke. The `i` unused spoke feeds the selection — `space`
+sends the row under the cursor, `a` sends every listed row, and its `tags` column
+flags a candidate a DAG may reach at runtime. `X` then plans the reference-safe
+deletion of the whole selection in one `ChangeSet` (the TUI form of `delete`). `v` opens a read-only inspect view of the focused
 object (member tree + effective leaves); `G` adds the current selection as
 members of a named group, and `N` builds a **new** group out of the selection
 (kind derived from what's selected; the location picker defaults to the narrowest
@@ -460,10 +493,12 @@ echo "$plan" | jq -e '.blockers | length == 0' >/dev/null || { echo "blocked"; e
 psc -c cfg.xml dedup merge --keep a --remove b --apply --out fixed.xml
 ```
 
-**Tearing down an object?** Don't hand-scrub groups/rules then guess at
-`refs unused`. Use `decommission <ip|cidr>` — it plans the whole reference-safe
-cascade (groups → rules → orphaned rules → emptied groups → objects) and blocks
-on anything it can't safely rewrite. Same dry-run-then-`--apply --out` flow.
+**Tearing down an object?** Don't hand-scrub groups/rules. Both teardown
+commands plan the same reference-safe cascade (groups → rules → orphaned rules
+→ emptied groups → objects) and block on anything they can't safely rewrite.
+Use `decommission <ip|cidr>` when you know the **IP or range**. Use
+`delete [kind:]name[@location]` when you know the **name** — that is the sink
+for a verified `refs unused` list. Same dry-run-then-`--apply --out` flow.
 
 ## What NOT to do
 

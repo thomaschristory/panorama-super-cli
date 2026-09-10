@@ -321,3 +321,35 @@ def test_apply_all_empty_when_all_compliant() -> None:
     cs = plan_apply_scheme(snap, graph, NamingScheme())
     assert not cs.is_blocked
     assert cs.is_empty
+
+
+def test_rename_service_preserves_other_members_of_a_service_group() -> None:
+    """A service-group member list must survive a rename of one of its members.
+
+    `field_members` had no service-group branch, so the edit read back only the
+    renamed member. The applier lowers a member removal to delete-field plus
+    re-set, so the short `before` wiped every other member.
+    """
+    xml = """<config><shared>
+      <service>
+        <entry name="tcp-80"><protocol><tcp><port>80</port></tcp></protocol></entry>
+        <entry name="tcp-443"><protocol><tcp><port>443</port></tcp></protocol></entry>
+      </service>
+      <service-group>
+        <entry name="sg-web">
+          <members><member>tcp-80</member><member>tcp-443</member></members>
+        </entry>
+      </service-group>
+    </shared></config>"""
+    snap = parse_config(xml)
+    cs = plan_rename(
+        snap,
+        ReferenceGraph.build(snap),
+        kind=ObjectKind.SERVICE,
+        location_name="shared",
+        old_name="tcp-80",
+        new_name="tcp-8080",
+    )
+    edit = next(e for e in cs.reference_edits if e.referrer_name == "sg-web")
+    assert edit.before == ["tcp-80", "tcp-443"]
+    assert edit.after == ["tcp-8080", "tcp-443"]

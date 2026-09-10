@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<config>
+  <shared>
+    <tag>
+      <entry name="t-orphan"><color>color1</color></entry>
+      <entry name="t-live"><color>color2</color></entry>
+    </tag>
+    <address>
+      <entry name="h-unused"><ip-netmask>10.9.0.1/32</ip-netmask></entry>
+      <entry name="h-tagged">
+        <ip-netmask>10.9.0.2/32</ip-netmask>
+        <tag><member>t-live</member></tag>
+      </entry>
+      <entry name="h-live"><ip-netmask>10.9.0.3/32</ip-netmask></entry>
+      <entry name="h-in-dead-group"><ip-netmask>10.9.0.4/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="addrgrp-dead">
+        <static><member>h-in-dead-group</member></static>
+      </entry>
+      <entry name="g-live">
+        <static><member>h-live</member></static>
+      </entry>
+    </address-group>
+    <service>
+      <entry name="tcp-unused"><protocol><tcp><port>9999</port></tcp></protocol></entry>
+      <entry name="tcp-live"><protocol><tcp><port>443</port></tcp></protocol></entry>
+    </service>
+    <service-group>
+      <entry name="svcgrp-unused"><members><member>tcp-unused</member></members></entry>
+    </service-group>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="DG-EDGE">
+          <address>
+            <entry name="h-dg-unused"><ip-netmask>10.20.0.1/32</ip-netmask></entry>
+          </address>
+          <pre-rulebase>
+            <security>
+              <rules>
+                <entry name="r-live">
+                  <from><member>any</member></from>
+                  <to><member>any</member></to>
+                  <source><member>g-live</member></source>
+                  <destination><member>h-live</member></destination>
+                  <service><member>tcp-live</member></service>
+                  <application><member>any</member></application>
+                  <action>allow</action>
+                </entry>
+              </rules>
+            </security>
+          </pre-rulebase>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+</config>

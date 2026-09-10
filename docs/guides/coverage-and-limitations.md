@@ -146,8 +146,12 @@ config.
    network/VPN/management config, in a DAG via an externally registered IP, or
    on a firewall's local config? If plausibly yes, confirm in Panorama first.
 3. The safe operations are the ones psc can fully model and *block* when it
-   can't (merge, rename). The risky operation is **deletion driven by
-   `unused`**, because that is exactly where an unseen reference turns into an
+   can't — `merge`, `rename`, `decommission` and
+   [`delete`](../reference/cli.md#delete). Use `delete` to remove a verified
+   candidate: it scrubs every reference psc scans and blocks on one it cannot
+   rewrite. It never scrubs a reference psc does **not** scan, so the risk in
+   this page is unchanged. The risky step is **choosing** what to delete from an
+   `unused` list, because that is exactly where an unseen reference turns into an
    outage.
 
 ## Tracking
