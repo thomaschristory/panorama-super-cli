@@ -15,6 +15,7 @@ from psc.cli import (
     auth_cmds,
     decommission_cmds,
     dedup_cmds,
+    delete_cmds,
     diff_cmds,
     export_cmds,
     find_cmds,
@@ -178,6 +179,10 @@ app.command(
     "decommission",
     help="Reference-safe teardown of address objects matching an IP/CIDR.",
 )(decommission_cmds.decommission)
+app.command(
+    "delete",
+    help="Reference-safe deletion of named objects (the sink for `refs unused`).",
+)(delete_cmds.delete)
 app.command(
     "move",
     help="Promote an object toward shared (to shared or an ancestor device-group).",
