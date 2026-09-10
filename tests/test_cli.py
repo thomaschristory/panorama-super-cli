@@ -79,6 +79,40 @@ def test_unused_ignore_disabled_surfaces_disabled_only_object(tmp_path: Path) ->
     assert "h-off" in {row["name"] for row in json.loads(flagged.stdout)}
 
 
+def test_unused_json_carries_tags_field(tmp_path: Path) -> None:
+    # An unused address may still be live via a DAG that matches it by tag at
+    # runtime; the tags column lets the operator verify before deleting (#180).
+    cfg = tmp_path / "tagged-unused.xml"
+    cfg.write_text(
+        """<config><shared>
+          <address><entry name="h-tagged"><ip-netmask>10.1.1.1/32</ip-netmask>
+            <tag><member>prod</member><member>web</member></tag></entry>
+          <entry name="h-bare"><ip-netmask>10.1.1.2/32</ip-netmask></entry></address>
+        </shared></config>"""
+    )
+    cp = run("-c", str(cfg), "-o", "json", "refs", "unused", "--kind", "address")
+    assert cp.returncode == 0
+    rows = {row["name"]: row for row in json.loads(cp.stdout)}
+    # json/jsonl/yaml carry a real list, not a joined string.
+    assert rows["h-tagged"]["tags"] == ["prod", "web"]
+    # An untagged object renders an empty list (no regression).
+    assert rows["h-bare"]["tags"] == []
+
+
+def test_unused_table_shows_tags_column(tmp_path: Path) -> None:
+    cfg = tmp_path / "tagged-unused-table.xml"
+    cfg.write_text(
+        """<config><shared>
+          <address><entry name="h-tagged"><ip-netmask>10.1.1.1/32</ip-netmask>
+            <tag><member>prod</member></tag></entry></address>
+        </shared></config>"""
+    )
+    cp = run("-c", str(cfg), "-o", "table", "refs", "unused", "--kind", "address")
+    assert cp.returncode == 0
+    assert "tags" in cp.stdout.lower()
+    assert "prod" in cp.stdout
+
+
 def test_unparseable_dag_filter_warns_on_stderr(tmp_path: Path) -> None:
     # An unparseable DAG filter must not crash the audit; psc warns on stderr
     # (naming the DAG) that its membership is unverified, and stdout stays clean.

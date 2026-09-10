@@ -86,7 +86,19 @@ def unused(
     rt: Runtime = ctx.obj
     graph = ReferenceGraph.build(rt.snapshot())
     targets = graph.unused(kind, ignore_disabled=ignore_disabled)
-    rows = [{"kind": t.kind, "name": t.name, "location": t.location.name} for t in targets]
+    # `tags` surfaces the DAG-via-tag blind spot the caveat below warns about: an
+    # object matched into a DAG by an externally-registered IP looks unused here,
+    # but its tags reveal it may be live at runtime (#180). Table/csv join the
+    # list; json/jsonl/yaml carry it verbatim.
+    rows = [
+        {
+            "kind": t.kind,
+            "name": t.name,
+            "location": t.location.name,
+            "tags": graph.tags_for(t),
+        }
+        for t in targets
+    ]
     if rt.strict and not targets:
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
     render(rt.stdout, rt.output, model=rows, rows=rows, table_title=f"unused {kind}")

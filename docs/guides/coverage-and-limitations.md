@@ -81,6 +81,13 @@ address can still be reported `unused`. Only a **live** membership query
 (`show object dynamic-address-group all`) sees registered IPs; resolving them is
 tracked as a follow-up enhancement on the live path.
 
+Because this residual gap cannot be computed from the config, `refs unused`
+**shows each candidate's tags** (a `tags` column in table/csv, a real list in
+json/jsonl/yaml). A tag-bearing candidate is exactly the case to verify by hand:
+its tags are what a DAG would match on, so it may be live at runtime even though
+nothing in the scanned config reaches it. Untagged candidates show an empty
+`tags` cell.
+
 If a DAG's filter is **malformed/unparseable**, psc does not guess its
 membership (it matches nothing) and prints a `warning` on stderr naming that DAG,
 so you know its coverage is unverified.
