@@ -135,8 +135,8 @@ class ReferenceGraph:
     _dag_members: dict[Target, list[Target]] = field(default_factory=lambda: defaultdict(list))
     _tags_by_target: dict[Target, list[str]] = field(default_factory=dict)
     """Object tags keyed by target identity. Backs `tags_for`, the tag column
-    the unused/where-used listings surface (#180). Tags (the kind) carry no tags
-    of their own, so they never appear here — `tags_for` returns [] for them."""
+    the `unused` listing surfaces (#180). Tags (the kind) carry no tags of their
+    own, so they never appear here — `tags_for` returns [] for them."""
 
     @classmethod
     def build(cls, snapshot: Snapshot) -> ReferenceGraph:
@@ -583,9 +583,10 @@ class ReferenceGraph:
         """The config tags carried by `target`'s object, or [] if it carries
         none (or is a tag itself — tags carry no tags).
 
-        The unused/where-used listings surface this so an operator can spot a
-        candidate that a DAG may reach at runtime via one of its tags — the
-        externally-registered-IP blind spot the unused caveat warns about (#180).
+        The `unused` listing surfaces this so an operator can spot a candidate
+        whose tags may tie it to a DAG whose reachability psc cannot fully see —
+        the runtime-DAG-membership blind spot the unused caveat warns about
+        (#180). It is a heuristic signal, not proof of use.
         """
         return list(self._tags_by_target.get(target, []))
 
