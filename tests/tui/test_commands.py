@@ -130,6 +130,7 @@ _EXPECTED_KEY_ACTION_PAIRS: frozenset[tuple[str, str]] = frozenset(
         ("N", "group_new"),
         ("e", "rule_edit"),
         ("x", "decommission"),
+        ("X", "delete_objects"),
         ("d", "dedup"),
         ("D", "duplicates"),
         ("u", "usage"),

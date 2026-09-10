@@ -213,6 +213,11 @@ class WorkbenchApp(App[None]):
 
         self.push_screen(DecommissionScreen(self.session))
 
+    def action_delete_objects(self) -> None:
+        from psc.tui.screens.delete import DeleteScreen  # noqa: PLC0415 — avoid import cycle
+
+        self.push_screen(DeleteScreen(self.session))
+
     def action_rename(self) -> None:
         from psc.tui.screens.rename import RenameScreen  # noqa: PLC0415 — avoid import cycle
 

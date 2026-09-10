@@ -131,6 +131,13 @@ HUB_COMMANDS: tuple[Command, ...] = (
         "Objects",
     ),
     Command(
+        "X",
+        "delete_objects",
+        "Delete",
+        "Reference-safe deletion of the selected objects (any kind)",
+        "Objects",
+    ),
+    Command(
         "d",
         "dedup",
         "Dedup",

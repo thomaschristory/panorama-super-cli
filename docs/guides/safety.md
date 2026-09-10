@@ -7,7 +7,7 @@ is always explicit.
 
 Every mutating command (`dedup merge`, `dedup merge-group`, `dedup promote`,
 `name rename`, `name apply`, `set …` including bulk `set -f`, `rule edit-member`,
-`decommission`, `move`) **prints a plan and exits without changing anything**
+`decommission`, `delete`, `move`) **prints a plan and exits without changing anything**
 unless you pass `--apply`. The workbench stages plans and applies them as one
 batch on `ctrl+a`, under the same gate. The plan
 you see is the exact change-set that `--apply` would execute — there's no
@@ -26,11 +26,17 @@ object-referencing rulebase (security, NAT, and PBF, decryption, authentication,
 QoS, application-override, DoS, SD-WAN, tunnel-inspect, network-packet-broker).
 The change-set is ordered: upserts → reference rewrites → renames → deletes.
 
+A delete gets the same ordering. `decommission` and `delete` scrub every
+reference before they remove the referent, and they refuse the plan when a
+reference cannot be rewritten. The change-set is ordered: reference rewrites →
+rule deletions → object deletions.
+
 This guarantee covers the reference sites psc **scans**. Some legitimate
 reference sites are *not* scanned (templates, network/device config, NAT-rule
-tags, and more) — so a *delete* driven by `refs unused` is not protected the way
-a merge/rename is. Read **[Coverage and blind spots](coverage-and-limitations.md)**
-before deleting anything, especially `shared` objects.
+tags, and more). A delete driven by `refs unused` is therefore safe against the
+references psc **sees**, and blind to the rest. Read
+**[Coverage and blind spots](coverage-and-limitations.md)** before deleting
+anything, especially `shared` objects.
 
 ## Blockers are a hard gate
 
@@ -46,7 +52,9 @@ Blockers are raised instead of doing something surprising. Examples:
 - a `set` whose name collides with a *different* kind, or that would change an
   existing object's value type or static/dynamic mode in place,
 - a `decommission` target referenced by a NAT translation field or a PBF
-  forwarding next-hop, or matched by a dynamic-address-group filter tag.
+  forwarding next-hop, or matched by a dynamic-address-group filter tag,
+- a `delete` target that names no object at that location, or whose references
+  psc cannot rewrite (see [below](#reference-safe-deletion-by-name)).
 
 Warnings (e.g. a NAT translation field that needs manual review, or an
 orphan-rule deletion during `decommission`) are surfaced but don't block.
@@ -63,6 +71,63 @@ repoints or orphans *its* referrers. Only objects that **equal** or fall
 **within** a target are torn down; a broader containing object is left in place.
 Like every write it is dry-run until `--apply`, and the blocker gate above
 applies before any change is made.
+
+## Reference-safe deletion by name
+
+[`delete`](../reference/cli.md#delete) applies that same teardown to objects you
+name instead of to an IP. It is the sink for a verified
+[`refs unused`](references-and-audit.md#from-unused-to-deleted) list, and it
+covers all five `unused` kinds: `address`, `address-group`, `service`,
+`service-group` and `tag`.
+
+It obeys the same four safety rules as the rest of `psc`:
+
+- **Dry-run by default.** `delete` prints the plan and changes nothing until you
+  pass `--apply`.
+- **Blockers are a hard gate.** A blocked plan carries **zero** operations and
+  exits `6`. It never deletes "the safe part" of a list.
+- **Scrub before delete.** Every group member list and rule field that names the
+  object is rewritten before the object goes.
+- **Offline `--apply` writes to `--out`.** Your export is never overwritten.
+
+`--keep-groups` scrubs the member lists but deletes neither the groups nor the
+objects, so nothing cascades. `--keep-rules` keeps a rule that loses a required
+field, and warns instead of deleting it.
+
+### What `delete` blocks on
+
+`plan_purge` raises a blocker rather than doing something surprising:
+
+- a target that names **no object** at that location — a delete list must not
+  silently drop an entry,
+- a kind that is not deletable (anything outside the five kinds above),
+- a **NAT source- or destination-translation** field that names the object,
+- a **PBF forwarding next-hop** that names the object,
+- a **surviving dynamic address-group** whose filter selects the object by tag —
+  psc cannot edit a filter expression, so removing the address, or the tag
+  itself, would change what the group matches,
+- a **tag** that a surviving object still carries — psc has no repoint path for
+  an object's own tag list.
+
+Fix the cause by hand (edit the NAT rule, the next-hop, the filter clause, or
+the tag list), or add the referring object to the same `delete` run, then
+re-run. A dynamic address-group that the *same* plan deletes does not block.
+
+### What `delete` warns about
+
+Warnings are surfaced in the plan and never block. Read them before you
+`--apply`:
+
+- an **orphan rule** will be deleted, because the scrub emptied its `source`,
+  `destination`, `service` or `application` (`any` is a real surviving member,
+  so only a field that holds nothing at all counts as empty),
+- a rule kept by `--keep-rules` now has an empty required field, so it can no
+  longer match traffic — review it by hand,
+- a group kept by `--keep-groups` is now empty and may dangle,
+- a candidate is a **`shared`** object — verify that no device-group, template or
+  device config outside this export depends on it,
+- a candidate **carries a tag**, so a dynamic address-group may select it at
+  runtime through an externally registered IP; verify it in Panorama first.
 
 ## Offline apply never overwrites your export
 

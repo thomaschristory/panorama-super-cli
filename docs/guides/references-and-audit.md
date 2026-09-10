@@ -68,13 +68,72 @@ psc -c panorama.xml refs unused --kind address --no-caveat -o json
     resolved, so an address tagged into a rule-referenced DAG is kept.)
     Treat this list as **candidates**, verify `shared` objects in Panorama, and
     read **[Coverage and blind spots](coverage-and-limitations.md)** before
-    deleting. (Unlike delete, `merge`/`rename` are protected — they block when a
-    reference can't be repointed.)
+    deleting. Delete a verified candidate with [`psc delete`](#from-unused-to-deleted),
+    which is reference-safe for the sites psc scans — but it cannot see the
+    blind spots above, so a human must still check the list.
 
 !!! tip "Cleanup order"
     Delete unused groups before unused objects, and always re-check
     `refs used` after each change — removing one reference can make another
     object newly unused.
+
+### From `unused` to deleted
+
+`refs unused` lists candidates; [`psc delete`](../reference/cli.md#delete)
+removes them safely. The two compose over a pipe, because `delete -f -` reads
+the machine output of `refs unused` directly — as JSON lines (`-o jsonl`) or as
+one JSON array (`-o json`):
+
+```console
+psc -c panorama.xml -o jsonl refs unused --kind address --no-caveat \
+  | psc -c panorama.xml delete -f -
+```
+
+That is a **dry-run**: it prints the plan and changes nothing. Read the plan and
+the warnings first, then re-run with `--apply --out`.
+
+Put a `jq` filter between the two commands to narrow the list. Each `unused`
+row carries a `tags` field, so this drops every tagged candidate — a tagged
+address may join a dynamic address group at runtime:
+
+```console
+psc -c panorama.xml -o jsonl refs unused --kind address --no-caveat \
+  | jq -c 'select(.tags | length == 0)' \
+  | psc -c panorama.xml delete -f - --apply --out cleaned.xml
+```
+
+You can also review the list as a file first. `delete -f` accepts plain
+`[kind:]name[@location]` lines with `#` comments, so a human can edit the file
+before anything is deleted:
+
+```console
+psc -c panorama.xml -o csv refs unused --kind service > dead-services.csv
+# review, then write the survivors as spec lines:
+printf 'service:tcp-old@DG-EDGE\nservice-group:svcgrp-retired\n' > targets.txt
+psc -c panorama.xml delete -f targets.txt
+```
+
+Targets also go on the command line, one per argument or per `--target`. The
+kind defaults to `--kind` (`address`). A target that omits the location is
+looked up in the config, and a name that exists in several locations is a
+validation error (exit `4`) — qualify it as `kind:name@location`.
+
+```console
+psc -c panorama.xml delete h-unused service:tcp-old@DG-EDGE tag:t-retired
+```
+
+`delete` plans the same cascade as [`decommission`](editing-objects.md#decommission-an-address):
+it scrubs every group member list and rule field that names the object, deletes
+a rule left with an empty required field, deletes a group the scrub empties, and
+removes the objects last. It refuses the plan (exit `6`) when it meets a
+reference it cannot rewrite. See
+**[Writes and safety](safety.md#reference-safe-deletion-by-name)** for the full
+blocker list.
+
+!!! warning "`delete` is reference-safe — it is not a substitute for verification"
+    `delete` protects the reference sites psc **scans**. It knows nothing about
+    templates, network/device config, or runtime DAG membership. So the human
+    check of the candidate list still applies, especially for `shared` objects.
 
 ## Dangling references
 
