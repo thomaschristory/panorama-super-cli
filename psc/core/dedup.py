@@ -833,13 +833,17 @@ def attr_as_members(obj: object, field: str) -> list[str]:
     return list(val) if isinstance(val, list) else [val]
 
 
-def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:
+def field_members(snapshot: Snapshot, ref: Reference) -> list[str]:  # noqa: PLR0912
     """Current member list of the field a reference points at."""
     loc = ref.referrer_location
     if ref.referrer_kind == "address-group":
         for ag in snapshot.address_groups:
             if ag.name == ref.referrer_name and ag.location == loc:
                 return list(ag.static_members or [])
+    elif ref.referrer_kind == "service-group":
+        for sg in snapshot.service_groups:
+            if sg.name == ref.referrer_name and sg.location == loc:
+                return list(sg.members)
     elif ref.referrer_kind == "security-rule":
         for r in snapshot.security_rules:
             if (
