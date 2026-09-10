@@ -198,7 +198,10 @@ psc -c cfg.xml -o json refs dangling              # references to missing object
 
 `--ignore-disabled` treats disabled rules as non-references (surfaces objects used
 *only* by disabled rules). `refs unused` prints the blind-spot caveat on stderr by
-default; `--no-caveat` silences it (stdout is unaffected).
+default; `--no-caveat` silences it (stdout is unaffected). Each `unused` row also
+carries a `tags` field (a joined list in table/csv, a real list in
+json/jsonl/yaml): a tag-bearing candidate may be reached at runtime by a DAG that
+matches on that tag, so verify its tags before deleting.
 
 `refs used` may need `--kind` and `--location` if a name is ambiguous. Coverage
 spans groups and **every** object-referencing rulebase — security, NAT, PBF,

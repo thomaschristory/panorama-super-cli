@@ -7,11 +7,64 @@ from psc.core.models import (
     AddressType,
     Location,
     SecurityRule,
+    Service,
+    ServiceGroup,
     Snapshot,
     Tag,
 )
 from psc.core.parse import parse_config
 from psc.core.refs import ReferenceGraph
+
+# --- tags_for: the tag column behind the unused/where-used listings (#180) ---
+
+
+def test_tags_for_returns_object_tags_across_kinds() -> None:
+    # An address pulled into a DAG only via an externally-registered IP looks
+    # unused here, but its tags are what an operator must see before deleting.
+    snap = Snapshot(
+        addresses=[_addr("h-prod", ["prod", "web"])],
+        address_groups=[AddressGroup(name="ag", static_members=[], tags=["group-tag"])],
+        services=[Service(name="svc", protocol="tcp", destination_port="443", tags=["svc-tag"])],
+        service_groups=[ServiceGroup(name="sg", members=[], tags=["sg-tag"])],
+    )
+    g = ReferenceGraph.build(snap)
+    tags = {t: g.tags_for(t) for t in g.unused("address") + g.unused("address-group")}
+    tags |= {t: g.tags_for(t) for t in g.unused("service") + g.unused("service-group")}
+    by_name = {t.name: v for t, v in tags.items()}
+    assert by_name["h-prod"] == ["prod", "web"]
+    assert by_name["ag"] == ["group-tag"]
+    assert by_name["svc"] == ["svc-tag"]
+    assert by_name["sg"] == ["sg-tag"]
+
+
+def test_tags_for_untagged_object_is_empty() -> None:
+    snap = Snapshot(addresses=[_addr("bare", [])])
+    g = ReferenceGraph.build(snap)
+    (target,) = g.unused("address")
+    assert g.tags_for(target) == []
+
+
+def test_tags_for_tag_kind_is_empty() -> None:
+    # Tags don't carry tags; the column is blank for the tag kind, not an error.
+    snap = Snapshot(tags=[Tag(name="orphan")])
+    g = ReferenceGraph.build(snap)
+    (target,) = g.unused("tag")
+    assert g.tags_for(target) == []
+
+
+def test_tags_for_scopes_by_location() -> None:
+    # Same name in two device-groups must not cross-contaminate tags.
+    snap = Snapshot(
+        addresses=[
+            _addr("dup", ["a-tag"], Location.dg("DG-A")),
+            _addr("dup", ["b-tag"], Location.dg("DG-B")),
+        ],
+        device_groups=["DG-A", "DG-B"],
+    )
+    g = ReferenceGraph.build(snap)
+    by_loc = {t.location.name: g.tags_for(t) for t in g.unused("address")}
+    assert by_loc["DG-A"] == ["a-tag"]
+    assert by_loc["DG-B"] == ["b-tag"]
 
 
 def test_where_used_resolves_shared(graph: ReferenceGraph) -> None:

@@ -133,6 +133,10 @@ class ReferenceGraph:
     _tag_idx: _NamespaceIndex = field(default_factory=_NamespaceIndex)
     _by_target: dict[Target, list[Reference]] = field(default_factory=lambda: defaultdict(list))
     _dag_members: dict[Target, list[Target]] = field(default_factory=lambda: defaultdict(list))
+    _tags_by_target: dict[Target, list[str]] = field(default_factory=dict)
+    """Object tags keyed by target identity. Backs `tags_for`, the tag column
+    the `unused` listing surfaces (#180). Tags (the kind) carry no tags of their
+    own, so they never appear here — `tags_for` returns [] for them."""
 
     @classmethod
     def build(cls, snapshot: Snapshot) -> ReferenceGraph:
@@ -155,6 +159,14 @@ class ReferenceGraph:
             self._svc_idx.add(sg.name, "service-group", sg.location)
         for t in self.snapshot.tags:
             self._tag_idx.add(t.name, "tag", t.location)
+        for kind, objs in (
+            ("address", self.snapshot.addresses),
+            ("address-group", self.snapshot.address_groups),
+            ("service", self.snapshot.services),
+            ("service-group", self.snapshot.service_groups),
+        ):
+            for o in objs:
+                self._tags_by_target[Target(kind, o.name, o.location)] = list(o.tags)
 
     def _idx_for(self, namespace: str) -> _NamespaceIndex:
         return {"address": self._addr_idx, "service": self._svc_idx, "tag": self._tag_idx}[
@@ -566,6 +578,17 @@ class ReferenceGraph:
         reachable = self.reachable_targets(ignore_disabled=ignore_disabled)
         defined = self._defined_targets(kind)
         return [t for t in defined if t not in reachable]
+
+    def tags_for(self, target: Target) -> list[str]:
+        """The config tags carried by `target`'s object, or [] if it carries
+        none (or is a tag itself — tags carry no tags).
+
+        The `unused` listing surfaces this so an operator can spot a candidate
+        whose tags may tie it to a DAG whose reachability psc cannot fully see —
+        the runtime-DAG-membership blind spot the unused caveat warns about
+        (#180). It is a heuristic signal, not proof of use.
+        """
+        return list(self._tags_by_target.get(target, []))
 
     def _defined_targets(self, kind: str) -> list[Target]:
         snap = self.snapshot

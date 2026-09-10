@@ -81,6 +81,17 @@ address can still be reported `unused`. Only a **live** membership query
 (`show object dynamic-address-group all`) sees registered IPs; resolving them is
 tracked as a follow-up enhancement on the live path.
 
+Because runtime DAG membership cannot be computed from the config, `refs unused`
+**shows each candidate's tags** (a `tags` column in table/csv, a real list in
+json/jsonl/yaml) so you can judge this by hand. A tag-bearing candidate deserves
+a closer look: its config tags may tie it to a DAG whose reachability psc cannot
+fully resolve — e.g. a DAG referenced only from an unscanned template, or one
+that also gathers registered IPs sharing that tag name. The tags are a heuristic
+signal, not proof of use: config-tag membership of a *rule-referenced* DAG is
+already resolved (such objects never reach this list), and the purest
+registered-IP case above carries **no** config tag at all, so an empty `tags`
+cell does not clear a candidate.
+
 If a DAG's filter is **malformed/unparseable**, psc does not guess its
 membership (it matches nothing) and prints a `warning` on stderr naming that DAG,
 so you know its coverage is unverified.
