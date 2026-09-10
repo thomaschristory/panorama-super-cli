@@ -5,6 +5,34 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
+## v1.13.0 — 2026-09-10
+
+### Fixed
+
+- `decommission` no longer tears down a group and a rule when it deletes a
+  device-group object that only **shadows** a `shared` object of the same name
+  ([#187](https://github.com/thomaschristory/panorama-super-cli/issues/187)).
+  PAN-OS resolves a bare name up the device-group chain, so the reference falls
+  through to the `shared` object and stays valid. `plan_decommission` scrubbed
+  the name anyway, saw the group as empty, deleted the group, and then deleted
+  the rule that group orphaned — with no blocker to stop `--apply`. The engine
+  now grows the delete set to its fixpoint before the first scrub, and scrubs a
+  name only when the name resolves to nothing after the plan applies. `delete`
+  (`plan_purge`) already had this gate; both engines now share one
+  implementation, `refs.reference_breaks`.
+- `decommission` keyed an orphaned rule by name and rulebase only, so two device
+  groups holding one rule name collapsed into a single `RuleDelete`. The plan
+  could name the wrong device group in the rendered `delete` line. The rule
+  location is now part of that identity, and the `--keep-rules` warning names it
+  too.
+
+### Added
+
+- `decommission` and `delete` warn about every reference that keeps a name which
+  falls through to another object after the plan applies. The warning names the
+  referrer, the name, and the surviving object with its value, because the
+  referrer keeps matching traffic — against another host. Warnings never block.
+
 ## v1.12.1 — 2026-07-15
 
 ### Documentation

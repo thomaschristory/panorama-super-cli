@@ -12,6 +12,11 @@ builds that graph once and answers:
 - `unused(...)` — objects no rule reaches, directly or through groups.
 - `dangling()` — references to names that don't resolve to any object.
 
+The module also holds the shadow gate every delete engine asks before it
+rewrites a reference: `reference_breaks(...)` says whether a name stops
+resolving after a planned delete, and `fall_through_note(...)` describes the
+object the name points to instead.
+
 PAN-OS name resolution is modelled faithfully: a reference inside a
 device-group binds to its *closest* definition up the hierarchy — that
 device-group, then each ancestor device-group, then `shared` (a nearer
@@ -24,6 +29,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 
 from psc.core.dagfilter import FilterParseError, filter_tags, parse_filter
@@ -624,3 +630,78 @@ class ReferenceGraph:
             for t in self.snapshot.tags
             if (t.location.name, t.name) not in used
         ]
+
+
+# -- the shadow gate ------------------------------------------------------
+
+# The identity of one object: (kind, name, location name). This is the element
+# type of `ReferenceGraph.resolve(..., ignoring=...)`.
+ObjId = tuple[str, str, str]
+
+
+def reference_breaks(
+    graph: ReferenceGraph,
+    namespace: str,
+    referrer_location: Location,
+    name: str,
+    delete_set: AbstractSet[ObjId],
+) -> bool:
+    """Whether `name`, seen from `referrer_location`, stops resolving after the delete.
+
+    This is the shadowing rule. A name resolves up the device-group chain, so a
+    device-group object hides a shared object of the same name. Deleting the
+    device-group object therefore does NOT break a reference to that name: the
+    reference falls through to the shared object. Only a name that resolves to
+    nothing afterwards is really broken, and only that name may be scrubbed.
+
+    A name that already resolves to nothing is dangling before this plan starts.
+    That is somebody else's problem, so the answer is `False`.
+    """
+    if graph.resolve(namespace, name, referrer_location) is None:
+        return False
+    survivor = graph.resolve(namespace, name, referrer_location, ignoring=frozenset(delete_set))
+    return survivor is None
+
+
+def fall_through_note(
+    graph: ReferenceGraph, ref: Reference, delete_set: AbstractSet[ObjId]
+) -> str | None:
+    """One warning line for a reference that keeps its name but changes its meaning.
+
+    A referrer that survives a shadow delete is not broken, but it is not the
+    same either: the name now binds to another object, possibly with another
+    value. A rule keeps its match and matches another host. The engines cannot
+    decide that for the operator, so they report it. `None` means nothing
+    changes for this reference.
+    """
+    before = graph.resolve(ref.namespace, ref.target_name, ref.referrer_location)
+    if before is None:
+        return None
+    after = graph.resolve(
+        ref.namespace, ref.target_name, ref.referrer_location, ignoring=frozenset(delete_set)
+    )
+    if after is None or after == before:
+        return None
+    survivor = f"{after.kind} '{after.name}'@{after.location.name}"
+    value = _target_value(graph.snapshot, after)
+    if value is not None:
+        survivor = f"{survivor} ({value})"
+    return (
+        f"{ref.referrer_kind} '{ref.referrer_name}'@{ref.referrer_location.name} {ref.field} "
+        f"keeps the name '{ref.target_name}'; after this plan the name points to {survivor} "
+        "— make sure that the referrer is still correct"
+    )
+
+
+def _target_value(snapshot: Snapshot, target: Target) -> str | None:
+    """A short value for `target`, or `None` when the kind carries no value."""
+    if target.kind == "address":
+        for address in snapshot.addresses:
+            if address.name == target.name and address.location == target.location:
+                return address.value
+    elif target.kind == "service":
+        for service in snapshot.services:
+            if service.name == target.name and service.location == target.location:
+                port = service.destination_port
+                return f"{service.protocol}/{port}" if port else service.protocol
+    return None

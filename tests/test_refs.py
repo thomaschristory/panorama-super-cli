@@ -13,7 +13,7 @@ from psc.core.models import (
     Tag,
 )
 from psc.core.parse import parse_config
-from psc.core.refs import ReferenceGraph
+from psc.core.refs import ReferenceGraph, fall_through_note, reference_breaks
 
 # --- tags_for: the tag column behind the unused/where-used listings (#180) ---
 
@@ -416,3 +416,81 @@ def test_unused_tags_filter_token_resolving_to_nothing_marks_nothing() -> None:
     g = ReferenceGraph.build(snap)
     unused = {(t.location.name, t.name) for t in g.unused("tag")}
     assert ("shared", "web") not in unused  # resolved via inheritance
+
+
+# --- the shared shadow gate (#187) ---------------------------------------
+
+
+def _shadow_graph() -> ReferenceGraph:
+    """`web` defined in shared AND in dg-edge, with a dg-local group."""
+    dg = Location.dg("dg-edge")
+    snap = Snapshot(
+        addresses=[
+            Address(name="web", location=SHARED, type=AddressType.IP_NETMASK, value="10.0.0.1/32"),
+            Address(name="web", location=dg, type=AddressType.IP_NETMASK, value="10.9.9.9/32"),
+        ],
+        address_groups=[AddressGroup(name="g", location=dg, static_members=["web"])],
+        device_groups=["dg-edge"],
+    )
+    return ReferenceGraph.build(snap)
+
+
+def test_reference_breaks_is_false_when_the_name_falls_through() -> None:
+    g = _shadow_graph()
+    assert (
+        reference_breaks(
+            g, "address", Location.dg("dg-edge"), "web", {("address", "web", "dg-edge")}
+        )
+        is False
+    )
+
+
+def test_reference_breaks_is_true_when_every_definition_goes() -> None:
+    g = _shadow_graph()
+    delete_set = {("address", "web", "dg-edge"), ("address", "web", "shared")}
+    assert reference_breaks(g, "address", Location.dg("dg-edge"), "web", delete_set) is True
+
+
+def test_reference_breaks_is_false_for_a_name_that_already_dangles() -> None:
+    g = _shadow_graph()
+    assert reference_breaks(g, "address", Location.dg("dg-edge"), "ghost", set()) is False
+
+
+def test_reference_breaks_keeps_a_same_named_object_of_another_kind() -> None:
+    # The kind in the ignored triple is load-bearing: an address delete must not
+    # hide a same-named address-group that the plan keeps.
+    dg = Location.dg("dg-edge")
+    snap = Snapshot(
+        addresses=[
+            Address(name="web", location=SHARED, type=AddressType.IP_NETMASK, value="10.0.0.1/32")
+        ],
+        address_groups=[AddressGroup(name="web", location=dg, static_members=[])],
+        device_groups=["dg-edge"],
+    )
+    g = ReferenceGraph.build(snap)
+    assert reference_breaks(g, "address", dg, "web", {("address", "web", "dg-edge")}) is False
+
+
+def test_fall_through_note_names_the_survivor_and_its_value() -> None:
+    g = _shadow_graph()
+    (ref,) = [r for r in g.references if r.referrer_name == "g"]
+    note = fall_through_note(g, ref, {("address", "web", "dg-edge")})
+    assert note is not None
+    assert "address-group 'g'@dg-edge static" in note
+    assert "'web'" in note
+    assert "address 'web'@shared (10.0.0.1/32)" in note
+
+
+def test_fall_through_note_is_none_when_the_reference_really_breaks() -> None:
+    g = _shadow_graph()
+    (ref,) = [r for r in g.references if r.referrer_name == "g"]
+    delete_set = {("address", "web", "dg-edge"), ("address", "web", "shared")}
+    assert fall_through_note(g, ref, delete_set) is None
+
+
+def test_fall_through_note_is_none_when_the_survivor_is_the_same_object() -> None:
+    # Deleting the shared `web` changes nothing for a referrer inside dg-edge:
+    # the name already binds to the device-group object.
+    g = _shadow_graph()
+    (ref,) = [r for r in g.references if r.referrer_name == "g"]
+    assert fall_through_note(g, ref, {("address", "web", "shared")}) is None

@@ -127,3 +127,38 @@ def test_keep_groups_skips_deletes() -> None:
     data = json.loads(cp.stdout)
     assert data["deletes"] == []
     assert data["reference_edits"]
+
+
+# -- PAN-OS shadowing, end to end (#187) ---------------------------------
+
+SHADOW_FIXTURE = Path(__file__).parent / "fixtures" / "shadow-device-group.xml"
+
+
+def test_shadowed_address_deletes_only_itself() -> None:
+    """`web`@dg-a hides `web`@shared, so the group and the rule keep working."""
+    cp = run("-c", str(SHADOW_FIXTURE), "-o", "json", "decommission", "10.9.9.9")
+    assert cp.returncode == 0, cp.stderr
+    data = json.loads(cp.stdout)
+    assert data["deletes"] == [{"kind": "address", "name": "web", "location": "dg-a"}]
+    assert data["rule_deletes"] == []
+    assert data["reference_edits"] == []
+    assert data["blockers"] == []
+
+
+def test_shadowed_address_warns_about_the_fall_through() -> None:
+    cp = run("-c", str(SHADOW_FIXTURE), "-o", "json", "decommission", "10.9.9.9")
+    assert cp.returncode == 0, cp.stderr
+    (note,) = json.loads(cp.stdout)["warnings"]
+    assert "address-group 'g'@dg-a static" in note
+    assert "address 'web'@shared (10.0.0.1/32)" in note
+
+
+def test_shadowed_address_apply_keeps_the_group_and_the_rule(tmp_path: Path) -> None:
+    out = tmp_path / "rewritten.xml"
+    cp = run("-c", str(SHADOW_FIXTURE), "decommission", "10.9.9.9", "--apply", "--out", str(out))
+    assert cp.returncode == 0, cp.stderr
+    text = out.read_text(encoding="utf-8")
+    assert "10.9.9.9/32" not in text
+    assert "10.0.0.1/32" in text
+    assert 'entry name="g"' in text
+    assert 'entry name="r1"' in text

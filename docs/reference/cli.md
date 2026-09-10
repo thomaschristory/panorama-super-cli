@@ -227,8 +227,11 @@ emptied groups → delete the objects, repeating to a fixpoint. Only exact and
 within matches are torn down (a broader containing object is left in place).
 `--keep-groups`/`--keep-rules` stop short of deleting those. Blocks on
 NAT-translation/PBF-next-hop references and DAG-filter-tag matches; orphan-rule
-deletions are warnings. See
-[Editing objects](../guides/editing-objects.md#decommission-an-address).
+deletions are warnings. A name that a device-group object only **shadows** is
+never scrubbed: the reference falls through to the `shared` object, so the group
+and the rule survive, and the plan warns about the new meaning. See
+[Editing objects](../guides/editing-objects.md#decommission-an-address) and
+[A shadowed name falls through](../guides/safety.md#a-shadowed-name-falls-through).
 
 ### delete
 
@@ -259,7 +262,9 @@ repeating to a fixpoint. `--keep-groups`/`--keep-rules` stop short of deleting
 those. Blocks (exit `6`) on a target that names no object, a NAT-translation or
 PBF-next-hop reference, a surviving dynamic address-group that selects the
 object by tag, and a tag a surviving object still carries. A `shared` or tagged
-candidate raises a warning, not a blocker. See
+candidate raises a warning, not a blocker, and so does a reference whose name
+[falls through](../guides/safety.md#a-shadowed-name-falls-through) to a
+same-named object above. See
 [References and audit](../guides/references-and-audit.md#from-unused-to-deleted).
 
 ### move

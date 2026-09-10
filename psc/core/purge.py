@@ -44,7 +44,14 @@ from psc.core.changeset import (
 )
 from psc.core.dedup import field_members
 from psc.core.models import Location, NatRule, PolicyRule, SecurityRule, Snapshot
-from psc.core.refs import Reference, ReferenceGraph, Target, dag_filter_tags
+from psc.core.refs import (
+    Reference,
+    ReferenceGraph,
+    Target,
+    dag_filter_tags,
+    fall_through_note,
+    reference_breaks,
+)
 from psc.core.rulebases import FLAT_RULE_FIELDS, rule_container
 
 # The five kinds `refs unused` reports, and therefore the five kinds a delete
@@ -108,30 +115,6 @@ def _defined_index(snapshot: Snapshot) -> dict[_ObjId, object]:
     return out
 
 
-def _reference_breaks(
-    graph: ReferenceGraph,
-    namespace: str,
-    referrer_location: Location,
-    name: str,
-    delete_set: set[_ObjId],
-) -> bool:
-    """Whether `name`, seen from `referrer_location`, stops resolving after the delete.
-
-    This is the shadowing rule. A name resolves up the device-group chain, so a
-    device-group object hides a shared object of the same name. Deleting the
-    device-group object therefore does NOT break a reference to that name: the
-    reference falls through to the shared object. Only a name that resolves to
-    nothing afterwards is really broken, and only that name may be scrubbed.
-
-    A name that already resolves to nothing is dangling before this plan starts.
-    That is somebody else's problem, so the answer is `False`.
-    """
-    if graph.resolve(namespace, name, referrer_location) is None:
-        return False
-    survivor = graph.resolve(namespace, name, referrer_location, ignoring=frozenset(delete_set))
-    return survivor is None
-
-
 def _newly_empty_groups(
     snapshot: Snapshot, graph: ReferenceGraph, delete_set: set[_ObjId]
 ) -> list[Target]:
@@ -139,7 +122,7 @@ def _newly_empty_groups(
 
     A group is emptied when no member name still resolves to an object. A member
     that falls through to a shared object of the same name still resolves, so a
-    shadowed member never empties the group (see `_reference_breaks`).
+    shadowed member never empties the group (see `refs.reference_breaks`).
 
     A dynamic address-group has no member list to empty, so the scan skips it.
     A group that is already empty stays: emptying is a consequence of this
@@ -158,7 +141,7 @@ def _newly_empty_groups(
         if gid in delete_set or not members:
             continue
         namespace = _GROUP_NAMESPACE[kind]
-        if all(_reference_breaks(graph, namespace, group.location, m, delete_set) for m in members):
+        if all(reference_breaks(graph, namespace, group.location, m, delete_set) for m in members):
             delete_set.add(gid)
             found.append(Target(kind=kind, name=group.name, location=group.location))
     return found
@@ -308,23 +291,28 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
         )
         for ref in graph.where_used(doomed_kind, doomed_name, doomed_loc):
             rk, field = ref.referrer_kind, ref.field
-            if _GROUP_MEMBER_FIELD.get(rk) == field or (
+            flat = _GROUP_MEMBER_FIELD.get(rk) == field or (
                 rule_container(rk) is not None and field in FLAT_RULE_FIELDS
+            )
+            own_tag = field == "tag" and rk in _TAG_BEARING_KINDS
+            if not (flat or own_tag or field in _NESTED_FIELDS):
+                # A `dynamic` edge is a DAG filter match. `_dag_blockers` owns it.
+                continue
+            if not reference_breaks(
+                graph, ref.namespace, ref.referrer_location, ref.target_name, delete_set
             ):
-                if not _reference_breaks(
-                    graph, ref.namespace, ref.referrer_location, ref.target_name, delete_set
-                ):
-                    # The name still resolves — a shared object of the same name
-                    # shadowed by this one. Removing the member would change what
-                    # the referrer matches.
-                    continue
+                # The name still resolves — a shared object of the same name
+                # shadowed by this one. The reference is not stranded, so psc
+                # rewrites nothing and refuses nothing. It says what the name
+                # means now, because the referrer changed meaning in silence.
+                note = fall_through_note(graph, ref, delete_set)
+                if note is not None:
+                    cs.warnings.append(note)
+                continue
+            if flat:
                 edit = _edit_for(ref)
                 edit.after = _remove_members(edit.after, {ref.target_name})
-            elif field in _NESTED_FIELDS:
-                # No flat list to rewrite. Record the edit so the gate refuses the
-                # plan rather than stranding the reference.
-                _edit_for(ref)
-            elif field == "tag" and rk in _TAG_BEARING_KINDS:
+            elif own_tag:
                 # An object's own tag list. psc has no repoint path for it, and
                 # `field_members` cannot even read it, so never build an edit —
                 # block instead. A carrier this plan also deletes is fine.
@@ -336,7 +324,10 @@ def plan_purge(  # noqa: PLR0912, PLR0915 — explicit safety phases plus the fi
                         "the tag "
                         "there, or delete that object too, then re-run"
                     )
-            # A `dynamic` edge is a DAG filter match. `_dag_blockers` owns it.
+            else:
+                # A nested field has no flat list to rewrite. Record the edit so
+                # the gate refuses the plan rather than stranding the reference.
+                _edit_for(ref)
 
     # Phase 3 — refuse a delete a surviving DAG filter still selects.
     if not keep_groups:

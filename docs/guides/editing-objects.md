@@ -236,6 +236,31 @@ it (an `EXACT` or `WITHIN` match). A *broader* object that merely *contains* the
 target is left in place — decommissioning `10.1.0.5` never deletes the supernet
 `10.1.0.0/24`, because that network is still meaningful for other hosts.
 
+### A shadowed name is never scrubbed
+
+A device-group object hides a `shared` object of the same name. A delete of the
+device-group object therefore does not break a reference to that name: the
+reference falls through to the `shared` object.
+
+`decommission` scrubs a name only when the name resolves to nothing after the
+plan applies. Take an address `web` in `shared` and a second `web` in `dg-a`,
+with a group `g`@dg-a that holds `web` and a rule that sources `g`. A
+`decommission` of the `dg-a` value deletes that one address and stops. `g` keeps
+`web`, `g` does not become empty, and the rule is not orphaned. The plan warns
+about the new meaning of the name:
+
+```
+decommission address objects
+  ! address-group 'g'@dg-a static keeps the name 'web'; after this plan the name points to address 'web'@shared (10.0.0.1/32) — make sure that the referrer is still correct
+  • delete address 'web' @dg-a
+```
+
+Read the warning and confirm that the referrer is still correct. To remove the
+name completely, decommission the `shared` value in the same run. The same rule
+holds for [`delete`](../reference/cli.md#delete), and for `--keep-groups`: a
+shadowed name is left alone there too, so the run can end with no operation at
+all.
+
 ### Keep groups / keep rules
 
 - `--keep-groups` scrubs the matched objects from group and rule member fields
@@ -252,7 +277,9 @@ target is left in place — decommissioning `10.1.0.5` never deletes the superne
   (dynamic membership psc can't enumerate). Resolve the reference by hand, then
   re-run.
 - **Warnings** (surfaced, don't block): every orphan-rule deletion is a warning
-  — verify no traffic depends on the rule before you `--apply`.
+  — verify no traffic depends on the rule before you `--apply`. A reference that
+  keeps a name which now [falls through](#a-shadowed-name-is-never-scrubbed) to
+  another object is a warning too.
 
 ### Applying
 

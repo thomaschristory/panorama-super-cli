@@ -321,6 +321,16 @@ DAG-filter-tag matches; orphan-rule deletions are warnings. This is the safe
 teardown path for an **IP or range** — prefer it over hand-scrubbing. To tear
 down objects by **name**, use `delete` instead.
 
+**A shadowed name is never scrubbed.** A device-group object hides a `shared`
+object of the same name, so a delete of the device-group object does not break a
+reference to that name: the reference falls through to the `shared` object. Both
+`decommission` and `delete` scrub a name only when the name resolves to nothing
+after the plan applies. A shadow delete therefore keeps the group non-empty and
+the rule alive. Each such reference produces one warning that names the referrer
+and the surviving object with its value — read it, because the referrer now
+matches another host. To remove the name completely, put the `shared` object in
+the same run.
+
 ### delete — reference-safe deletion by name
 
 ```bash
@@ -344,7 +354,8 @@ the objects last. `--keep-groups`/`--keep-rules` stop short of deleting those.
 It **blocks** (exit `6`) on a name that matches nothing, a NAT-translation or
 PBF-next-hop reference, a surviving DAG filter that selects the object by tag,
 and a surviving object's own tag list. A shared or tagged candidate produces a
-warning: read it, and verify that candidate in Panorama first.
+warning: read it, and verify that candidate in Panorama first. A name that only
+falls through to a same-named object above also warns (see `decommission`).
 
 ### move — promote an object toward shared
 

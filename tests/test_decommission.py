@@ -29,12 +29,15 @@ from psc.core.refs import ReferenceGraph
 from psc.core.setcmd import rule_delete_lines
 
 SHARED = Location.shared()
+DG = Location.dg("dg-edge")
 
 
-def _addr(name: str, value: str, *, tags: list[str] | None = None) -> Address:
+def _addr(
+    name: str, value: str, *, loc: Location = SHARED, tags: list[str] | None = None
+) -> Address:
     return Address(
         name=name,
-        location=SHARED,
+        location=loc,
         type=AddressType.IP_NETMASK,
         value=value,
         tags=tags or [],
@@ -44,6 +47,10 @@ def _addr(name: str, value: str, *, tags: list[str] | None = None) -> Address:
 def _plan(snap: Snapshot, *targets: Address, **kw: object) -> ChangeSet:
     graph = ReferenceGraph.build(snap)
     return plan_decommission(snap, graph, list(targets), scope=None, **kw)  # type: ignore[arg-type]
+
+
+def _deleted(cs: ChangeSet) -> set[tuple[str, str, str]]:
+    return {(d.kind.value, d.name, d.location) for d in cs.deletes}
 
 
 # -- phase ordering ------------------------------------------------------
@@ -619,3 +626,264 @@ def test_rule_delete_apply_live_op_shape_non_security_rulebase() -> None:
     (op,) = plan_xapi_ops(cs)
     assert op.action == "delete"
     assert "post-rulebase/nat/rules/entry[@name='nat1']" in op.xpath
+
+
+# -- PAN-OS shadowing (SAFETY-CRITICAL) ----------------------------------
+
+
+def _shadow_snapshot() -> Snapshot:
+    """`web` defined in shared AND in dg-edge, with a dg-local group and rule."""
+    return Snapshot(
+        addresses=[_addr("web", "10.0.0.1/32"), _addr("web", "10.9.9.9/32", loc=DG)],
+        address_groups=[AddressGroup(name="g", location=DG, static_members=["web"])],
+        security_rules=[SecurityRule(name="r1", location=DG, source=["g"], destination=["any"])],
+        device_groups=["dg-edge"],
+    )
+
+
+def _shadow_target(snap: Snapshot, loc: Location) -> Address:
+    return next(a for a in snap.addresses if a.name == "web" and a.location == loc)
+
+
+def test_shadowed_target_leaves_the_group_and_rule_alone() -> None:
+    """The issue #187 repro: the member falls through, so nothing else breaks."""
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _shadow_target(snap, DG))
+    assert _deleted(cs) == {("address", "web", "dg-edge")}
+    assert cs.reference_edits == []
+    assert cs.rule_deletes == []
+    assert cs.blockers == []
+
+
+def test_shadowed_target_warns_about_the_fall_through() -> None:
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _shadow_target(snap, DG))
+    assert any(
+        "address-group 'g'@dg-edge static" in w and "address 'web'@shared (10.0.0.1/32)" in w
+        for w in cs.warnings
+    )
+
+
+def test_shadowed_target_with_keep_groups_leaves_the_member_alone() -> None:
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _shadow_target(snap, DG), keep_groups=True)
+    assert cs.reference_edits == []
+    assert cs.deletes == []
+    assert any("falls through" in w or "points to" in w for w in cs.warnings)
+
+
+def test_shadowed_member_named_directly_in_a_rule_field() -> None:
+    """The gate must also cover a rule field, not only a group member list."""
+    snap = Snapshot(
+        addresses=[_addr("web", "10.0.0.1/32"), _addr("web", "10.9.9.9/32", loc=DG)],
+        security_rules=[SecurityRule(name="r1", location=DG, source=["web"], destination=["any"])],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _shadow_target(snap, DG))
+    assert _deleted(cs) == {("address", "web", "dg-edge")}
+    assert cs.reference_edits == []
+    assert cs.rule_deletes == []
+
+
+def test_shadow_falls_through_a_nested_device_group_chain() -> None:
+    """The survivor is an intermediate parent device group, not `shared`."""
+    parent, child = Location.dg("dg-parent"), Location.dg("dg-child")
+    snap = Snapshot(
+        addresses=[_addr("web", "10.0.0.1/32", loc=parent), _addr("web", "10.9.9.9/32", loc=child)],
+        address_groups=[AddressGroup(name="g", location=child, static_members=["web"])],
+        security_rules=[SecurityRule(name="r1", location=child, source=["g"], destination=["any"])],
+        device_groups=["dg-parent", "dg-child"],
+        device_group_parents={"dg-child": "dg-parent"},
+    )
+    target = next(a for a in snap.addresses if a.location == child)
+    cs = _plan(snap, target)
+    assert _deleted(cs) == {("address", "web", "dg-child")}
+    assert cs.reference_edits == []
+    assert cs.rule_deletes == []
+
+
+def test_a_deleted_group_falls_through_to_a_shared_group_of_the_same_name() -> None:
+    """The gate holds for a GROUP name too, inside the cascade."""
+    dg = Location.dg("dg-a")
+    snap = Snapshot(
+        addresses=[_addr("web", "10.9.9.9/32", loc=dg), _addr("h-shared", "10.0.0.7/32")],
+        address_groups=[
+            AddressGroup(name="g", location=dg, static_members=["web"]),
+            AddressGroup(name="g", location=SHARED, static_members=["h-shared"]),
+        ],
+        security_rules=[SecurityRule(name="r1", location=dg, source=["g"], destination=["any"])],
+        device_groups=["dg-a"],
+    )
+    target = next(a for a in snap.addresses if a.name == "web")
+    cs = _plan(snap, target)
+    assert ("address-group", "g", "dg-a") in _deleted(cs)
+    assert cs.rule_deletes == []
+    assert not [e for e in cs.reference_edits if e.referrer_name == "r1"]
+
+
+def test_deleting_both_the_shadow_and_the_shared_object_cascades() -> None:
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _shadow_target(snap, DG), _shadow_target(snap, SHARED))
+    assert ("address-group", "g", "dg-edge") in _deleted(cs)
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "dg-edge")]
+
+
+def test_deleting_only_the_shared_object_keeps_the_shadowed_group() -> None:
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _shadow_target(snap, SHARED))
+    assert _deleted(cs) == {("address", "web", "shared")}
+    assert cs.reference_edits == []
+    assert cs.rule_deletes == []
+
+
+def test_a_dangling_member_never_empties_its_group() -> None:
+    """A name that already dangles is still scrubbed, and keeps the group alive."""
+    target = _addr("h1", "10.0.0.1/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[AddressGroup(name="g", location=SHARED, static_members=["h1", "ghost"])],
+    )
+    cs = _plan(snap, target)
+    assert _deleted(cs) == {("address", "h1", "shared")}
+    assert cs.reference_edits[0].after == ["ghost"]
+
+
+def test_a_group_that_really_empties_still_cascades() -> None:
+    target = _addr("h1", "10.0.0.1/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[AddressGroup(name="g", location=SHARED, static_members=["h1"])],
+        security_rules=[SecurityRule(name="r1", source=["g"], destination=["any"])],
+    )
+    cs = _plan(snap, target)
+    assert _deleted(cs) == {("address", "h1", "shared"), ("address-group", "g", "shared")}
+    assert [r.name for r in cs.rule_deletes] == ["r1"]
+
+
+def test_an_already_empty_group_is_never_deleted() -> None:
+    target = _addr("h1", "10.0.0.1/32")
+    snap = Snapshot(
+        addresses=[target],
+        address_groups=[AddressGroup(name="g-empty", location=SHARED, static_members=[])],
+    )
+    cs = _plan(snap, target)
+    assert _deleted(cs) == {("address", "h1", "shared")}
+
+
+def test_shadowed_nat_translation_does_not_block() -> None:
+    """A nested field is not stranded when the name still resolves."""
+    dg = Location.dg("dg-edge")
+    snap = Snapshot(
+        addresses=[_addr("web", "10.0.0.1/32"), _addr("web", "10.9.9.9/32", loc=dg)],
+        nat_rules=[NatRule(name="n1", location=dg, source_translation=["web"])],
+        device_groups=["dg-edge"],
+    )
+    target = next(a for a in snap.addresses if a.location == dg)
+    cs = _plan(snap, target)
+    assert cs.blockers == []
+    assert _deleted(cs) == {("address", "web", "dg-edge")}
+
+
+def test_unshadowed_nat_translation_still_blocks() -> None:
+    target = _addr("web", "10.0.0.1/32")
+    snap = Snapshot(
+        addresses=[target],
+        nat_rules=[NatRule(name="n1", source_translation=["web"])],
+    )
+    cs = _plan(snap, target)
+    assert cs.blockers
+    assert cs.deletes == []
+
+
+def test_shadow_plus_dag_filter_tag_still_blocks_with_zero_ops() -> None:
+    """The DAG blocker is not shadow-aware on purpose; pin the zero-op invariant."""
+    dg = Location.dg("dg-edge")
+    snap = Snapshot(
+        addresses=[
+            _addr("web", "10.0.0.1/32"),
+            _addr("web", "10.9.9.9/32", loc=dg, tags=["prod"]),
+        ],
+        address_groups=[AddressGroup(name="dag", location=SHARED, dynamic_filter="'prod'")],
+        device_groups=["dg-edge"],
+    )
+    target = next(a for a in snap.addresses if a.location == dg)
+    cs = _plan(snap, target)
+    assert cs.blockers
+    assert cs.op_count == 0
+
+
+def test_shadowed_group_member_inside_a_nested_group() -> None:
+    """An outer group names an inner group whose name is shadowed."""
+    dg = Location.dg("dg-a")
+    snap = Snapshot(
+        addresses=[_addr("web", "10.9.9.9/32", loc=dg), _addr("h-shared", "10.0.0.7/32")],
+        address_groups=[
+            AddressGroup(name="inner", location=dg, static_members=["web"]),
+            AddressGroup(name="inner", location=SHARED, static_members=["h-shared"]),
+            AddressGroup(name="outer", location=dg, static_members=["inner"]),
+        ],
+        device_groups=["dg-a"],
+    )
+    target = next(a for a in snap.addresses if a.name == "web")
+    cs = _plan(snap, target)
+    assert ("address-group", "inner", "dg-a") in _deleted(cs)
+    assert ("address-group", "outer", "dg-a") not in _deleted(cs)
+    assert not [e for e in cs.reference_edits if e.referrer_name == "outer"]
+
+
+# -- orphan rules are identified by location -----------------------------
+
+
+def _two_device_group_rules(reverse: bool) -> Snapshot:
+    """One rule name `r1` in two device groups; only the dg-a one is orphaned."""
+    rules = [
+        SecurityRule(
+            name="r1", location=Location.dg("dg-a"), source=["h-dead"], destination=["any"]
+        ),
+        SecurityRule(
+            name="r1",
+            location=Location.dg("dg-b"),
+            source=["h-dead", "h-keep"],
+            destination=["any"],
+        ),
+    ]
+    return Snapshot(
+        addresses=[_addr("h-dead", "10.1.0.5/32"), _addr("h-keep", "10.1.0.6/32")],
+        security_rules=list(reversed(rules)) if reverse else rules,
+        device_groups=["dg-a", "dg-b"],
+    )
+
+
+def test_same_name_rules_in_two_device_groups_orphan_independently() -> None:
+    snap = _two_device_group_rules(reverse=False)
+    target = next(a for a in snap.addresses if a.name == "h-dead")
+    cs = _plan(snap, target)
+    assert {(r.name, r.location) for r in cs.rule_deletes} == {("r1", "dg-a")}
+    keep = next(e for e in cs.reference_edits if e.referrer_location == "dg-b")
+    assert keep.after == ["h-keep"]
+
+
+def test_orphan_rule_delete_carries_the_orphaned_rules_location() -> None:
+    """The answer must not depend on the order the snapshot lists the rules in."""
+    snap = _two_device_group_rules(reverse=True)
+    target = next(a for a in snap.addresses if a.name == "h-dead")
+    cs = _plan(snap, target)
+    assert {(r.name, r.location) for r in cs.rule_deletes} == {("r1", "dg-a")}
+
+
+def test_orphan_rule_delete_renders_the_right_device_group_set_line() -> None:
+    snap = _two_device_group_rules(reverse=True)
+    target = next(a for a in snap.addresses if a.name == "h-dead")
+    cs = _plan(snap, target)
+    (rd,) = cs.rule_deletes
+    (line,) = rule_delete_lines(rd)
+    assert line == "delete device-group dg-a pre-rulebase security rules r1"
+
+
+def test_keep_rules_warning_names_the_location() -> None:
+    snap = _two_device_group_rules(reverse=False)
+    target = next(a for a in snap.addresses if a.name == "h-dead")
+    cs = _plan(snap, target, keep_rules=True)
+    assert cs.rule_deletes == []
+    assert any("'r1' @dg-a" in w for w in cs.warnings)
+    assert not any("'r1' @dg-b" in w for w in cs.warnings)
