@@ -106,6 +106,15 @@ in `core` (models, refs, changeset, setcmd).
 - TDD: write the failing test first. The safety-critical paths (merge
   repointing, blockers, apply round-trip, shadow-rename refusal) MUST have tests.
 - Comments explain non-obvious *why*, never *what*.
+- **Write all prose in ASD-STE100 Simplified Technical English.** This
+  applies to docs, `--help` text, error messages, code comments, commit
+  messages, and issue/PR bodies. Use one idea per sentence, the active
+  voice, the present tense, and approved words in their approved part of
+  speech. Keep instructions to 20 words or fewer and descriptive sentences
+  to 25 words or fewer. Do not drop articles. Do not use synonyms for a
+  term that the domain already fixes (say "device group", not "DG scope"
+  in one place and "container" in another). Technical names (PAN-OS,
+  `ChangeSet`, xpath) stay as they are.
 
 ## Safety model (do not regress)
 
