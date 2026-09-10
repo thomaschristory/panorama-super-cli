@@ -137,7 +137,10 @@ psc refs dangling
 
 Where-used, recursive unused, and dangling-reference audit. `--ignore-disabled`
 treats disabled rules as non-references, so it surfaces objects used *only* by
-disabled rules. `refs unused` prints a scan-scope blind-spot caveat on stderr by
+disabled rules. Each `refs used` row carries a `tags` column with the tags of
+the referrer. Table and CSV output join the tags; JSON, JSONL and YAML output
+carry a list. The column is empty when the referrer carries no tags.
+`refs unused` prints a scan-scope blind-spot caveat on stderr by
 default; `--no-caveat` suppresses it (stdout is unaffected either way). See
 [References and audit](../guides/references-and-audit.md).
 

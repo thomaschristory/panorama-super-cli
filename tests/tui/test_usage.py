@@ -62,3 +62,34 @@ def test_where_used_lists_all_selected_with_owner_and_location(tmp_path) -> None
     assert ("a1", "shared", "g1") in owners
     assert ("a2", "shared", "g2") in owners
     assert all(r.object_location for r in rows)  # owner location always populated
+
+
+_TAGGED_REFERRERS_XML = """<?xml version="1.0"?>
+<config><shared>
+  <address><entry name="a1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+  <address-group><entry name="g1"><static><member>a1</member></static>
+    <tag><member>grp-tag</member></tag></entry></address-group>
+  <pre-rulebase><security><rules>
+    <entry name="sec-tagged">
+      <source><member>any</member></source>
+      <destination><member>a1</member></destination>
+      <tag><member>ticket-42</member></tag></entry>
+    <entry name="sec-bare">
+      <source><member>any</member></source>
+      <destination><member>a1</member></destination></entry>
+  </rules></security></pre-rulebase>
+</shared></config>
+"""
+
+
+def test_where_used_rows_carry_referrer_tags(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Workbench parity with the CLI listing: the row shows the tags of the
+    # referrer, so the operator sees the ticket or the owner before a delete (#184).
+    p = tmp_path / "tagged.xml"
+    p.write_text(_TAGGED_REFERRERS_XML, encoding="utf-8")
+    sess = _session(str(p))
+    sess.toggle(SelectionItem(kind="address", name="a1", location="shared"))
+    tags = {r.referrer_name: r.tags for r in selection_where_used(sess)}
+    assert tags["sec-tagged"] == ["ticket-42"]
+    assert tags["g1"] == ["grp-tag"]
+    assert tags["sec-bare"] == []

@@ -15,6 +15,7 @@ from psc.cli import app, find_cmds
 from psc.cli.app import app as cli_app
 
 FIXTURE = Path(__file__).parent / "fixtures" / "panorama-config.xml"
+ALL_RB_FIXTURE = Path(__file__).parent / "fixtures" / "all-rulebases.xml"
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -111,6 +112,172 @@ def test_unused_table_shows_tags_column(tmp_path: Path) -> None:
     assert cp.returncode == 0
     assert "tags" in cp.stdout.lower()
     assert "prod" in cp.stdout
+
+
+# --- `refs used` referrer tags (#184) ---
+
+# One address referenced by a tagged security rule, a tagged NAT rule, a tagged
+# address group and an untagged security rule, so every referrer branch of the
+# where-used listing is exercised end to end.
+_USED_TAGS_XML = """<config><shared>
+  <address><entry name="a1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+  <address-group><entry name="g1"><static><member>a1</member></static>
+    <tag><member>grp-tag</member></tag></entry></address-group>
+  <pre-rulebase>
+    <security><rules>
+      <entry name="sec-tagged">
+        <source><member>any</member></source>
+        <destination><member>a1</member></destination>
+        <tag><member>ticket-42</member><member>owner-net</member></tag></entry>
+      <entry name="sec-bare">
+        <source><member>any</member></source>
+        <destination><member>a1</member></destination></entry>
+    </rules></security>
+    <nat><rules>
+      <entry name="nat-tagged">
+        <source><member>a1</member></source>
+        <destination><member>any</member></destination>
+        <service>any</service>
+        <tag><member>t-nat</member></tag></entry>
+    </rules></nat>
+  </pre-rulebase>
+</shared></config>"""
+
+
+def _used_tags_config(tmp_path: Path) -> Path:
+    cfg = tmp_path / "used-tags.xml"
+    cfg.write_text(_USED_TAGS_XML)
+    return cfg
+
+
+def test_used_json_carries_referrer_tags(tmp_path: Path) -> None:
+    # The row describes the referrer, so `tags` does too. Rule tags are the case
+    # `tags_for` cannot answer: it indexes objects only (#184).
+    cp = run("-c", str(_used_tags_config(tmp_path)), "-o", "json", "refs", "used", "a1")
+    assert cp.returncode == 0
+    rows = json.loads(cp.stdout)
+    by_row = {(r["referrer_name"], r["field"]): r for r in rows}
+    assert len(by_row) == len(rows)  # a fixture change must fail loudly, not collapse rows
+    # json/jsonl/yaml carry a real list, not a joined string.
+    assert by_row[("sec-tagged", "destination")]["tags"] == ["ticket-42", "owner-net"]
+    assert by_row[("nat-tagged", "source")]["tags"] == ["t-nat"]
+    assert by_row[("g1", "static")]["tags"] == ["grp-tag"]
+    # An untagged referrer renders an empty list, never null.
+    assert by_row[("sec-bare", "destination")]["tags"] == []
+
+
+def test_used_json_keeps_reference_contract_keys(tmp_path: Path) -> None:
+    # Additive-only gate: `tags` is appended last and every existing field keeps
+    # its name and its position.
+    cp = run("-c", str(_used_tags_config(tmp_path)), "-o", "json", "refs", "used", "a1")
+    assert cp.returncode == 0
+    rows = json.loads(cp.stdout)
+    assert rows
+    for row in rows:
+        assert list(row) == [
+            "target_name",
+            "namespace",
+            "referrer_kind",
+            "referrer_name",
+            "referrer_location",
+            "field",
+            "rulebase",
+            "resolved",
+            "referrer_disabled",
+            "tags",
+        ]
+    first = rows[0]
+    assert first["resolved"] == {"kind": "address", "name": "a1", "location": "shared"}
+    assert first["referrer_disabled"] is False
+
+
+def test_used_jsonl_and_yaml_carry_tag_lists(tmp_path: Path) -> None:
+    cfg = _used_tags_config(tmp_path)
+    jsonl = run("-c", str(cfg), "-o", "jsonl", "refs", "used", "a1")
+    assert jsonl.returncode == 0
+    rows = [json.loads(line) for line in jsonl.stdout.splitlines() if line.strip()]
+    tags = {r["referrer_name"]: r["tags"] for r in rows}
+    assert tags["sec-tagged"] == ["ticket-42", "owner-net"]
+    yaml_out = run("-c", str(cfg), "-o", "yaml", "refs", "used", "a1")
+    assert yaml_out.returncode == 0
+    assert "- ticket-42" in yaml_out.stdout
+
+
+def test_used_table_shows_tags_column(tmp_path: Path) -> None:
+    cp = run("-c", str(_used_tags_config(tmp_path)), "-o", "table", "refs", "used", "a1")
+    assert cp.returncode == 0
+    assert "tags" in cp.stdout.lower()
+    assert "ticket-42" in cp.stdout
+
+
+def test_used_csv_carries_tags_column(tmp_path: Path) -> None:
+    # The CSV view reads `rows` while JSON reads `model`, so it needs its own proof.
+    cp = run("-c", str(_used_tags_config(tmp_path)), "-o", "csv", "refs", "used", "a1")
+    assert cp.returncode == 0
+    lines = cp.stdout.splitlines()
+    assert lines[0].endswith(",tags")
+    tagged = [ln for ln in lines if ln.startswith("security-rule,sec-tagged,")]
+    assert tagged and "ticket-42, owner-net" in tagged[0]
+
+
+def test_used_json_separates_pre_and_post_rule_tags(tmp_path: Path) -> None:
+    # One location can hold a `pre` rule and a `post` rule with one name. Each row
+    # must carry its own rule tags.
+    cfg = tmp_path / "pre-post.xml"
+    cfg.write_text(
+        """<config><shared>
+          <address><entry name="a1"><ip-netmask>10.0.0.1/32</ip-netmask></entry></address>
+          <pre-rulebase><security><rules><entry name="r">
+            <source><member>any</member></source>
+            <destination><member>a1</member></destination>
+            <tag><member>pre-tag</member></tag></entry>
+          </rules></security></pre-rulebase>
+          <post-rulebase><security><rules><entry name="r">
+            <source><member>any</member></source>
+            <destination><member>a1</member></destination>
+            <tag><member>post-tag</member></tag></entry>
+          </rules></security></post-rulebase>
+        </shared></config>"""
+    )
+    cp = run("-c", str(cfg), "-o", "json", "refs", "used", "a1")
+    assert cp.returncode == 0
+    by_rulebase = {r["rulebase"]: r["tags"] for r in json.loads(cp.stdout)}
+    assert by_rulebase["pre"] == ["pre-tag"]
+    assert by_rulebase["post"] == ["post-tag"]
+
+
+def test_used_json_carries_policy_rule_tags() -> None:
+    # Every "security-shaped" rulebase (PBF, QoS, decryption, …) reaches the
+    # listing through one model, so one fixture pins them all.
+    cp = run("-c", str(ALL_RB_FIXTURE), "-o", "json", "refs", "used", "a1")
+    assert cp.returncode == 0
+    tags = {r["referrer_name"]: r["tags"] for r in json.loads(cp.stdout)}
+    assert tags["pbf-1"] == ["t1"]
+    assert tags["qos-1"] == ["t1"]
+    assert tags["decrypt-1"] == ["t1"]
+    assert tags["auth-1"] == []
+
+
+def test_used_set_output_carries_tags() -> None:
+    # `refs used` has no `set` view, so `-o set` falls through to the JSON model.
+    cp = run("-c", str(ALL_RB_FIXTURE), "-o", "set", "refs", "used", "a1")
+    assert cp.returncode == 0
+    tags = {r["referrer_name"]: r["tags"] for r in json.loads(cp.stdout)}
+    assert tags["pbf-1"] == ["t1"]
+
+
+def test_used_with_no_referrers_stays_empty(tmp_path: Path) -> None:
+    # Zero rows: table and CSV have nothing to render, so the new column must not
+    # break the empty path. The command still exits `0` without `--strict`.
+    cfg = tmp_path / "lonely.xml"
+    cfg.write_text(
+        '<config><shared><address><entry name="lonely">'
+        "<ip-netmask>10.9.9.9/32</ip-netmask></entry></address></shared></config>"
+    )
+    for fmt, expected in (("table", "[]"), ("json", "[]"), ("csv", "")):
+        cp = run("-c", str(cfg), "-o", fmt, "refs", "used", "lonely")
+        assert cp.returncode == 0
+        assert cp.stdout.strip() == expected
 
 
 def test_unparseable_dag_filter_warns_on_stderr(tmp_path: Path) -> None:

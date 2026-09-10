@@ -60,7 +60,7 @@ pip install panorama-super-cli
 | **Rule edits** | `psc rule edit-member --rule R --field F --add/--remove M` (idempotent) |
 | **Decommission / move** | `psc decommission <ip\|cidr>...` (reference-safe teardown), `psc move <kind> <name> --from --to [--cascade]` |
 | **Naming** | `psc name lint`, `name apply --object` / `--all` (opt-in templates) |
-| **References** | `psc refs used <object>`, `refs unused [--ignore-disabled]`, `refs dangling` |
+| **References** | `psc refs used <object>` (rows carry the referrer's `tags`), `refs unused [--ignore-disabled]`, `refs dangling` |
 | **Workbench** | `psc workbench` (`psc w`) — interactive TUI, full CLI parity |
 | **Output** | `--output json|set|table|yaml|csv|jsonl` |
 

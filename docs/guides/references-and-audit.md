@@ -18,6 +18,20 @@ and the `source`/`destination`/`service`/`tag` fields of every other rulebase
 (PBF, decryption, authentication, QoS, application-override, DoS, SD-WAN,
 tunnel-inspect, network-packet-broker), plus a PBF forwarding next-hop object.
 
+Each row describes the *referrer*, not the object you trace. The `tags` column
+shows the tags of that referrer. The referrer is the rule or the group that
+points at the object. Table and CSV output join the tags with commas. JSON,
+JSONL and YAML output carry a real list. An untagged referrer shows an empty
+list. A rule tag often records a ticket, an owner, or an audit scope. Use it to
+send a delete or a rename to the correct team.
+
+Two values of the `field` column need an explanation. A row with the field
+`dynamic` comes from a dynamic address group that matches the object by tag. The
+`tags` column shows the tags of that group. It does not show the filter tags
+that cause the match. Read the group filter to see those. A row with the field
+`tag` comes from an object or a rule that carries the tag you trace. Thus that
+tag is also in the tag list of the row.
+
 If a name is ambiguous (exists in multiple kinds/locations), pass `--kind` and
 `--location`:
 

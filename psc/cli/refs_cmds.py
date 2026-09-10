@@ -52,6 +52,11 @@ def used(
     loc = location_from_name(location)
     refs = graph.where_used(kind, name, loc)
     _emit_graph_warnings(rt, graph)
+    # Every other column describes the referrer, so `tags` does too: the tags of
+    # the rule or the group that points at the object, not of the object traced.
+    # A rule tag often records a ticket or an owner, so a delete pre-flight can
+    # route on it (#184). These rows feed table and csv only; json/jsonl/yaml
+    # render `model=refs`, which is why `Reference` carries the field as well.
     rows = [
         {
             "referrer_kind": r.referrer_kind,
@@ -59,6 +64,7 @@ def used(
             "location": r.referrer_location.name,
             "rulebase": r.rulebase.value if r.rulebase else "",
             "field": r.field,
+            "tags": list(r.tags),
         }
         for r in refs
     ]

@@ -6,6 +6,10 @@ from psc.core.models import (
     AddressGroup,
     AddressType,
     Location,
+    NatRule,
+    PolicyRule,
+    Rulebase,
+    RuleType,
     SecurityRule,
     Service,
     ServiceGroup,
@@ -65,6 +69,189 @@ def test_tags_for_scopes_by_location() -> None:
     by_loc = {t.location.name: g.tags_for(t) for t in g.unused("address")}
     assert by_loc["DG-A"] == ["a-tag"]
     assert by_loc["DG-B"] == ["b-tag"]
+
+
+# --- Reference.tags: the referrer's tags in the where-used listing (#184) ---
+
+
+def test_reference_tags_carry_security_rule_tags() -> None:
+    # The trap of #184: `tags_for` indexes objects only, so it answers [] for a
+    # rule. A rule referrer is the most common row in a where-used listing.
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        security_rules=[SecurityRule(name="r1", destination=["a"], tags=["t-rule"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("address", "a", SHARED)
+    assert ref.referrer_kind == "security-rule"
+    assert ref.tags == ("t-rule",)
+
+
+def test_reference_tags_carry_nat_rule_tags() -> None:
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        nat_rules=[NatRule(name="n1", destination=["a"], tags=["t-nat"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("address", "a", SHARED)
+    assert ref.referrer_kind == "nat-rule"
+    assert ref.tags == ("t-nat",)
+
+
+def test_reference_tags_carry_policy_rule_tags() -> None:
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        policy_rules=[
+            PolicyRule(name="q1", rule_type=RuleType.QOS, destination=["a"], tags=["t-qos"])
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("address", "a", SHARED)
+    assert ref.referrer_kind == "qos-rule"
+    assert ref.tags == ("t-qos",)
+
+
+def test_reference_tags_separate_pre_and_post_rules_of_one_name() -> None:
+    # Safety-critical: one location can hold a `pre` rule and a `post` rule with
+    # one name. A tag index keyed on (kind, name, location) merges the two and
+    # reports the wrong owner for a delete.
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        security_rules=[
+            SecurityRule(name="r", rulebase=Rulebase.PRE, destination=["a"], tags=["pre-tag"]),
+            SecurityRule(name="r", rulebase=Rulebase.POST, destination=["a"], tags=["post-tag"]),
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    by_rulebase = {ref.rulebase: ref.tags for ref in g.where_used("address", "a", SHARED)}
+    assert by_rulebase[Rulebase.PRE] == ("pre-tag",)
+    assert by_rulebase[Rulebase.POST] == ("post-tag",)
+
+
+def test_reference_tags_scope_rules_by_location() -> None:
+    # Same-named rules in two device groups must not cross-contaminate tags.
+    snap = Snapshot(
+        device_groups=["DG-A", "DG-B"],
+        addresses=[_addr("a", [])],
+        security_rules=[
+            SecurityRule(name="r", location=Location.dg("DG-A"), destination=["a"], tags=["a-tag"]),
+            SecurityRule(name="r", location=Location.dg("DG-B"), destination=["a"], tags=["b-tag"]),
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    by_loc = {ref.referrer_location.name: ref.tags for ref in g.where_used("address", "a", SHARED)}
+    assert by_loc["DG-A"] == ("a-tag",)
+    assert by_loc["DG-B"] == ("b-tag",)
+
+
+def test_reference_tags_carry_group_referrer_tags() -> None:
+    # An object referrer keeps the same meaning: the row shows the group's tags.
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        address_groups=[AddressGroup(name="ag", static_members=["a"], tags=["grp-tag"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("address", "a", SHARED)
+    assert ref.referrer_kind == "address-group"
+    assert ref.field == "static"
+    assert ref.tags == ("grp-tag",)
+
+
+def test_reference_tags_carry_service_group_referrer_tags() -> None:
+    snap = Snapshot(
+        services=[Service(name="s", protocol="tcp", destination_port="443")],
+        service_groups=[ServiceGroup(name="sg", members=["s"], tags=["sg-tag"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("service", "s", SHARED)
+    assert ref.referrer_kind == "service-group"
+    assert ref.tags == ("sg-tag",)
+
+
+def test_reference_tags_empty_for_untagged_referrer() -> None:
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        security_rules=[SecurityRule(name="r", destination=["a"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("address", "a", SHARED)
+    assert ref.tags == ()
+
+
+def test_reference_tags_keep_the_disabled_rule_tags() -> None:
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        security_rules=[SecurityRule(name="r", destination=["a"], disabled=True, tags=["t-off"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = g.where_used("address", "a", SHARED)
+    assert ref.referrer_disabled is True
+    assert ref.tags == ("t-off",)
+
+
+def test_reference_tags_for_dag_referrer_are_the_group_tags() -> None:
+    # A `dynamic` row comes from a dynamic address group that matched the object
+    # by tag. The column shows the tags of that group. It does not show the
+    # filter tags that caused the match.
+    snap = Snapshot(
+        addresses=[_addr("h", ["prod"])],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'", tags=["dag-own"])],
+    )
+    g = ReferenceGraph.build(snap)
+    (ref,) = [r for r in g.where_used("address", "h", SHARED) if r.field == "dynamic"]
+    assert ref.tags == ("dag-own",)
+    assert "prod" not in ref.tags
+
+
+def test_reference_tags_on_a_traced_tag_include_that_tag() -> None:
+    # `refs used` on a tag object lists the objects and the rules that carry it,
+    # so the traced tag is in the referrer's own tag list. That is correct.
+    snap = Snapshot(
+        tags=[Tag(name="t1")],
+        addresses=[_addr("a", ["t1"])],
+        security_rules=[SecurityRule(name="r", tags=["t1"])],
+    )
+    g = ReferenceGraph.build(snap)
+    by_kind = {ref.referrer_kind: ref.tags for ref in g.where_used("tag", "t1", SHARED)}
+    assert by_kind["address"] == ("t1",)
+    assert by_kind["security-rule"] == ("t1",)
+
+
+def test_reference_tags_survive_a_device_group_shadow() -> None:
+    # A child device group holds its own `a`, which shadows the shared `a`. Each
+    # rule row must keep the tags of the rule that the row comes from.
+    snap = Snapshot(
+        device_groups=["parent", "child"],
+        device_group_parents={"child": "parent"},
+        addresses=[_addr("a", []), _addr("a", [], Location.dg("child"))],
+        security_rules=[
+            SecurityRule(
+                name="r-child",
+                location=Location.dg("child"),
+                destination=["a"],
+                tags=["child-tag"],
+            ),
+            SecurityRule(name="r-shared", destination=["a"], tags=["shared-tag"]),
+        ],
+    )
+    g = ReferenceGraph.build(snap)
+    (local,) = g.where_used("address", "a", Location.dg("child"))
+    assert local.referrer_name == "r-child"
+    assert local.tags == ("child-tag",)
+    (shared,) = g.where_used("address", "a", SHARED)
+    assert shared.referrer_name == "r-shared"
+    assert shared.tags == ("shared-tag",)
+
+
+def test_reference_stays_hashable_with_tags() -> None:
+    # `Reference` is a frozen dataclass, so it has a generated __hash__. A list
+    # field makes every hash raise; the tags field must stay a tuple.
+    snap = Snapshot(
+        addresses=[_addr("a", [])],
+        security_rules=[SecurityRule(name="r", destination=["a"], tags=["t"])],
+    )
+    g = ReferenceGraph.build(snap)
+    assert len({*g.where_used("address", "a", SHARED)}) == 1
 
 
 def test_where_used_resolves_shared(graph: ReferenceGraph) -> None:
