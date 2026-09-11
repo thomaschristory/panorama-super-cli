@@ -352,7 +352,8 @@ pipes straight in. All five `unused` kinds work: address, address-group,
 service, service-group and tag. The plan scrubs every group member list and
 rule field whose name stops resolving after the plan applies, deletes a rule
 left with an empty required field, deletes a group the scrub empties, cascades
-to a fixpoint, and removes the objects last. `--keep-groups`/`--keep-rules` stop short of deleting those.
+to a fixpoint, and removes the objects last. `--keep-groups`/`--keep-rules` stop
+short of deleting those.
 It **blocks** (exit `6`) on a name that matches nothing, a surviving DAG filter
 that selects the object by tag, and a surviving object's own tag list. It also
 blocks on a NAT-translation or PBF-next-hop reference whose name resolves to
