@@ -28,6 +28,11 @@ class UsageRow:
     referrer_name: str
     referrer_location: str
     field: str
+    tags: tuple[str, ...]
+    """The tags of the referrer, not of the selected object. A rule tag often
+    records a ticket or an owner. Thus the row tells the operator who must
+    approve a delete (#184). This mirrors the CLI `refs used` column. A tuple
+    keeps this frozen dataclass hashable, like `Reference.tags`."""
 
 
 def selection_where_used(session: WorkbenchSession) -> list[UsageRow]:
@@ -47,6 +52,7 @@ def selection_where_used(session: WorkbenchSession) -> list[UsageRow]:
                     referrer_name=ref.referrer_name,
                     referrer_location=ref.referrer_location.name,
                     field=ref.field,
+                    tags=ref.tags,
                 )
             )
     return rows
@@ -83,6 +89,7 @@ class UsageScreen(Screen[None]):
                 "referrer",
                 "referrer location",
                 "field",
+                "tags",
             )
             for r in self._rows:
                 table.add_row(
@@ -93,4 +100,5 @@ class UsageScreen(Screen[None]):
                     r.referrer_name,
                     r.referrer_location,
                     r.field,
+                    ", ".join(r.tags),
                 )

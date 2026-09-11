@@ -83,6 +83,18 @@ class Reference:
     """True only for a rule referrer whose rule is disabled. Group/object
     referrers are always False. Lets `unused(..., ignore_disabled=True)` treat
     disabled rules as non-roots (#9)."""
+    tags: tuple[str, ...] = ()
+    """The config tags of the *referrer*, or () when it carries none.
+
+    The referrer is the rule or the group that names the object. The where-used
+    listing shows these tags. A rule tag often records a ticket or an owner.
+    Thus the row tells the operator who must approve a delete (#184).
+
+    The walk reads the tags off the referrer itself. It does not use
+    `_tags_by_target`. That index holds objects only. A rule key also needs the
+    `rulebase`, because one location can hold a `pre` rule and a `post` rule
+    with the same name. A tuple keeps this frozen dataclass hashable.
+    """
 
     @property
     def is_resolved(self) -> bool:
@@ -190,6 +202,7 @@ class ReferenceGraph:
         field_name: str,
         rulebase: Rulebase | None = None,
         referrer_disabled: bool = False,
+        referrer_tags: tuple[str, ...] = (),
     ) -> None:
         if target_name in PREDEFINED:
             return
@@ -206,6 +219,7 @@ class ReferenceGraph:
             rulebase=rulebase,
             resolved=resolved,
             referrer_disabled=referrer_disabled,
+            tags=referrer_tags,
         )
         self.references.append(ref)
         if resolved is not None:
@@ -221,6 +235,7 @@ class ReferenceGraph:
                     referrer_kind="address-group",
                     referrer_name=ag.name,
                     referrer_location=ag.location,
+                    referrer_tags=tuple(ag.tags),
                     field_name="static",
                 )
             for t in ag.tags:
@@ -230,6 +245,7 @@ class ReferenceGraph:
                     referrer_kind="address-group",
                     referrer_name=ag.name,
                     referrer_location=ag.location,
+                    referrer_tags=tuple(ag.tags),
                     field_name="tag",
                 )
         for sg in snap.service_groups:
@@ -240,6 +256,7 @@ class ReferenceGraph:
                     referrer_kind="service-group",
                     referrer_name=sg.name,
                     referrer_location=sg.location,
+                    referrer_tags=tuple(sg.tags),
                     field_name="members",
                 )
         for a in snap.addresses:
@@ -250,6 +267,7 @@ class ReferenceGraph:
                     referrer_kind="address",
                     referrer_name=a.name,
                     referrer_location=a.location,
+                    referrer_tags=tuple(a.tags),
                     field_name="tag",
                 )
         for s in snap.services:
@@ -260,6 +278,7 @@ class ReferenceGraph:
                     referrer_kind="service",
                     referrer_name=s.name,
                     referrer_location=s.location,
+                    referrer_tags=tuple(s.tags),
                     field_name="tag",
                 )
         for r in snap.security_rules:
@@ -271,6 +290,7 @@ class ReferenceGraph:
                         referrer_kind="security-rule",
                         referrer_name=r.name,
                         referrer_location=r.location,
+                        referrer_tags=tuple(r.tags),
                         field_name=fname,
                         rulebase=r.rulebase,
                         referrer_disabled=r.disabled,
@@ -282,6 +302,7 @@ class ReferenceGraph:
                     referrer_kind="security-rule",
                     referrer_name=r.name,
                     referrer_location=r.location,
+                    referrer_tags=tuple(r.tags),
                     field_name="service",
                     rulebase=r.rulebase,
                     referrer_disabled=r.disabled,
@@ -293,6 +314,7 @@ class ReferenceGraph:
                     referrer_kind="security-rule",
                     referrer_name=r.name,
                     referrer_location=r.location,
+                    referrer_tags=tuple(r.tags),
                     field_name="tag",
                     rulebase=r.rulebase,
                     referrer_disabled=r.disabled,
@@ -310,6 +332,7 @@ class ReferenceGraph:
                         referrer_kind="nat-rule",
                         referrer_name=n.name,
                         referrer_location=n.location,
+                        referrer_tags=tuple(n.tags),
                         field_name=fname,
                         rulebase=n.rulebase,
                         referrer_disabled=n.disabled,
@@ -321,6 +344,7 @@ class ReferenceGraph:
                     referrer_kind="nat-rule",
                     referrer_name=n.name,
                     referrer_location=n.location,
+                    referrer_tags=tuple(n.tags),
                     field_name="destination-translation",
                     rulebase=n.rulebase,
                     referrer_disabled=n.disabled,
@@ -331,6 +355,7 @@ class ReferenceGraph:
                 referrer_kind="nat-rule",
                 referrer_name=n.name,
                 referrer_location=n.location,
+                referrer_tags=tuple(n.tags),
                 field_name="service",
                 rulebase=n.rulebase,
                 referrer_disabled=n.disabled,
@@ -342,6 +367,7 @@ class ReferenceGraph:
                     referrer_kind="nat-rule",
                     referrer_name=n.name,
                     referrer_location=n.location,
+                    referrer_tags=tuple(n.tags),
                     field_name="tag",
                     rulebase=n.rulebase,
                     referrer_disabled=n.disabled,
@@ -356,6 +382,7 @@ class ReferenceGraph:
                         referrer_kind=kind,
                         referrer_name=p.name,
                         referrer_location=p.location,
+                        referrer_tags=tuple(p.tags),
                         field_name=fname,
                         rulebase=p.rulebase,
                         referrer_disabled=p.disabled,
@@ -367,6 +394,7 @@ class ReferenceGraph:
                     referrer_kind=kind,
                     referrer_name=p.name,
                     referrer_location=p.location,
+                    referrer_tags=tuple(p.tags),
                     field_name="service",
                     rulebase=p.rulebase,
                     referrer_disabled=p.disabled,
@@ -378,6 +406,7 @@ class ReferenceGraph:
                     referrer_kind=kind,
                     referrer_name=p.name,
                     referrer_location=p.location,
+                    referrer_tags=tuple(p.tags),
                     field_name="tag",
                     rulebase=p.rulebase,
                     referrer_disabled=p.disabled,
@@ -392,6 +421,7 @@ class ReferenceGraph:
                     referrer_kind=kind,
                     referrer_name=p.name,
                     referrer_location=p.location,
+                    referrer_tags=tuple(p.tags),
                     field_name="nexthop",
                     rulebase=p.rulebase,
                     referrer_disabled=p.disabled,
@@ -450,6 +480,7 @@ class ReferenceGraph:
                         referrer_location=ag.location,
                         field="dynamic",
                         resolved=member,
+                        tags=tuple(ag.tags),
                     )
                     self.references.append(ref)
                     self._by_target[member].append(ref)

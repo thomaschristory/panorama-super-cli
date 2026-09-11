@@ -52,6 +52,12 @@ def used(
     loc = location_from_name(location)
     refs = graph.where_used(kind, name, loc)
     _emit_graph_warnings(rt, graph)
+    # Every other field describes the referrer, so `tags` does too. It holds the
+    # tags of the rule or the group that points at the object. It does not hold
+    # the tags of the object that you trace. A rule tag often records a ticket
+    # or an owner. Thus a delete pre-flight can route on it (#184). These rows
+    # feed table and csv only. The json/jsonl/yaml views render `model=refs`, so
+    # `Reference` carries the field as well.
     rows = [
         {
             "referrer_kind": r.referrer_kind,
@@ -59,6 +65,7 @@ def used(
             "location": r.referrer_location.name,
             "rulebase": r.rulebase.value if r.rulebase else "",
             "field": r.field,
+            "tags": list(r.tags),
         }
         for r in refs
     ]
@@ -128,6 +135,9 @@ def dangling(ctx: typer.Context) -> None:
     graph = ReferenceGraph.build(rt.snapshot())
     refs = graph.dangling()
     _emit_graph_warnings(rt, graph)
+    # `dangling` renders the same `Reference` model as `used`, so its
+    # json/jsonl/yaml views already carry the referrer `tags` field. The table
+    # and the csv view read `rows`, so they need the field here to agree (#184).
     rows = [
         {
             "referrer_kind": r.referrer_kind,
@@ -135,6 +145,7 @@ def dangling(ctx: typer.Context) -> None:
             "location": r.referrer_location.name,
             "field": r.field,
             "missing": r.target_name,
+            "tags": list(r.tags),
         }
         for r in refs
     ]

@@ -129,7 +129,7 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | --- | --- | --- |
 | `d` | **dedup** | Collapse the duplicate bucket in the selection toward a chosen survivor (whole-bucket merge; the rest are repointed and removed), or promote it. Buckets can be addresses, services, address-groups, or **tags** (tags bucket by name, since they carry no value; they are promote-only — no in-place merge). A destination dropdown picks either an existing member (`name@location` — merge in place) or a location the bucket doesn't already occupy (`dedup promote`: create it there, delete every source copy, no repoints). A group bucket also shows a **cascade** checkbox, pulling its members up with it on the promote path. |
 | `D` | **duplicates scan** | Config-wide duplicate buckets (read-only), with a kind toggle for addresses / services / address-groups. The discovery counterpart of `d`: `d` merges the selection, `D` finds every duplicate in the config. |
-| `u` | **usage** | Where-used for the whole selection (read-only), with an owner column naming which selected object each reference resolves to. |
+| `u` | **usage** | Where-used for the whole selection (read-only), with an owner column naming which selected object each reference resolves to. A `tags` column shows the tags of each referrer, not of the selected object. |
 | `a` | **audit** | Read-only, with a mode toggle: address overlap/containment involving the selection, or custom services duplicating a well-known / predefined port. |
 | `f` | **diff** | Device-group-vs-device-group drift (read-only): added/removed/changed objects between two scopes, picked from dropdowns. |
 | `o` | **export** | Write objects of one kind to an NDJSON file (read-only export; never overwrites the source config). |
@@ -143,7 +143,7 @@ build a `ChangeSet` you review and **stage** (`ctrl+y`) or cancel (`escape`).
 | `N` | **new group** | Build a *new* group out of the selection (see [below](#n-a-group-from-the-selection)). The kind follows what you picked — addresses make an address-group, services a service-group — and the location picker defaults to the narrowest one that can see every member. |
 | `c` | **create** | Object creation (address / group / service / service-group / tag), the TUI form for `psc set`. The form is **dynamic** — it shows only the fields the chosen kind uses, and predefined values (address type, service protocol, tag color) are **dropdowns**. |
 | `i` | **refs-unused** | List objects no rule reaches. A `tags` column carries the runtime-DAG signal. `space` sends the row under the cursor to the selection, `a` sends every listed row. The spoke itself changes nothing. |
-| `g` | **dangling** | List references to names that resolve to nothing (read-only). |
+| `g` | **dangling** | List references to names that resolve to nothing (read-only). A `tags` column shows the tags of each referrer. |
 | `l` | **name-lint** | Report objects that drift from the configured naming scheme. |
 | `n` | **name-apply** | Rename drifting object(s) to their scheme name; choose an entry to apply. |
 | `p` | **profiles** | CRUD live connection profiles, persisted to `~/.psc/config.yaml`. Also switches the active source (`ctrl+r`) — reload the session onto the focused profile or an offline export path; discards the selection + staged batch (with a confirm when a batch is staged). |

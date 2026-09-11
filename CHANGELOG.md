@@ -43,6 +43,19 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   falls through to another object after the plan applies. The warning names the
   referrer, the name, and the surviving object with its value. The referrer
   keeps matching traffic, but against another host. Warnings never block.
+- `psc refs used` rows carry a `tags` field with the tags of the **referrer**
+  ([#184](https://github.com/thomaschristory/panorama-super-cli/issues/184)).
+  The referrer is the rule or the group that points at the traced object.
+  Table and CSV output show the field as a `tags` column and join the tags with
+  commas. JSON, JSONL and YAML output carry a real list. Every existing field
+  keeps its name and its position, so the change is additive. Rule tags reach
+  the listing for the first time. `ReferenceGraph` now reads the tags of each
+  referrer while it walks the config. Thus a `pre` rule and a `post` rule with
+  the same name keep their own tags. The workbench where-used spoke (`u`) shows
+  the same column. `find ip` and `find object` carry `tags` since v1.10.0.
+- `psc refs dangling` rows carry the same referrer `tags` field. The two
+  commands render the same `Reference` model, so all six output formats agree.
+  The workbench dangling spoke (`g`) shows the same column.
 
 ## v1.12.1 — 2026-07-15
 

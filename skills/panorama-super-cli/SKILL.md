@@ -210,6 +210,12 @@ decryption, authentication, QoS, application-override, DoS, SD-WAN,
 tunnel-inspect, network-packet-broker — so `unused` never reports an object that
 only a non-security rule reaches. A `referrer_kind` like `qos-rule` or
 `pbf-rule` in the output tells you exactly which rulebase points at the object.
+Each row also carries a `tags` field with the tags of the **referrer**. The
+referrer is the rule or the group that points at the object, not the object you
+trace. A rule tag often records a ticket or an owner. Thus the row tells you who
+must approve a delete. A row with `field: dynamic` shows the tags of the dynamic
+address group, not the filter tags that match. `refs dangling` rows carry the
+same field.
 
 > **⚠️ `unused` = unused *by policy*, NOT *safe to delete*.** psc parses only
 > device-group objects + policy rulebases. It does **not** see: templates &
@@ -450,7 +456,10 @@ duplicates scan, `f` device-group diff, `o` NDJSON export, and a well-known-port
 mode on the `a` audit spoke. The `i` unused spoke feeds the selection — `space`
 sends the row under the cursor, `a` sends every listed row, and its `tags` column
 flags a candidate a DAG may reach at runtime. `X` then plans the reference-safe
-deletion of the whole selection in one `ChangeSet` (the TUI form of `delete`). `v` opens a read-only inspect view of the focused
+deletion of the whole selection in one `ChangeSet` (the TUI form of `delete`).
+The `u` where-used spoke lists each referrer. Its `tags` column shows the tags of
+that referrer, like the CLI listing. The `g` dangling spoke shows the same
+column. `v` opens a read-only inspect view of the focused
 object (member tree + effective leaves); `G` adds the current selection as
 members of a named group, and `N` builds a **new** group out of the selection
 (kind derived from what's selected; the location picker defaults to the narrowest

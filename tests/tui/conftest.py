@@ -169,6 +169,7 @@ def workbench_xml_two_dg(tmp_path):
 WORKBENCH_XML_DANGLING = """<?xml version="1.0"?>
 <config>
   <shared>
+    <tag><entry name="ticket-42"/></tag>
     <address>
       <entry name="web-srv-01"><ip-netmask>10.0.5.10/32</ip-netmask></entry>
     </address>
@@ -178,6 +179,7 @@ WORKBENCH_XML_DANGLING = """<?xml version="1.0"?>
           <member>web-srv-01</member>
           <member>ghost-host</member>
         </static>
+        <tag><member>ticket-42</member></tag>
       </entry>
     </address-group>
   </shared>
@@ -188,9 +190,43 @@ WORKBENCH_XML_DANGLING = """<?xml version="1.0"?>
 
 @pytest.fixture
 def workbench_xml_dangling(tmp_path):
-    """Group 'web-pool' names a missing 'ghost-host' member (a dangling ref)."""
+    """Group 'web-pool' names a missing 'ghost-host' member (a dangling ref).
+
+    The group carries the tag `ticket-42`, so the dangling row shows a referrer
+    tag (#184).
+    """
     p = tmp_path / "config_dangling.xml"
     p.write_text(WORKBENCH_XML_DANGLING, encoding="utf-8")
+    return str(p)
+
+
+WORKBENCH_XML_TAGGED_REFS = """<?xml version="1.0"?>
+<config>
+  <shared>
+    <tag><entry name="ticket-42"/></tag>
+    <address>
+      <entry name="a1"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+    </address>
+    <address-group>
+      <entry name="g1">
+        <static><member>a1</member></static>
+        <tag><member>ticket-42</member></tag>
+      </entry>
+    </address-group>
+  </shared>
+  <devices><entry name="localhost.localdomain"><device-group/></entry></devices>
+</config>
+"""
+
+
+@pytest.fixture
+def workbench_xml_tagged_refs(tmp_path):
+    """Group 'g1' carries the tag 'ticket-42' and names the address 'a1'.
+
+    The where-used spoke must show that tag on the referrer row (#184).
+    """
+    p = tmp_path / "config_tagged_refs.xml"
+    p.write_text(WORKBENCH_XML_TAGGED_REFS, encoding="utf-8")
     return str(p)
 
 
