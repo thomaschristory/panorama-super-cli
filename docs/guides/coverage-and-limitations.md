@@ -37,7 +37,7 @@ Within those rulebases it models exactly this **reference surface**:
 | NAT `source-translation` / `destination-translation` | address | ✅ where-used; **review-gated** for repoint |
 | PBF forwarding `nexthop` (`fqdn` variant) | address | ✅ where-used; **review-gated** for repoint |
 | static address-group / service-group members | address / service | ✅ |
-| dynamic address-group (DAG) membership | address | ✅ from **config tags**; registered IPs not covered (see below) |
+| dynamic address-group (DAG) membership | address | ✅ from **config tags**; registered IPs with `--live-dag` on a live source (see below) |
 
 "Review-gated" means psc *sees* the reference and will **block** a
 merge/rename/delete that would strand it (it cannot rewrite a nested,
@@ -65,7 +65,7 @@ saw the reference. **This is the most dangerous gap.** Treat every `unused`
 result on a **shared** object as "unused by policy," and verify in Panorama
 before deleting.
 
-### 2. Dynamic address groups (DAGs): only config-tag membership is resolved
+### 2. Dynamic address groups (DAGs): config tags always, registered IPs only with `--live-dag`
 
 A DAG includes addresses by a **tag expression** (e.g. `'prod' and 'web'`), not
 a static member list. Since v0.4.3 psc **evaluates that filter against the
@@ -74,12 +74,74 @@ into a rule-referenced DAG is treated as reachable — it is no longer reported
 `unused`, and `refs used <addr>` shows the DAG (as a `dynamic` referrer) on the
 path to the rule. DAG filters are also still parsed for the unused-**tag** check.
 
-The residual gap is **runtime, not config**: an address pulled into a DAG by an
-**externally registered IP** (XML-API / User-ID / VM-info / cloud plugin) carries
-no config tag, so the export psc reads cannot show that membership. Such an
-address can still be reported `unused`. Only a **live** membership query
-(`show object dynamic-address-group all`) sees registered IPs; resolving them is
-tracked as a follow-up enhancement on the live path.
+The other half is **runtime, not config**. An **externally registered IP**
+(XML-API / User-ID / VM-info / cloud plugin) pulls an address into a DAG. That
+address carries no config tag. The export psc reads cannot show that membership.
+
+On a **live source**, `psc refs unused --live-dag` closes this gap. psc reads the
+connected firewalls from Panorama (`show devices connected`). psc then reads the
+registered IPs of each firewall (`show object registered-ip all`). psc adds the
+registered tags to the tag set that it matches against the DAG filter. A
+**rule-referenced** live DAG then holds that address, and the address leaves the
+`unused` list. A DAG that no rule references keeps its members off the reachable
+set, live data or not. `refs used` shows the DAG on the path of that address,
+with the field `dynamic-registered`. The field name is a warning. A registered
+IP is registered against an IP, not against an address object. A rename cannot
+repoint that edge.
+
+The match is deliberately narrow. psc joins a registered value to an address
+object only when the two values are identical. A registered host therefore never
+marks a larger network object as used. psc does no DNS, so an FQDN object never
+matches a registered IP. A registered host does not match an `ip-range` object of
+one address either. psc evaluates the filter once for each firewall that
+registered the value, and one firewall is enough for a match. psc never joins
+the tags of two firewalls into one set. A filter that negates a tag would then
+lose a member that one firewall really holds.
+
+The registered map is estate-wide. A **device-group** DAG still matches only the
+addresses that its own device-group chain can see. A **shared** DAG matches every
+address of the export on the live path, because PAN-OS pushes a shared DAG to
+every device group. That direction adds members, which is the safe direction for
+`unused`. The config-tag match keeps the device-group chain in both cases.
+
+psc sends `show object registered-ip all` without a vsys. psc therefore reads
+what the firewall reports for the vsys of the API key. A registration that only
+another vsys holds can stay invisible. Give the API key access to every vsys
+that you must cover.
+
+`--live-dag` fails closed. psc refuses an offline source (exit `9`). psc refuses
+a Panorama that manages no connected firewall (exit `7`). psc stops when a
+firewall query fails (exit `7`). An answer that psc cannot read is a failed
+query, and it exits `7` too. Four answers count as unreadable:
+
+- an answer with no `<result>` element;
+- an answer whose `<count>` does not agree with the number of rows;
+- an answer whose `<count>` is not a number;
+- an answer that holds no `entry` row and holds another element instead.
+
+psc never reads such an answer as "this firewall holds no registration".
+
+A firewall that Panorama names and that psc cannot query stops the command in
+the same way (exit `7`). psc cannot query a firewall that `show devices
+connected` reports as not connected, and it cannot query a device row with no
+serial number. Such a firewall still holds its registrations, so it is a gap in
+the coverage. psc never drops that row.
+
+Add `--live-dag-partial` to continue after a firewall that psc cannot read. psc
+then reads the firewalls that answer. psc names each firewall that it could not
+read on the **warning** channel, and `--no-caveat` does not silence that
+channel. The stderr caveat names them as well, and it states that the coverage
+is partial. `refs used --strict` refuses to call an object unused while the
+coverage is partial (exit `7`). A firewall that psc could not read can hold the
+one registration that makes the object live.
+
+A registered row with no `ip` attribute makes the coverage partial too. psc does
+not know the subject of that row, so psc cannot rule out that the row holds the
+registration of the traced object. A registered value that psc reads and cannot
+normalize is a different case. psc names that value on the warning channel, and
+the operator can see that it is not the value of the traced object. Such a value
+therefore keeps the coverage complete. Without a live source, psc keeps the
+config-only behaviour below.
 
 Because runtime DAG membership cannot be computed from the config, `refs unused`
 **shows each candidate's tags** (a `tags` column in table/csv, a real list in
@@ -144,7 +206,9 @@ config.
 2. `refs unused` is a **candidate list, not a kill list**, especially for
    `shared` objects. Before deleting, ask: could this live in a template, in
    network/VPN/management config, in a DAG via an externally registered IP, or
-   on a firewall's local config? If plausibly yes, confirm in Panorama first.
+   on a firewall's local config? If plausibly yes, confirm in Panorama first. On
+   a live source, `--live-dag` answers the registered-IP part of that question
+   for you.
 3. The safe operations are the ones psc can fully model and *block* when it
    can't — `merge`, `rename`, `decommission` and
    [`delete`](../reference/cli.md#delete). Use `delete` to remove a verified
@@ -157,8 +221,11 @@ config.
 ## Tracking
 
 `refs unused` prints a one-line caveat to **stderr** restating these blind spots
-at the point of use (stdout stays pure machine output). The remaining gaps —
-DAG membership from externally registered IPs (the live-path enhancement),
-parsing template/network references, modelling more object kinds — are tracked in
-the issue tracker. See
+at the point of use (stdout stays pure machine output). The caveat text changes
+when `--live-dag` resolved the registered-IP part, and it names the number of
+firewalls that psc read. psc resolves registered-IP DAG membership on the live
+path only. The offline path keeps the config-tag rule and the `tags` column. The
+workbench (`psc workbench`) always builds a config-only graph, so its unused spoke
+never reads live data. The remaining gaps — parsing template/network references,
+modelling more object kinds — are tracked in the issue tracker. See
 [github.com/thomaschristory/panorama-super-cli/issues](https://github.com/thomaschristory/panorama-super-cli/issues).

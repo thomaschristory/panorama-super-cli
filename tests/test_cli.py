@@ -13,6 +13,8 @@ from typer.testing import CliRunner
 
 from psc.cli import app, find_cmds
 from psc.cli.app import app as cli_app
+from psc.cli.refs_cmds import _unused_caveat
+from psc.core.livedag import RegisteredIps, build_membership
 
 FIXTURE = Path(__file__).parent / "fixtures" / "panorama-config.xml"
 ALL_RB_FIXTURE = Path(__file__).parent / "fixtures" / "all-rulebases.xml"
@@ -53,6 +55,62 @@ def test_unused_no_caveat_suppresses_stderr_caveat() -> None:
     assert cp.returncode == 0
     json.loads(cp.stdout)
     assert "caveat" not in cp.stderr.lower()
+
+
+def test_live_dag_refuses_an_offline_source() -> None:
+    # `--live-dag` reads runtime state from firewalls. An offline export holds
+    # none, so psc refuses instead of reporting config-only data as live data.
+    cp = run("-c", str(FIXTURE), "-o", "json", "refs", "unused", "--kind", "address", "--live-dag")
+    assert cp.returncode == 9
+    # Under `-o json` the typed envelope goes to stdout, so an agent can branch.
+    assert json.loads(cp.stdout)["type"] == "config"
+
+
+def test_live_dag_refuses_an_offline_source_on_refs_used() -> None:
+    cp = run("-c", str(FIXTURE), "-o", "json", "refs", "used", "h-web1", "--live-dag")
+    assert cp.returncode == 9
+
+
+def test_live_dag_partial_needs_live_dag() -> None:
+    cp = run(
+        "-c",
+        str(FIXTURE),
+        "-o",
+        "json",
+        "refs",
+        "unused",
+        "--kind",
+        "address",
+        "--live-dag-partial",
+    )
+    assert cp.returncode == 9
+
+
+def test_unused_caveat_text_changes_when_live_data_resolved_registered_ips() -> None:
+    offline = _unused_caveat(None)
+    assert "externally registered IPs" in offline
+    assert "template" in offline
+
+    membership = build_membership({"001": RegisteredIps(by_value={"10.1.1.5": frozenset({"p"})})})
+    live = _unused_caveat(membership)
+    assert "template" in live  # the other blind spots stay
+    assert "1 firewall" in live
+    assert "NOT scanned: templates & network/device config." in live
+
+
+def test_unused_caveat_reports_the_registered_values_that_matched_nothing() -> None:
+    # The count lives in the caveat, not in graph.warnings: on a real estate it
+    # is non-zero on nearly every run, and `--no-caveat` must silence it.
+    membership = build_membership({"001": RegisteredIps()})
+    assert "registered values" in _unused_caveat(membership, 7)
+    assert "registered values" not in _unused_caveat(membership, 0)
+
+
+def test_unused_caveat_names_the_firewalls_that_did_not_answer() -> None:
+    membership = build_membership({"001": RegisteredIps()}, failed=["002"])
+    text = _unused_caveat(membership)
+    assert "partial" in text.lower()
+    assert "002" in text
 
 
 def test_unused_ignore_disabled_surfaces_disabled_only_object(tmp_path: Path) -> None:

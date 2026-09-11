@@ -75,13 +75,42 @@ limits:
 psc -c panorama.xml refs unused --kind address --no-caveat -o json
 ```
 
+### Live DAG membership
+
+A dynamic address group can also hold an address through an **externally
+registered IP** (XML-API, User-ID, VM-info, or a cloud plugin). That membership
+is runtime state, and an exported config does not hold it. On a live source,
+`--live-dag` resolves it:
+
+```console
+psc -p prod -o json refs unused --kind address --live-dag
+```
+
+psc reads the connected firewalls from Panorama. psc then reads the registered
+IPs of each firewall, and it adds those tags to the tag set that it matches
+against each DAG filter. An address that a **rule-referenced** live DAG holds
+stays off the candidate list. `refs used` shows the DAG on its path with the
+field `dynamic-registered`.
+
+psc joins a registered value to an address object only when the two values are
+identical. A registered host therefore never marks a larger network object as
+used. The option needs a live source and exits `9` without one. It exits `7`
+when no firewall is connected, and when a firewall query fails. Add
+`--live-dag-partial` to continue with the firewalls that answer. psc then names
+each firewall that did not answer on the warning channel, which `--no-caveat`
+does not silence. `refs used --strict` refuses to call an object unused while
+the coverage is partial. The workbench (`psc workbench`) never reads live data, so
+its unused spoke keeps the config-only list.
+
 !!! danger "`unused` means *unused by policy* — not *safe to delete*"
     psc only scans device-group objects and policy rulebases. Objects referenced
     from **templates / network / device config** (IKE gateways, GlobalProtect,
     service routes, log servers…) — or matched into a **dynamic address group**
     by an *externally registered* IP rather than a config tag — are reported
     `unused` even though they are in use. (Config-tag DAG membership *is* now
-    resolved, so an address tagged into a rule-referenced DAG is kept.)
+    resolved, so an address tagged into a rule-referenced DAG is kept. On a live
+    source, `--live-dag` resolves registered-IP membership as well; an offline
+    run does not.)
     Treat this list as **candidates**, verify `shared` objects in Panorama, and
     read **[Coverage and blind spots](coverage-and-limitations.md)** before
     deleting. Delete a verified candidate with [`psc delete`](#from-unused-to-deleted),
