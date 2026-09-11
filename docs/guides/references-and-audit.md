@@ -88,16 +88,19 @@ psc -p prod -o json refs unused --kind address --live-dag
 
 psc reads the connected firewalls from Panorama. psc then reads the registered
 IPs of each firewall, and it adds those tags to the tag set that it matches
-against each DAG filter. An address that a live DAG holds stays off the candidate
-list, and `refs used` shows the DAG on its path with the field
-`dynamic-registered`.
+against each DAG filter. An address that a **rule-referenced** live DAG holds
+stays off the candidate list. `refs used` shows the DAG on its path with the
+field `dynamic-registered`.
 
 psc joins a registered value to an address object only when the two values are
-identical, so a registered host never marks a larger network object as used. The
-option needs a live source and exits `9` without one. It exits `7` when no
-firewall is connected, or when a firewall query fails; add `--live-dag-partial`
-to continue with the firewalls that answer. The workbench (`psc work`) never
-reads live data, so its unused spoke keeps the config-only list.
+identical. A registered host therefore never marks a larger network object as
+used. The option needs a live source and exits `9` without one. It exits `7`
+when no firewall is connected, and when a firewall query fails. Add
+`--live-dag-partial` to continue with the firewalls that answer. psc then names
+each firewall that did not answer on the warning channel, which `--no-caveat`
+does not silence. `refs used --strict` refuses to call an object unused while
+the coverage is partial. The workbench (`psc work`) never reads live data, so
+its unused spoke keeps the config-only list.
 
 !!! danger "`unused` means *unused by policy* — not *safe to delete*"
     psc only scans device-group objects and policy rulebases. Objects referenced

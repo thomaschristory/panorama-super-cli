@@ -22,8 +22,8 @@ _LIVE_DAG_HELP = (
     "dynamic address-group membership. This option needs a live source."
 )
 _LIVE_DAG_PARTIAL_HELP = (
-    "Continue when a firewall does not answer. The caveat then names the "
-    "firewalls that psc could not read. This option needs --live-dag."
+    "Continue when a firewall does not answer. psc then names on stderr each "
+    "firewall that it could not read. This option needs --live-dag."
 )
 
 
@@ -59,9 +59,11 @@ def _unused_caveat(live: LiveDagMembership | None, unmatched: int = 0) -> str:
     without a device (#183).
 
     `unmatched` is how many registered values no address object carries. The
-    count belongs in the caveat, not in `graph.warnings`: on a real estate most
-    registered IPs have no address object, so a warning would fire on every run
-    and it would devalue that channel. `--no-caveat` silences this line too.
+    count belongs in the caveat, not in `graph.warnings`. On a real estate most
+    registered IPs have no address object. A warning would then fire on every
+    run, and it would devalue that channel. `--no-caveat` silences this line
+    too. It does not silence the warning channel, which names each firewall that
+    did not answer (#183).
     """
     head = (
         "[yellow]caveat[/yellow]: candidates only — these are unreferenced by the "
@@ -105,11 +107,31 @@ def _emit_live_warnings(rt: Runtime, live: LiveDagMembership | None) -> None:
     A device row with no `ip` attribute, or a registered value that is not an
     address value, is a real coverage gap. It is rare, so it belongs on the
     warning channel. The per-run coverage count does not; it goes in the caveat.
+
+    `build_membership` also puts one warning here for each firewall that did not
+    answer. The caveat is not enough for that fact: `--no-caveat` silences the
+    caveat, and the documented delete pipeline uses `--no-caveat`. The warning
+    channel always runs, so partial coverage always reaches the operator.
     """
     if live is None:
         return
     for w in live.warnings:
         rt.stderr.print(f"[yellow]warning[/yellow]: {w}", soft_wrap=True, highlight=False)
+
+
+def _partial_coverage(live: LiveDagMembership | None) -> str:
+    """The one-line partial-coverage sentence, or an empty string.
+
+    Both `used` and `unused` print it, so both commands state the same fact in
+    the same words.
+    """
+    if live is None or not live.is_partial:
+        return ""
+    return (
+        f"coverage is partial: {', '.join(live.failed_devices)} did not answer; "
+        f"psc read the registered IPs of {len(live.devices)} firewall"
+        f"{'' if len(live.devices) == 1 else 's'}"
+    )
 
 
 @app.command("used")
@@ -143,6 +165,9 @@ def used(
     loc = location_from_name(location)
     refs = graph.where_used(kind, name, loc)
     _emit_graph_warnings(rt, graph)
+    _emit_live_warnings(rt, live)
+    if partial := _partial_coverage(live):
+        rt.stderr.print(f"[yellow]warning[/yellow]: {partial}", soft_wrap=True, highlight=False)
     # Every other field describes the referrer, so `tags` does too. It holds the
     # tags of the rule or the group that points at the object. It does not hold
     # the tags of the object that you trace. A rule tag often records a ticket
@@ -161,6 +186,17 @@ def used(
         for r in refs
     ]
     if rt.strict and not refs:
+        # An empty result on partial live data is not an answer. `used` is the
+        # delete pre-flight, and a firewall that did not answer can hold the one
+        # registration that makes this object live. psc refuses to call the
+        # object unused, and the error type keeps the two cases apart (#183).
+        if live is not None and live.is_partial:
+            raise PscError(
+                f"psc found no reference to '{name}', and the live coverage is "
+                f"partial: {', '.join(live.failed_devices)} did not answer. psc "
+                f"cannot say that '{name}' is unused.",
+                ErrorType.TRANSPORT,
+            )
         raise PscError(f"'{name}' is unused", ErrorType.NOT_FOUND)
     render(rt.stdout, rt.output, model=refs, rows=rows, table_title=f"where '{name}' is used")
 
@@ -201,11 +237,15 @@ def unused(
         }
         for t in targets
     ]
+    # The warnings run before the `--strict` refusal. A run that finds nothing
+    # must still state what psc could not read (#183).
+    _emit_graph_warnings(rt, graph)
+    _emit_live_warnings(rt, live)
+    if partial := _partial_coverage(live):
+        rt.stderr.print(f"[yellow]warning[/yellow]: {partial}", soft_wrap=True, highlight=False)
     if rt.strict and not targets:
         raise PscError(f"no unused {kind}", ErrorType.NOT_FOUND)
     render(rt.stdout, rt.output, model=rows, rows=rows, table_title=f"unused {kind}")
-    _emit_graph_warnings(rt, graph)
-    _emit_live_warnings(rt, live)
     if targets and caveat:
         # Warn on stderr so stdout stays pure machine output (#56). The text
         # changes when live data resolved the registered-IP clause, and

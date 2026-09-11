@@ -206,13 +206,16 @@ matches on that tag, so verify its tags before deleting. Send the verified rows
 to `delete` — it is the reference-safe sink for an `unused` list.
 
 `--live-dag` (live source only) reads the registered IPs of every connected
-firewall. psc adds their tags to dynamic address-group membership, so an address
-that a live DAG holds stays off the list. It exits `9` on an offline source, and
-`7` when no firewall is connected or a firewall query fails. Add
-`--live-dag-partial` to continue after a failed firewall. psc joins a registered
-value to an address object only when the two values are identical, so a
-registered host never marks a larger network object as used. A `refs used` row
-that comes from a registered IP carries the field `dynamic-registered`: a rename
+firewall. psc adds their tags to dynamic address-group membership. An address
+that a **rule-referenced** live DAG holds then stays off the list. It exits `9`
+on an offline source, and `7` when no firewall is connected or a firewall query
+fails. Add `--live-dag-partial` to continue after a failed firewall. psc then
+names each firewall that did not answer on the stderr warning channel.
+`--no-caveat` does not silence that channel. `refs used --strict` refuses to
+call an object unused while the coverage is partial. psc joins a registered
+value to an address object only when the two values are identical. A registered
+host therefore never marks a larger network object as used. A `refs used` row
+that comes from a registered IP carries the field `dynamic-registered`. A rename
 cannot repoint that edge, because the IP is registered against an IP.
 
 `refs used` may need `--kind` and `--location` if a name is ambiguous. Coverage

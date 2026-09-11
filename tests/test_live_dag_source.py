@@ -104,7 +104,7 @@ def test_membership_reads_every_connected_firewall(fake_pano: _FakePano) -> None
     assert m.devices == ["001", "002"]
     assert m.indexed_values == 2
     assert m.is_partial is False
-    assert m.by_key["ip-netmask:10.1.1.5/32"] == frozenset({"prod", "web"})
+    assert m.by_key["ip-netmask:10.1.1.5/32"] == [frozenset({"prod"}), frozenset({"web"})]
 
 
 def test_membership_refuses_when_no_firewall_is_connected(
@@ -143,7 +143,7 @@ def test_partial_coverage_keeps_the_firewalls_that_answered(
     assert m.devices == ["001"]
     assert m.failed_devices == ["002"]
     assert m.is_partial is True
-    assert m.by_key["ip-netmask:10.1.1.5/32"] == frozenset({"prod"})
+    assert m.by_key["ip-netmask:10.1.1.5/32"] == [frozenset({"prod"})]
 
 
 def test_partial_coverage_still_refuses_when_every_firewall_fails(

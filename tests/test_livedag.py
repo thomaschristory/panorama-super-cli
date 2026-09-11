@@ -81,9 +81,68 @@ def test_registered_entry_with_an_empty_member_list_gives_an_empty_tag_set() -> 
     assert reg.by_value == {"10.1.1.8": frozenset()}
 
 
-def test_empty_or_absent_result_gives_an_empty_map() -> None:
+def test_an_empty_result_gives_an_empty_map() -> None:
+    # A device that holds no registration is a valid answer.
     assert parse_registered_ip('<response status="success"><result/></response>').by_value == {}
-    assert parse_registered_ip('<response status="success"/>').by_value == {}
+
+
+def test_a_success_answer_without_a_result_element_is_refused() -> None:
+    # CRITICAL (#183): a shape psc cannot read must never read as "nothing is
+    # registered". That reads absent data as full coverage, and it puts a live
+    # host on the delete list. A successful op answer always holds <result>.
+    for text in ('<response status="success"/>', "<response/>"):
+        with pytest.raises(PscError) as exc:
+            parse_registered_ip(text)
+        assert exc.value.error_type is ErrorType.INPUT
+        assert REGISTERED_IP_CMD in exc.value.message
+
+
+def test_a_count_that_disagrees_with_the_rows_is_refused() -> None:
+    # CRITICAL (#183): the device counts 1200 registrations, and psc reads no
+    # row. psc refuses, so the firewall counts as a firewall that did not
+    # answer, and the caveat cannot claim full coverage.
+    with pytest.raises(PscError) as exc:
+        parse_registered_ip(
+            '<response status="success"><result><count>1200</count></result></response>'
+        )
+    assert exc.value.error_type is ErrorType.INPUT
+    assert "1200" in exc.value.message
+
+    with pytest.raises(PscError):
+        parse_registered_ip(
+            '<response status="success"><result>'
+            '<entry ip="10.1.1.5"/><count>500</count>'
+            "</result></response>"
+        )
+
+
+def test_a_count_that_agrees_with_the_rows_parses() -> None:
+    reg = parse_registered_ip(_REGISTERED)  # <count>2</count>, two entries
+    assert len(reg.by_value) == 2
+
+
+def test_an_absent_or_unreadable_count_gives_no_check() -> None:
+    # psc has nothing to compare, so it reads the rows it can read.
+    assert parse_registered_ip(
+        '<response status="success"><result><entry ip="10.1.1.5"/></result></response>'
+    ).by_value == {"10.1.1.5": frozenset()}
+    assert parse_registered_ip(
+        '<response status="success"><result>'
+        '<entry ip="10.1.1.5"/><count>many</count>'
+        "</result></response>"
+    ).by_value == {"10.1.1.5": frozenset()}
+
+
+def test_a_row_with_no_ip_attribute_still_counts_as_a_row() -> None:
+    # The device counts the row, and psc skips its value. A skipped row must not
+    # look like a short read, because the warning already names it.
+    reg = parse_registered_ip(
+        '<response status="success"><result>'
+        '<entry ip="10.1.1.5"/><entry/><count>2</count>'
+        "</result></response>"
+    )
+    assert reg.by_value == {"10.1.1.5": frozenset()}
+    assert len(reg.warnings) == 1
 
 
 def test_entry_without_an_ip_attribute_is_a_warning_not_a_failure() -> None:
@@ -150,6 +209,12 @@ def test_absent_device_list_gives_an_empty_list() -> None:
     assert parse_connected_devices('<response status="success"><result/></response>') == []
 
 
+def test_a_device_answer_without_a_result_element_is_refused() -> None:
+    with pytest.raises(PscError) as exc:
+        parse_connected_devices('<response status="success"/>')
+    assert exc.value.error_type is ErrorType.INPUT
+
+
 def test_device_parse_error_names_the_command() -> None:
     with pytest.raises(PscError) as exc:
         parse_connected_devices("<response")
@@ -159,11 +224,22 @@ def test_device_parse_error_names_the_command() -> None:
 # --- the membership index -------------------------------------------------
 
 
-def test_build_membership_unions_the_tags_of_one_value_across_devices() -> None:
+def test_build_membership_keeps_one_tag_set_per_device() -> None:
+    # CRITICAL (#183): the sets stay apart. A filter runs against each set on
+    # its own, so a negated tag of one firewall cannot cancel a match on
+    # another firewall.
     m = _membership(**{"001": {"10.1.1.5": {"prod"}}, "002": {"10.1.1.5": {"web"}}})
     assert m.devices == ["001", "002"]
     assert m.indexed_values == 1
+    assert m.tag_sets_for(_addr("10.1.1.5")) == [frozenset({"prod"}), frozenset({"web"})]
+    # The joined set is for a listing, not for a filter.
     assert m.tags_for(_addr("10.1.1.5")) == frozenset({"prod", "web"})
+
+
+def test_tag_sets_for_an_address_that_does_not_normalize_is_empty() -> None:
+    m = _membership(**{"001": {"10.1.1.5": {"prod"}}})
+    assert m.tag_sets_for(_addr("not-an-ip")) == []
+    assert m.tags_for(_addr("not-an-ip")) == frozenset()
 
 
 def test_membership_matches_an_address_by_exact_value_only() -> None:
@@ -238,3 +314,10 @@ def test_build_membership_records_the_devices_that_failed() -> None:
 
 def test_a_complete_membership_is_not_partial() -> None:
     assert build_membership({"001": RegisteredIps()}).is_partial is False
+
+
+def test_a_failed_device_gives_a_warning_as_well() -> None:
+    # `--no-caveat` silences the caveat. The warning channel always runs, so the
+    # failed firewall reaches the operator on every run (#183).
+    m = build_membership({"001": RegisteredIps()}, failed=["002"])
+    assert any("002" in w for w in m.warnings)

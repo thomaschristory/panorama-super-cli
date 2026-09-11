@@ -626,6 +626,98 @@ def test_live_tags_do_not_widen_the_config_scope_chain() -> None:
     assert ("DG-B", "b-vm") in unused  # a sibling device group stays out of scope
 
 
+def test_a_second_firewall_never_cancels_the_match_of_the_first() -> None:
+    # CRITICAL (#183): fwA registers 10.1.1.5 with 'prod'. fwB registers the
+    # same IP with 'quarantine'. The DAG of fwA really holds the address. One
+    # joined tag set would drop it, and the address would become a delete
+    # candidate. psc evaluates the filter per firewall, so the match holds.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5")],
+        address_groups=[
+            AddressGroup(name="dag-prod", dynamic_filter="'prod' and not 'quarantine'")
+        ],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+    )
+    live = build_membership(
+        {
+            "fwA": RegisteredIps(by_value={"10.1.1.5": frozenset({"prod"})}),
+            "fwB": RegisteredIps(by_value={"10.1.1.5": frozenset({"quarantine"})}),
+        }
+    )
+    g = ReferenceGraph.build(snap, live_dag=live)
+    assert "h-vm" not in {t.name for t in g.unused("address")}
+    # The order of the firewalls does not change the answer.
+    flipped = build_membership(
+        {
+            "fwB": RegisteredIps(by_value={"10.1.1.5": frozenset({"quarantine"})}),
+            "fwA": RegisteredIps(by_value={"10.1.1.5": frozenset({"prod"})}),
+        }
+    )
+    g_flipped = ReferenceGraph.build(snap, live_dag=flipped)
+    assert "h-vm" not in {t.name for t in g_flipped.unused("address")}
+
+
+def test_a_shared_dag_holds_a_live_registered_device_group_address() -> None:
+    # SAFETY (#183): PAN-OS pushes a shared DAG to every device group, and a
+    # registered IP has no device group. The live match therefore widens to the
+    # whole snapshot for a shared DAG. Without this psc lists a live host as a
+    # delete candidate, under a caveat that claims registered IPs ARE scanned.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], Location.dg("DG-A"), value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+        device_groups=["DG-A"],
+    )
+    assert "h-vm" in {t.name for t in ReferenceGraph.build(snap).unused("address")}
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    assert "h-vm" not in {t.name for t in g.unused("address")}
+    (ref,) = g.where_used("address", "h-vm", Location.dg("DG-A"))
+    assert ref.referrer_name == "dag-prod"
+    assert ref.field == "dynamic-registered"
+
+
+def test_a_shared_dag_keeps_the_config_tag_scope_rule() -> None:
+    # The widening is for the live match only. A config tag of a device-group
+    # address still does not join a shared DAG, so no offline result moves.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", ["prod"], Location.dg("DG-A"), value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+        device_groups=["DG-A"],
+    )
+    for g in (ReferenceGraph.build(snap), ReferenceGraph.build(snap, live_dag=_live({}))):
+        assert "h-vm" in {t.name for t in g.unused("address")}
+        assert g.dag_members(Target("address-group", "dag-prod", SHARED)) == []
+
+
+def test_a_device_group_dag_keeps_its_chain_under_live_data() -> None:
+    # The widening is for a shared DAG only. A DAG of DG-A does not reach a
+    # sibling device group, live data or not.
+    snap = Snapshot(
+        addresses=[_addr("b-vm", [], Location.dg("DG-B"), value="10.1.1.5")],
+        address_groups=[
+            AddressGroup(name="dag", location=Location.dg("DG-A"), dynamic_filter="'prod'")
+        ],
+        security_rules=[SecurityRule(name="r", location=Location.dg("DG-A"), destination=["dag"])],
+        device_groups=["DG-A", "DG-B"],
+    )
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    assert "b-vm" in {t.name for t in g.unused("address")}
+
+
+def test_a_shared_dag_takes_a_matched_address_once() -> None:
+    # The live pass must not add a second edge for an address the config pass
+    # already took.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+    )
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    assert len(g.where_used("address", "h-vm", SHARED)) == 1
+    assert len(g.dag_members(Target("address-group", "dag-prod", SHARED))) == 1
+
+
 def test_live_tags_do_not_change_the_tags_column() -> None:
     # The output contract stays additive: `tags` reports config tags only.
     snap = Snapshot(addresses=[_addr("h-vm", [], value="10.1.1.5")])

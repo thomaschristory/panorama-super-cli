@@ -347,7 +347,7 @@ class LiveSource:
         if not devices:
             raise PscError(
                 f"{self.hostname} manages no connected firewall, so psc read no "
-                "registered IPs; drop --live-dag or check the device connection",
+                "registered IPs; drop --live-dag or check the firewall connection",
                 ErrorType.TRANSPORT,
             )
         per_device: dict[str, RegisteredIps] = {}

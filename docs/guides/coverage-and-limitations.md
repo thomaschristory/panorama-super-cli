@@ -65,7 +65,7 @@ saw the reference. **This is the most dangerous gap.** Treat every `unused`
 result on a **shared** object as "unused by policy," and verify in Panorama
 before deleting.
 
-### 2. Dynamic address groups (DAGs): only config-tag membership is resolved
+### 2. Dynamic address groups (DAGs): config tags always, registered IPs only with `--live-dag`
 
 A DAG includes addresses by a **tag expression** (e.g. `'prod' and 'web'`), not
 a static member list. Since v0.4.3 psc **evaluates that filter against the
@@ -81,28 +81,48 @@ no config tag, so the export psc reads cannot show that membership.
 On a **live source**, `psc refs unused --live-dag` closes this gap. psc reads the
 connected firewalls from Panorama (`show devices connected`). psc then reads the
 registered IPs of each firewall (`show object registered-ip all`). psc adds the
-registered tags to the tag set that it matches against the DAG filter. An address
-that a live DAG holds is then reachable, and it leaves the `unused` list.
-`refs used` shows the DAG on the path of that address, with the field
-`dynamic-registered`. The field name is a warning: a registered IP is registered
-against an IP, not against an address object, so a rename cannot repoint that
-edge.
+registered tags to the tag set that it matches against the DAG filter. A
+**rule-referenced** live DAG then holds that address, and the address leaves the
+`unused` list. A DAG that no rule references keeps its members off the reachable
+set, live data or not. `refs used` shows the DAG on the path of that address,
+with the field `dynamic-registered`. The field name is a warning. A registered
+IP is registered against an IP, not against an address object. A rename cannot
+repoint that edge.
 
 The match is deliberately narrow. psc joins a registered value to an address
 object only when the two values are identical. A registered host therefore never
 marks a larger network object as used. psc does no DNS, so an FQDN object never
 matches a registered IP. A registered host does not match an `ip-range` object of
-one address either. The registered map is estate-wide, but a DAG still matches
-only the addresses that its own device-group chain can see. A firewall with more
-than one vsys reports every vsys, so a tag of one vsys can join the tag set of an
-address that another vsys uses. That direction adds members, which is the safe
-direction for `unused`.
+one address either. psc evaluates the filter once for each firewall that
+registered the value, and one firewall is enough for a match. psc never joins
+the tags of two firewalls into one set: a filter that negates a tag would then
+lose a member that one firewall really holds.
+
+The registered map is estate-wide. A **device-group** DAG still matches only the
+addresses that its own device-group chain can see. A **shared** DAG matches every
+address of the export on the live path, because PAN-OS pushes a shared DAG to
+every device group. That direction adds members, which is the safe direction for
+`unused`. The config-tag match keeps the device-group chain in both cases.
+
+psc sends `show object registered-ip all` without a vsys. psc therefore reads
+what the firewall reports for the vsys of the API key. A registration that only
+another vsys holds can stay invisible. Give the API key access to every vsys
+that you must cover.
 
 `--live-dag` fails closed. psc refuses an offline source (exit `9`). psc refuses
 a Panorama that manages no connected firewall (exit `7`). psc stops when a
-firewall query fails (exit `7`). Add `--live-dag-partial` to continue after a
-failed firewall: psc then reads the firewalls that answer, and the stderr caveat
-names the firewalls that did not answer. Without a live source, psc keeps the
+firewall query fails (exit `7`). An answer that psc cannot read is a failed
+query: an answer with no `<result>` element, and an answer whose `<count>` does
+not agree with the number of rows. psc never reads such an answer as "this
+firewall holds no registration".
+
+Add `--live-dag-partial` to continue after a failed firewall. psc then reads the
+firewalls that answer. psc names each firewall that did not answer on the
+**warning** channel, and `--no-caveat` does not silence that channel. The stderr
+caveat names them as well, and it states that the coverage is partial.
+`refs used --strict` refuses to call an object unused while the coverage is
+partial (exit `7`). A firewall that did not answer can hold the one registration
+that makes the object live. Without a live source, psc keeps the
 config-only behaviour below.
 
 Because runtime DAG membership cannot be computed from the config, `refs unused`

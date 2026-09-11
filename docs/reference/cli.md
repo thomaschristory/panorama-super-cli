@@ -145,14 +145,18 @@ referrer carries no tags. `refs dangling` rows carry the same field.
 default; `--no-caveat` suppresses it (stdout is unaffected either way).
 
 `--live-dag` reads the registered IPs of every connected firewall. psc adds
-their tags to dynamic address-group membership, so an address that a live DAG
-holds stays off the `unused` list. The option needs a live source, so pass
-`--profile <name>`. It exits `9` on an offline source, and `7` when no firewall
-is connected or a firewall query fails. Add `--live-dag-partial` to continue
-after a failed firewall. When `--live-dag` runs, the stderr caveat drops the
-registered-IP clause and names the number of firewalls that psc read. A
-`refs used` row that comes from a registered IP carries the field
-`dynamic-registered`, because a rename cannot repoint that edge. See
+their tags to dynamic address-group membership. An address that a
+**rule-referenced** live DAG holds then stays off the `unused` list. The option
+needs a live source, so pass `--profile <name>`. It exits `9` on an offline
+source, and `7` when no firewall is connected or a firewall query fails. An
+answer that psc cannot read counts as a failed query. Add `--live-dag-partial`
+to continue after a failed firewall. psc then names each firewall that did not
+answer on the stderr warning channel, which `--no-caveat` does not silence.
+`refs used --strict` refuses to call an object unused while the coverage is
+partial. When `--live-dag` runs, the stderr caveat drops the registered-IP
+clause and names the number of firewalls that psc read. A `refs used` row that
+comes from a registered IP carries the field `dynamic-registered`, because a
+rename cannot repoint that edge. See
 [References and audit](../guides/references-and-audit.md).
 
 ### name

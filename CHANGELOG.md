@@ -62,18 +62,27 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   psc reads the connected firewalls from Panorama. psc then reads
   `show object registered-ip all` from each firewall. psc adds the registered
   tags to the tag set that it matches against each dynamic address-group filter.
-  An address that a live dynamic address group holds no longer reads as unused.
-  `refs used` shows that edge with the field `dynamic-registered`, because a
-  rename cannot repoint it. psc joins a registered value to an address object
-  only when the two values are identical. A registered host therefore never
-  marks a larger network object as used. The live data only adds members: psc
-  evaluates the filter twice, so a filter that negates a tag cannot lose a
-  member. The option fails closed. It exits `9` on an offline source. It exits
-  `7` when no firewall is connected, and when a firewall query fails. Add
-  `--live-dag-partial` to continue with the firewalls that answer; the stderr
-  caveat then names the firewalls that did not answer. The caveat text also
-  names the number of firewalls that psc read. Offline output is unchanged.
-  A new pure module, `psc/core/livedag.py`, holds the op-command parser.
+  An address that a **rule-referenced** live dynamic address group holds no
+  longer reads as unused. `refs used` shows that edge with the field
+  `dynamic-registered`, because a rename cannot repoint it. psc joins a
+  registered value to an address object only when the two values are identical.
+  A registered host therefore never marks a larger network object as used. The
+  live data only adds members. psc evaluates the filter against the config tags,
+  and once more for each firewall that registered the value. One firewall is
+  enough for a match, so a filter that negates a tag on one firewall cannot lose
+  a member that another firewall holds. A shared dynamic address group matches
+  every address of the export on the live path, because PAN-OS pushes it to
+  every device group. The option fails closed. It exits `9` on an offline
+  source. It exits `7` when no firewall is connected, and when a firewall query
+  fails. An answer that psc cannot read counts as a failed query: an answer with
+  no `<result>` element, and an answer whose `<count>` does not agree with the
+  number of rows. Add `--live-dag-partial` to continue with the firewalls that
+  answer. psc then names each firewall that did not answer on the stderr warning
+  channel, and `--no-caveat` does not silence that channel. The caveat names
+  them as well, and it names the number of firewalls that psc read.
+  `refs used --strict` refuses to call an object unused while the coverage is
+  partial. Offline output is unchanged. A new pure module,
+  `psc/core/livedag.py`, holds the op-command parser.
 
 ## v1.12.1 — 2026-07-15
 
