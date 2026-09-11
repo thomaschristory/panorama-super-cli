@@ -127,10 +127,12 @@ psc -c panorama.xml delete h-unused service:tcp-old@DG-EDGE tag:t-retired
 ```
 
 `delete` plans the same cascade as [`decommission`](editing-objects.md#decommission-an-address):
-it scrubs every group member list and rule field that names the object, deletes
-a rule left with an empty required field, deletes a group the scrub empties, and
-removes the objects last. It refuses the plan (exit `6`) when it meets a
-reference it cannot rewrite. See
+it scrubs every group member list and rule field whose name stops resolving
+after the plan applies, deletes a rule left with an empty required field,
+deletes a group the scrub empties, and removes the objects last. A name that
+[falls through](safety.md#a-shadowed-name-falls-through) to a same-named object
+above keeps its place, and the plan warns about it. It refuses the plan (exit
+`6`) when it meets a reference it cannot rewrite. See
 **[Writes and safety](safety.md#reference-safe-deletion-by-name)** for the full
 blocker list.
 

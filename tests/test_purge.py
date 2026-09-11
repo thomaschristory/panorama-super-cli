@@ -620,3 +620,172 @@ def test_keep_groups_warns_that_an_emptied_group_may_dangle() -> None:
     )
     cs = _plan(snap, _t("address", "h-dead"), keep_groups=True)
     assert any("keep-groups" in w for w in cs.warnings)
+
+
+# -- the shadow fall-through is reported (#187) --------------------------
+
+
+def test_shadow_fall_through_warns_about_the_survivor() -> None:
+    """A kept reference now names another object, so the plan must say so."""
+    cs = _plan(_shadow_snapshot(), _t("address", "web", DG))
+    assert any(
+        "address-group 'g'@dg-edge static" in w and "address 'web'@shared (10.0.0.1/32)" in w
+        for w in cs.warnings
+    )
+
+
+def test_shadow_fall_through_warning_names_the_new_value() -> None:
+    """The hazard is the value change: the rule keeps matching another host."""
+    cs = _plan(_shadow_snapshot(), _t("address", "web", DG))
+    note = next(w for w in cs.warnings if "points to" in w)
+    assert "10.0.0.1/32" in note
+    assert "10.9.9.9/32" not in note
+
+
+def test_a_real_break_carries_no_fall_through_warning() -> None:
+    snap = _shadow_snapshot()
+    cs = _plan(snap, _t("address", "web", DG), _t("address", "web", SHARED))
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+def test_shadowed_nat_translation_does_not_block() -> None:
+    """A nested field is not stranded when the name still resolves."""
+    snap = Snapshot(
+        addresses=[_addr("web", "10.0.0.1/32"), _addr("web", "10.9.9.9/32", loc=DG)],
+        nat_rules=[NatRule(name="n1", location=DG, source_translation=["web"])],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _t("address", "web", DG))
+    assert not cs.is_blocked, cs.blockers
+    assert _deleted(cs) == {("address", "web", "dg-edge")}
+
+
+def test_shadowed_tag_carrier_does_not_block() -> None:
+    """The carrier keeps a tag name that still resolves, so nothing is stranded."""
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED), Tag(name="web", location=DG)],
+        addresses=[_addr("h1", "10.0.0.1/32", loc=DG, tags=["web"])],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _t("tag", "web", DG))
+    assert not cs.is_blocked, cs.blockers
+    assert _deleted(cs) == {("tag", "web", "dg-edge")}
+
+
+def test_shadowed_group_member_inside_a_nested_group() -> None:
+    """An outer group names an inner group whose name is shadowed."""
+    dg = Location.dg("dg-a")
+    snap = Snapshot(
+        addresses=[_addr("web", "10.9.9.9/32", loc=dg), _addr("h-shared", "10.0.0.7/32")],
+        address_groups=[
+            AddressGroup(name="inner", location=dg, static_members=["web"]),
+            AddressGroup(name="inner", location=SHARED, static_members=["h-shared"]),
+            AddressGroup(name="outer", location=dg, static_members=["inner"]),
+        ],
+        device_groups=["dg-a"],
+    )
+    cs = _plan(snap, _t("address", "web", dg))
+    assert ("address-group", "inner", "dg-a") in _deleted(cs)
+    assert ("address-group", "outer", "dg-a") not in _deleted(cs)
+    assert not [e for e in cs.reference_edits if e.referrer_name == "outer"]
+
+
+def test_shadow_plan_matches_decommission() -> None:
+    """The two engines must agree on a shadowed address, ops and warnings."""
+    snap = _shadow_snapshot()
+    graph = ReferenceGraph.build(snap)
+    target = next(a for a in snap.addresses if a.location == DG)
+    dec = plan_decommission(snap, graph, [target])
+    pur = plan_purge(snap, graph, [_t("address", "web", DG)])
+    assert {d.summary for d in pur.deletes} == {d.summary for d in dec.deletes}
+    assert {r.summary for r in pur.rule_deletes} == {r.summary for r in dec.rule_deletes}
+    assert {e.summary for e in pur.reference_edits} == {e.summary for e in dec.reference_edits}
+    assert not pur.rule_deletes
+    assert not pur.reference_edits
+    fall_through = [w for w in pur.warnings if "points to" in w]
+    assert fall_through == [w for w in dec.warnings if "points to" in w]
+    assert fall_through
+
+
+# -- `--keep-groups` deletes nothing, so the shadow gate does not apply ---
+
+
+def test_keep_groups_scrubs_a_shadowed_member() -> None:
+    """`--keep-groups` deletes nothing, so no name falls through and the scrub runs."""
+    cs = _plan(_shadow_snapshot(), _t("address", "web", DG), keep_groups=True)
+    assert [(e.referrer_name, e.before, e.after) for e in cs.reference_edits] == [
+        ("g", ["web"], [])
+    ]
+    assert cs.deletes == []
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+def test_keep_groups_still_lets_a_shadowed_tag_carrier_pass() -> None:
+    """The gate still answers the blocker paths: nothing here is stranded."""
+    snap = Snapshot(
+        tags=[Tag(name="web", location=SHARED), Tag(name="web", location=DG)],
+        addresses=[_addr("h1", "10.0.0.1/32", loc=DG, tags=["web"])],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _t("tag", "web", DG), keep_groups=True)
+    assert not cs.is_blocked, cs.blockers
+    assert cs.deletes == []
+
+
+def test_keep_groups_never_turns_a_dag_edge_into_an_edit() -> None:
+    """A `dynamic` edge has no member list, so it must never reach the plan."""
+    snap = Snapshot(
+        tags=[Tag(name="prod", location=SHARED)],
+        addresses=[_addr("h1", "10.0.0.1/32", tags=["prod"])],
+        address_groups=[AddressGroup(name="dag", location=SHARED, dynamic_filter="'prod'")],
+    )
+    cs = _plan(snap, _t("address", "h1"), keep_groups=True)
+    assert cs.reference_edits == []
+    assert cs.op_count == 0
+
+
+def test_no_fall_through_warning_for_a_rule_the_plan_deletes() -> None:
+    """A deleted referrer keeps no name, so the plan must not warn about one."""
+    snap = Snapshot(
+        addresses=[
+            _addr("web", "10.0.0.1/32"),
+            _addr("web", "10.9.9.9/32", loc=DG),
+            _addr("doomed", "10.9.9.10/32", loc=DG),
+        ],
+        security_rules=[
+            SecurityRule(name="r1", location=DG, source=["doomed"], destination=["web"])
+        ],
+        device_groups=["dg-edge"],
+    )
+    cs = _plan(snap, _t("address", "web", DG), _t("address", "doomed", DG))
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "dg-edge")]
+    assert not [w for w in cs.warnings if "points to" in w]
+
+
+# -- the cascade fixpoint really iterates --------------------------------
+
+
+def test_cascade_reaches_the_fixpoint_with_the_outer_group_listed_first() -> None:
+    """A single pass over the snapshot order is not enough, so the loop must repeat.
+
+    `_newly_empty_groups` scans the snapshot list in order. With the outer group
+    first, pass 1 can only find `inner`, pass 2 finds `mid`, and pass 3 finds
+    `outer`. A one-pass engine leaves two live empty groups and no orphan rule.
+    """
+    snap = Snapshot(
+        addresses=[_addr("h1", "10.1.0.5/32")],
+        address_groups=[
+            AddressGroup(name="outer", location=SHARED, static_members=["mid"]),
+            AddressGroup(name="mid", location=SHARED, static_members=["inner"]),
+            AddressGroup(name="inner", location=SHARED, static_members=["h1"]),
+        ],
+        security_rules=[SecurityRule(name="r1", source=["outer"], destination=["any"])],
+    )
+    cs = _plan(snap, _t("address", "h1"))
+    assert _deleted(cs) == {
+        ("address", "h1", "shared"),
+        ("address-group", "inner", "shared"),
+        ("address-group", "mid", "shared"),
+        ("address-group", "outer", "shared"),
+    }
+    assert [(r.name, r.location) for r in cs.rule_deletes] == [("r1", "shared")]

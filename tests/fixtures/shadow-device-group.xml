@@ -1,0 +1,43 @@
+<config version="11.0.0">
+  <shared>
+    <address>
+      <entry name="web"><ip-netmask>10.0.0.1/32</ip-netmask></entry>
+    </address>
+  </shared>
+  <devices>
+    <entry name="localhost.localdomain">
+      <device-group>
+        <entry name="dg-a">
+          <address>
+            <entry name="web"><ip-netmask>10.9.9.9/32</ip-netmask></entry>
+          </address>
+          <address-group>
+            <entry name="g">
+              <static>
+                <member>web</member>
+              </static>
+            </entry>
+          </address-group>
+          <pre-rulebase>
+            <security>
+              <rules>
+                <entry name="r1">
+                  <source><member>g</member></source>
+                  <destination><member>any</member></destination>
+                  <service><member>any</member></service>
+                </entry>
+              </rules>
+            </security>
+          </pre-rulebase>
+        </entry>
+      </device-group>
+    </entry>
+  </devices>
+  <readonly>
+    <devices>
+      <entry name="localhost.localdomain">
+        <device-group/>
+      </entry>
+    </devices>
+  </readonly>
+</config>
