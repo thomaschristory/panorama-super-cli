@@ -56,6 +56,31 @@ class RegisteredIps(BaseModel):
     by_value: dict[str, frozenset[str]] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     """Rows that psc could not read. A bad row never stops the scan."""
+    unreadable_rows: int = 0
+    """How many rows psc could not read. Each one is a gap in the coverage."""
+
+
+class UnreadableDevice(BaseModel):
+    """One firewall that Panorama names and that psc cannot read.
+
+    Panorama tells psc that the firewall exists. psc must keep that fact. A
+    dropped row would read as "this firewall does not exist", and the scan
+    would then claim a coverage that psc does not have (#183).
+    """
+
+    label: str
+    """The serial number, or another name when the row holds no serial number."""
+    reason: str
+    """Why psc cannot read the firewall. The text goes on the warning channel."""
+
+
+class ConnectedDevices(BaseModel):
+    """What `show devices connected` says about the managed firewalls."""
+
+    devices: list[ManagedDevice] = Field(default_factory=list)
+    """Each firewall that psc can query."""
+    unreadable: list[UnreadableDevice] = Field(default_factory=list)
+    """Each firewall that Panorama names and that psc cannot query."""
 
 
 class LiveDagMembership(BaseModel):
@@ -77,12 +102,40 @@ class LiveDagMembership(BaseModel):
     """How many distinct address values the map holds."""
     skipped_values: int = 0
     """How many registered values psc could not normalize."""
+    unreadable_rows: int = 0
+    """How many registered rows psc could not read."""
     warnings: list[str] = Field(default_factory=list)
 
     @property
     def is_partial(self) -> bool:
-        """True when one or more firewalls did not answer."""
-        return bool(self.failed_devices)
+        """True when psc did not read all of the registered data.
+
+        A firewall that did not answer makes the coverage partial. A row that
+        psc could not read does the same. The subject of such a row is unknown,
+        so psc cannot rule out that the row holds the registration of the
+        traced object.
+
+        A value that psc read and could not normalize is a different case. psc
+        knows that value, and it names the value on the warning channel. The
+        operator can see that the value is not the value of the traced object.
+        Such a value therefore does not make the coverage partial (#183).
+        """
+        return bool(self.failed_devices) or self.unreadable_rows > 0
+
+    def coverage_gap(self) -> str:
+        """One phrase that names every gap in the coverage.
+
+        Both commands and the caveat print this phrase, so all three state the
+        same fact in the same words. The phrase is empty when the coverage is
+        complete.
+        """
+        parts: list[str] = []
+        if self.failed_devices:
+            parts.append(f"{', '.join(self.failed_devices)} did not answer")
+        if self.unreadable_rows:
+            rows = "row" if self.unreadable_rows == 1 else "rows"
+            parts.append(f"psc could not read {self.unreadable_rows} registered {rows}")
+        return "; ".join(parts)
 
     def tag_sets_for(self, addr: Address) -> list[frozenset[str]]:
         """The registered tags of `addr` on each firewall that holds it.
@@ -127,23 +180,27 @@ def _result_element(xml_text: str, cmd: str) -> ET.Element:
     without one is an answer that psc cannot read, and psc refuses it. psc must
     not read an unknown shape as "the device holds nothing": that reads absent
     data as full coverage, which is the failure this module exists to stop.
+
+    Every refusal here is a TRANSPORT error, and thus exit `7`. The command of
+    the operator is correct. The answer of the device is what psc cannot read,
+    so this is a failed query, not bad input (#183).
     """
     try:
         root: ET.Element = _safe_fromstring(xml_text)
     except Exception as exc:
-        raise PscError(f"cannot read the answer to `{cmd}`: {exc}", ErrorType.INPUT) from exc
+        raise PscError(f"cannot read the answer to `{cmd}`: {exc}", ErrorType.TRANSPORT) from exc
     if root.tag == "result":
         # Some SDK versions hand back the <result> element alone.
         return root
     status = root.get("status")
     if status is not None and status != "success":
         detail = " ".join(root.itertext()).strip() or status
-        raise PscError(f"the device refused `{cmd}`: {detail}", ErrorType.INPUT)
+        raise PscError(f"the device refused `{cmd}`: {detail}", ErrorType.TRANSPORT)
     result = root.find("./result")
     if result is None:
         raise PscError(
             f"cannot read the answer to `{cmd}`: the answer holds no `<result>` element",
-            ErrorType.INPUT,
+            ErrorType.TRANSPORT,
         )
     return result
 
@@ -152,24 +209,52 @@ def _text(entry: ET.Element, tag: str) -> str:
     return (entry.findtext(tag) or "").strip()
 
 
-def parse_connected_devices(xml_text: str) -> list[ManagedDevice]:
-    """Read `show devices connected` into a list of firewalls.
+def parse_connected_devices(xml_text: str) -> ConnectedDevices:
+    """Read `show devices connected` into the firewalls that psc can query.
 
-    A row without a serial number is unusable, so psc drops it. psc drops a row
-    only when `<connected>` says `no`. This command reports connected firewalls
-    already, and some PAN-OS versions omit the `<connected>` element. A missing
-    element must not empty the list.
+    psc keeps every row. A firewall that `<connected>` reports as `no`, and a
+    row with no serial number, are firewalls that psc cannot query. psc puts
+    each one in `unreadable` with the reason.
+
+    psc must not drop such a row. Panorama has told psc that the firewall
+    exists, and that psc cannot read it. That is a gap in the coverage, not an
+    absence. A dropped row would let `refs unused` report a live address as
+    unused while the caveat claims full coverage (#183).
+
+    Some PAN-OS versions omit the `<connected>` element. This command reports
+    connected firewalls already, so a missing element reads as connected.
     """
     result = _result_element(xml_text, CONNECTED_DEVICES_CMD)
     devices: list[ManagedDevice] = []
-    for entry in result.findall("./devices/entry"):
+    unreadable: list[UnreadableDevice] = []
+    for index, entry in enumerate(result.findall("./devices/entry"), start=1):
         serial = _text(entry, "serial")
+        hostname = _text(entry, "hostname")
         if not serial:
+            label = hostname or f"row {index}"
+            unreadable.append(
+                UnreadableDevice(
+                    label=label,
+                    reason=(
+                        f"Panorama reports a firewall ({label}) with no serial number. "
+                        "psc cannot ask that firewall for its registered IPs."
+                    ),
+                )
+            )
             continue
         if _text(entry, "connected").lower() == "no":
+            unreadable.append(
+                UnreadableDevice(
+                    label=serial,
+                    reason=(
+                        f"firewall {serial} is not connected to Panorama. psc cannot "
+                        "ask that firewall for its registered IPs."
+                    ),
+                )
+            )
             continue
-        devices.append(ManagedDevice(serial=serial, hostname=_text(entry, "hostname")))
-    return devices
+        devices.append(ManagedDevice(serial=serial, hostname=hostname))
+    return ConnectedDevices(devices=devices, unreadable=unreadable)
 
 
 def parse_registered_ip(xml_text: str) -> RegisteredIps:
@@ -180,20 +265,21 @@ def parse_registered_ip(xml_text: str) -> RegisteredIps:
     and no exception. An empty `<result>` is a device that holds no
     registration, which is a valid answer.
 
-    The parser is strict about the shape of the answer. The device prints a
-    `<count>` element, and psc compares it to the number of `<entry>` rows. A
-    disagreement means that psc read only a part of the answer, so psc refuses
-    the answer. The caller then treats the firewall as a firewall that did not
-    answer. A silent short read would report a live host as unused.
+    The parser is strict about the shape of the answer. `_check_shape` refuses
+    every answer that psc cannot read in full. The caller then treats the
+    firewall as a firewall that did not answer. A silent short read would
+    report a live host as unused.
     """
     result = _result_element(xml_text, REGISTERED_IP_CMD)
     entries = result.findall("./entry")
-    _check_count(result, len(entries))
+    _check_shape(result, len(entries))
     by_value: dict[str, frozenset[str]] = {}
     warnings: list[str] = []
+    unreadable = 0
     for entry in entries:
         value = (entry.get("ip") or "").strip()
         if not value:
+            unreadable += 1
             warnings.append(
                 f"`{REGISTERED_IP_CMD}` returned an entry with no `ip` attribute; psc skips it"
             )
@@ -204,29 +290,51 @@ def parse_registered_ip(xml_text: str) -> RegisteredIps:
             if (text := (member.text or "").strip())
         )
         by_value[value] = by_value.get(value, frozenset()) | tags
-    return RegisteredIps(by_value=by_value, warnings=warnings)
+    return RegisteredIps(by_value=by_value, warnings=warnings, unreadable_rows=unreadable)
 
 
-def _check_count(result: ET.Element, rows: int) -> None:
-    """Refuse an answer whose `<count>` disagrees with the number of rows.
+def _check_shape(result: ET.Element, rows: int) -> None:
+    """Refuse an answer whose shape psc does not know.
 
-    `<count>` is the one field of the answer that can disagree with the rows.
-    A disagreement means a shape that psc does not know, or an answer that the
-    device cut short. psc refuses both. An absent or non-numeric `<count>` gives
-    no check, because psc has nothing to compare.
+    psc reads the rows at `result/entry`. Two checks guard that one xpath.
+
+    The first check reads the `<count>` element. psc compares `<count>` to the
+    number of rows, and a disagreement means a short read. A `<count>` that is
+    not a number means a shape that psc does not know. psc refuses both.
+
+    The second check does not share the depth assumption of the first one. A
+    result with no row, and with another element child, holds its data at a
+    depth that psc does not read. psc refuses that answer too. An empty result
+    is still a valid answer: it holds no element child, or it holds `<count>`
+    alone.
+
+    psc must never read an unknown shape as "this firewall holds no
+    registration". Such a read turns absent data into full coverage (#183).
     """
     text = (result.findtext("./count") or "").strip()
-    if not text:
+    if text:
+        try:
+            count = int(text)
+        except ValueError:
+            raise PscError(
+                f"cannot read the answer to `{REGISTERED_IP_CMD}`: the device counts "
+                f"'{text}' registered IPs, which is not a number",
+                ErrorType.TRANSPORT,
+            ) from None
+        if count != rows:
+            raise PscError(
+                f"cannot read the answer to `{REGISTERED_IP_CMD}`: the device counts "
+                f"{count} registered IPs, and psc read {rows} rows",
+                ErrorType.TRANSPORT,
+            )
+    if rows:
         return
-    try:
-        count = int(text)
-    except ValueError:
-        return
-    if count != rows:
+    other = [child.tag for child in result if child.tag != "count"]
+    if other:
         raise PscError(
-            f"cannot read the answer to `{REGISTERED_IP_CMD}`: the device counts "
-            f"{count} registered IPs, and psc read {rows} rows",
-            ErrorType.INPUT,
+            f"cannot read the answer to `{REGISTERED_IP_CMD}`: the answer holds no "
+            f"`entry` row, and it holds `<{other[0]}>`, which psc does not know",
+            ErrorType.TRANSPORT,
         )
 
 
@@ -243,7 +351,10 @@ def _registered_key(value: str) -> str | None:
 
 
 def build_membership(
-    per_device: Mapping[str, RegisteredIps], *, failed: Sequence[str] = ()
+    per_device: Mapping[str, RegisteredIps],
+    *,
+    failed: Sequence[str] = (),
+    unreadable: Sequence[UnreadableDevice] = (),
 ) -> LiveDagMembership:
     """Collect the registered IPs of every firewall into one membership map.
 
@@ -252,7 +363,10 @@ def build_membership(
     A joined set is unsafe: a filter such as `'prod' and not 'quarantine'` can
     lose a member that one firewall really holds.
 
-    Each firewall in `failed` also gives a warning. The warning channel is the
+    Each firewall in `failed` also gives a warning. A firewall in `unreadable`
+    gives the warning that the parser wrote for it: Panorama named the firewall,
+    and psc could not query it at all. Both kinds count as a firewall that did
+    not answer, so both make the coverage partial. The warning channel is the
     one channel that `--no-caveat` does not silence, so partial coverage always
     reaches the operator (#183).
     """
@@ -278,11 +392,16 @@ def build_membership(
             f"firewall {serial} did not answer `{REGISTERED_IP_CMD}`. The registered "
             "IPs of that firewall are not in this scan."
         )
+    for device in unreadable:
+        warnings.append(
+            f"{device.reason} The registered IPs of that firewall are not in this scan."
+        )
     return LiveDagMembership(
         by_key=by_key,
         devices=list(per_device),
-        failed_devices=list(failed),
+        failed_devices=[*failed, *(d.label for d in unreadable)],
         indexed_values=len(by_key),
         skipped_values=len(skipped),
+        unreadable_rows=sum(r.unreadable_rows for r in per_device.values()),
         warnings=warnings,
     )

@@ -149,9 +149,11 @@ their tags to dynamic address-group membership. An address that a
 **rule-referenced** live DAG holds then stays off the `unused` list. The option
 needs a live source, so pass `--profile <name>`. It exits `9` on an offline
 source, and `7` when no firewall is connected or a firewall query fails. An
-answer that psc cannot read counts as a failed query. Add `--live-dag-partial`
-to continue after a failed firewall. psc then names each firewall that did not
-answer on the stderr warning channel, which `--no-caveat` does not silence.
+answer that psc cannot read counts as a failed query, and it exits `7`. A
+firewall that Panorama names and that psc cannot query counts as one too. Add
+`--live-dag-partial` to continue after a firewall that psc cannot read. psc then
+names each such firewall on the stderr warning channel, which `--no-caveat` does
+not silence.
 `refs used --strict` refuses to call an object unused while the coverage is
 partial. When `--live-dag` runs, the stderr caveat drops the registered-IP
 clause and names the number of firewalls that psc read. A `refs used` row that

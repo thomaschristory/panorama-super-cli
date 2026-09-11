@@ -339,20 +339,30 @@ class LiveSource:
         is registered", and the command would report absent data as full
         coverage.
 
-        By default one failed firewall stops the command. With `partial` the
-        read continues, and the result names the firewalls that did not answer,
-        so the caller can show a partial-coverage caveat.
+        By default one failed firewall stops the command. A firewall that
+        Panorama names and that psc cannot query stops it in the same way. Such
+        a firewall still holds its registrations, so it is a gap in the
+        coverage, not an absence. With `partial` the read continues, and the
+        result names every firewall that psc could not read.
         """
-        devices = parse_connected_devices(self.op(CONNECTED_DEVICES_CMD))
-        if not devices:
+        connected = parse_connected_devices(self.op(CONNECTED_DEVICES_CMD))
+        if not connected.devices and not connected.unreadable:
             raise PscError(
                 f"{self.hostname} manages no connected firewall, so psc read no "
                 "registered IPs; drop --live-dag or check the firewall connection",
                 ErrorType.TRANSPORT,
             )
+        if connected.unreadable and not partial:
+            names = ", ".join(d.label for d in connected.unreadable)
+            raise PscError(
+                f"{self.hostname} manages a firewall that psc cannot read: {names}. "
+                "The registered IPs of that firewall would be missing from the scan; "
+                "add --live-dag-partial to continue with the other firewalls",
+                ErrorType.TRANSPORT,
+            )
         per_device: dict[str, RegisteredIps] = {}
         failed: list[str] = []
-        for device in devices:
+        for device in connected.devices:
             try:
                 per_device[device.serial] = parse_registered_ip(
                     self.op(REGISTERED_IP_CMD, target=device.serial)
@@ -366,7 +376,7 @@ class LiveSource:
                 f"no firewall of {self.hostname} answered `{REGISTERED_IP_CMD}`",
                 ErrorType.TRANSPORT,
             )
-        return build_membership(per_device, failed=failed)
+        return build_membership(per_device, failed=failed, unreadable=connected.unreadable)
 
     def _device(self) -> object:
         from panos.panorama import Panorama  # noqa: PLC0415 — defer heavy SDK import to live use

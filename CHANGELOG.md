@@ -69,20 +69,34 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   A registered host therefore never marks a larger network object as used. The
   live data only adds members. psc evaluates the filter against the config tags,
   and once more for each firewall that registered the value. One firewall is
-  enough for a match, so a filter that negates a tag on one firewall cannot lose
-  a member that another firewall holds. A shared dynamic address group matches
-  every address of the export on the live path, because PAN-OS pushes it to
-  every device group. The option fails closed. It exits `9` on an offline
-  source. It exits `7` when no firewall is connected, and when a firewall query
-  fails. An answer that psc cannot read counts as a failed query: an answer with
-  no `<result>` element, and an answer whose `<count>` does not agree with the
-  number of rows. Add `--live-dag-partial` to continue with the firewalls that
-  answer. psc then names each firewall that did not answer on the stderr warning
-  channel, and `--no-caveat` does not silence that channel. The caveat names
-  them as well, and it names the number of firewalls that psc read.
-  `refs used --strict` refuses to call an object unused while the coverage is
-  partial. Offline output is unchanged. A new pure module,
-  `psc/core/livedag.py`, holds the op-command parser.
+  enough for a match. A filter that negates a tag on one firewall therefore
+  cannot lose a member that another firewall holds. A shared dynamic address
+  group matches every address of the export on the live path, because PAN-OS
+  pushes it to every device group. The option fails closed. It exits `9` on an
+  offline source. It exits `7` when no firewall is connected, and when a
+  firewall query fails. An answer that psc cannot read counts as a failed
+  query, and it exits `7` too. An answer with no `<result>` element is
+  unreadable. An answer whose `<count>` does not agree with the number of rows
+  is unreadable. An answer whose `<count>` is not a number is unreadable. An
+  answer that holds no `entry` row, and holds another element, is unreadable
+  too. A firewall that Panorama names and that psc cannot query counts as a
+  failed query as well.
+  psc cannot query a firewall that `show devices connected` reports as not
+  connected, and it cannot query a device row with no serial number. psc never
+  drops such a row: the firewall still holds its registrations. Add
+  `--live-dag-partial` to continue with the firewalls that answer. psc then
+  names each firewall that it could not read on the stderr warning channel, and
+  `--no-caveat` does not silence that channel. The caveat names them as well,
+  and it names the number of firewalls that psc read. A registered row with no
+  `ip` attribute makes the coverage partial too, because psc does not know the
+  subject of that row. `refs used --strict` refuses to call an object unused
+  while the coverage is partial. Offline stdout and offline exit codes are
+  byte-identical. Offline stderr is byte-identical too, with one exception.
+  `refs unused --strict` now prints a graph warning before it refuses an empty
+  result, and it printed nothing before. `refs unused` also prints its graph
+  warning before the rows, and it printed the warning after them before. The
+  stderr text does not change, only the order against stdout. A new pure
+  module, `psc/core/livedag.py`, holds the op-command parser.
 
 ## v1.12.1 — 2026-07-15
 

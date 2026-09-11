@@ -209,8 +209,11 @@ to `delete` — it is the reference-safe sink for an `unused` list.
 firewall. psc adds their tags to dynamic address-group membership. An address
 that a **rule-referenced** live DAG holds then stays off the list. It exits `9`
 on an offline source, and `7` when no firewall is connected or a firewall query
-fails. Add `--live-dag-partial` to continue after a failed firewall. psc then
-names each firewall that did not answer on the stderr warning channel.
+fails. An answer that psc cannot read counts as a failed query, and it exits `7`
+too. A firewall that Panorama names and that psc cannot query counts as one too.
+psc cannot query a firewall that Panorama reports as not connected. Add
+`--live-dag-partial` to continue after a firewall that psc cannot read. psc then
+names each such firewall on the stderr warning channel.
 `--no-caveat` does not silence that channel. `refs used --strict` refuses to
 call an object unused while the coverage is partial. psc joins a registered
 value to an address object only when the two values are identical. A registered

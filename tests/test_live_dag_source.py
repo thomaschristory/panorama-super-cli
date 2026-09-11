@@ -154,3 +154,81 @@ def test_partial_coverage_still_refuses_when_every_firewall_fails(
     with pytest.raises(PscError) as exc:
         _live().live_dag_membership(partial=True)
     assert exc.value.error_type is ErrorType.TRANSPORT
+
+
+_DEVICES_002_DOWN = """<response status="success"><result><devices>
+  <entry name="001"><serial>001</serial><hostname>fw-a</hostname><connected>yes</connected></entry>
+  <entry name="002"><serial>002</serial><hostname>fw-b</hostname><connected>no</connected></entry>
+</devices></result></response>"""
+
+_DEVICES_NO_SERIAL = """<response status="success"><result><devices>
+  <entry name="001"><serial>001</serial><hostname>fw-a</hostname><connected>yes</connected></entry>
+  <entry name="003"><hostname>fw-c</hostname><connected>yes</connected></entry>
+</devices></result></response>"""
+
+
+def test_a_disconnected_firewall_stops_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CRITICAL (#183): Panorama named firewall 002 and said that psc cannot
+    # read it. That is the same coverage gap as a firewall that raises, so the
+    # default run refuses in the same way.
+    pano = _FakePano(devices=_DEVICES_002_DOWN)
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
+    with pytest.raises(PscError) as exc:
+        _live().live_dag_membership()
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert "002" in exc.value.message
+    # psc refuses before it queries any firewall.
+    assert pano.calls == [(CONNECTED_DEVICES_CMD, None)]
+
+
+def test_partial_coverage_names_a_disconnected_firewall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pano = _FakePano(devices=_DEVICES_002_DOWN)
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
+    m = _live().live_dag_membership(partial=True)
+    assert m.devices == ["001"]
+    assert m.failed_devices == ["002"]
+    assert m.is_partial is True
+    assert any("002" in w for w in m.warnings)
+
+
+def test_a_device_row_with_no_serial_stops_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pano = _FakePano(devices=_DEVICES_NO_SERIAL)
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
+    with pytest.raises(PscError) as exc:
+        _live().live_dag_membership()
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert "fw-c" in exc.value.message
+
+
+def test_partial_coverage_names_a_device_row_with_no_serial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pano = _FakePano(devices=_DEVICES_NO_SERIAL)
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
+    m = _live().live_dag_membership(partial=True)
+    assert m.failed_devices == ["fw-c"]
+    assert m.is_partial is True
+    assert any("fw-c" in w for w in m.warnings)
+
+
+def test_an_answer_psc_cannot_read_is_a_failed_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The exit code an operator sees is 7, not 3. The command is correct, and
+    # the answer of the device is what psc cannot read (#183).
+    class _BadShape(_FakePano):
+        def op(self, cmd: str, *a: object, **k: object) -> bytes:  # type: ignore[override]
+            target = (k.get("extra_qs") or {}).get("target")  # type: ignore[union-attr]
+            self.calls.append((cmd, target))
+            if cmd == CONNECTED_DEVICES_CMD:
+                return self._devices.encode("utf-8")
+            return b'<response status="success"><result><count>1200</count></result></response>'
+
+    pano = _BadShape()
+    monkeypatch.setattr(panos.panorama, "Panorama", lambda *a, **k: pano)
+    with pytest.raises(PscError) as exc:
+        _live().live_dag_membership()
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert EXIT_CODES[exc.value.error_type] == 7

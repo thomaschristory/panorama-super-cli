@@ -22,9 +22,11 @@ UI would import `psc.core` directly and never touch `psc.cli`.
   dynamic address-group membership from **registered IPs** (`show devices
   connected`, `show object registered-ip all`). Device-free; `source.py` does
   the I/O and `ReferenceGraph.build(..., live_dag=...)` consumes the result.
-  The enrichment only *adds* members: a DAG filter can negate a tag, so the
-  graph evaluates the filter against the config tags and against the joined
-  tags, and keeps the address when either matches.
+  The enrichment only *adds* members. A DAG filter can negate a tag. The graph
+  therefore keeps one tag set per firewall, and it never joins two sets. It
+  evaluates the filter against the config tags, and once more for each firewall
+  that registered the value. One match is enough. A firewall that psc cannot
+  read is a coverage gap: it becomes a failed device, never a dropped row.
 - `psc/core/resolve.py` — `find` engine (IP/value/name → objects).
 - `psc/core/dedup.py` — duplicate detection + safe merge planning (objects and
   address-groups, the latter bucketed by effective leaf-address set).

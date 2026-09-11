@@ -22,7 +22,7 @@ _LIVE_DAG_HELP = (
     "dynamic address-group membership. This option needs a live source."
 )
 _LIVE_DAG_PARTIAL_HELP = (
-    "Continue when a firewall does not answer. psc then names on stderr each "
+    "Continue when psc cannot read a firewall. psc then names on stderr each "
     "firewall that it could not read. This option needs --live-dag."
 )
 
@@ -86,7 +86,7 @@ def _unused_caveat(live: LiveDagMembership | None, unmatched: int = 0) -> str:
         scope = (
             f"psc read the registered IPs of {count} firewall{plural}, so DAG membership "
             "from externally registered IPs is scanned in part. Coverage is partial: "
-            f"{', '.join(live.failed_devices)} did not answer."
+            f"{live.coverage_gap()}."
         )
     if unmatched:
         scope += f" No address object carries {unmatched} of the registered values."
@@ -107,6 +107,8 @@ def _emit_live_warnings(rt: Runtime, live: LiveDagMembership | None) -> None:
     A device row with no `ip` attribute, or a registered value that is not an
     address value, is a real coverage gap. It is rare, so it belongs on the
     warning channel. The per-run coverage count does not; it goes in the caveat.
+    A row with no `ip` attribute also makes the coverage partial, because the
+    subject of that row is unknown (see `LiveDagMembership.is_partial`).
 
     `build_membership` also puts one warning here for each firewall that did not
     answer. The caveat is not enough for that fact: `--no-caveat` silences the
@@ -128,7 +130,7 @@ def _partial_coverage(live: LiveDagMembership | None) -> str:
     if live is None or not live.is_partial:
         return ""
     return (
-        f"coverage is partial: {', '.join(live.failed_devices)} did not answer; "
+        f"coverage is partial: {live.coverage_gap()}; "
         f"psc read the registered IPs of {len(live.devices)} firewall"
         f"{'' if len(live.devices) == 1 else 's'}"
     )
@@ -193,7 +195,7 @@ def used(
         if live is not None and live.is_partial:
             raise PscError(
                 f"psc found no reference to '{name}', and the live coverage is "
-                f"partial: {', '.join(live.failed_devices)} did not answer. psc "
+                f"partial: {live.coverage_gap()}. psc "
                 f"cannot say that '{name}' is unused.",
                 ErrorType.TRANSPORT,
             )

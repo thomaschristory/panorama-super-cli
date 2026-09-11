@@ -25,7 +25,12 @@ from rich.console import Console
 from psc.cli import refs_cmds
 from psc.cli.runtime import Runtime
 from psc.config.models import Config
-from psc.core.livedag import LiveDagMembership, RegisteredIps, build_membership
+from psc.core.livedag import (
+    LiveDagMembership,
+    RegisteredIps,
+    UnreadableDevice,
+    build_membership,
+)
 from psc.core.models import (
     Address,
     AddressGroup,
@@ -67,6 +72,7 @@ def _membership(
     *,
     values: dict[str, set[str]] | None = None,
     failed: list[str] | None = None,
+    unreadable: list[str] | None = None,
     bad_row: bool = False,
 ) -> LiveDagMembership:
     rows = {
@@ -74,8 +80,18 @@ def _membership(
     }
     warnings = ["`show object registered-ip all` returned an entry with no `ip` attribute"]
     return build_membership(
-        {"001": RegisteredIps(by_value=rows, warnings=warnings if bad_row else [])},
+        {
+            "001": RegisteredIps(
+                by_value=rows,
+                warnings=warnings if bad_row else [],
+                unreadable_rows=1 if bad_row else 0,
+            )
+        },
         failed=failed or [],
+        unreadable=[
+            UnreadableDevice(label=s, reason=f"firewall {s} is not connected to Panorama.")
+            for s in unreadable or []
+        ],
     )
 
 
@@ -294,3 +310,49 @@ def test_an_offline_source_refuses_the_flag() -> None:
     with pytest.raises(PscError) as exc:
         _unused(case, live_dag=True)
     assert exc.value.error_type is ErrorType.CONFIG
+
+
+# --- a firewall psc cannot query at all -----------------------------------
+
+
+def test_unused_names_a_firewall_psc_could_not_query() -> None:
+    # CRITICAL (#183): Panorama named firewall 002, and psc could not read it.
+    # The run must not claim full coverage, with or without the caveat.
+    case = _Case(_membership(unreadable=["002"]))
+    _unused(case, live_dag=True, partial=True, caveat=False)
+    assert "002" in case.stderr()
+    assert "coverage is partial" in case.stderr()
+
+
+def test_the_caveat_degrades_for_a_firewall_psc_could_not_query() -> None:
+    case = _Case(_membership(unreadable=["002"]))
+    _unused(case, live_dag=True, partial=True)
+    assert "IS scanned" not in case.stderr()
+    assert "scanned in part" in case.stderr()
+    assert "002" in case.stderr()
+
+
+def test_strict_used_refuses_on_a_firewall_psc_could_not_query() -> None:
+    case = _Case(_membership(values={}, unreadable=["002"]), strict=True)
+    with pytest.raises(PscError) as exc:
+        _used(case, "h-vm", live_dag=True, partial=True)
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert "002" in exc.value.message
+    assert "002" in case.stderr()
+
+
+def test_strict_used_refuses_on_a_row_psc_could_not_read() -> None:
+    # A row with no `ip` attribute holds an unknown subject. psc cannot rule
+    # out that the row holds the registration of this object (#183).
+    case = _Case(_membership(values={}, bad_row=True), strict=True)
+    with pytest.raises(PscError) as exc:
+        _used(case, "h-cold", live_dag=True)
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert "could not read 1 registered row" in exc.value.message
+
+
+def test_the_caveat_degrades_for_a_row_psc_could_not_read() -> None:
+    case = _Case(_membership(bad_row=True))
+    _unused(case, live_dag=True)
+    assert "IS scanned" not in case.stderr()
+    assert "could not read 1 registered row" in case.stderr()

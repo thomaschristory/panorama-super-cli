@@ -11,6 +11,7 @@ import pytest
 from psc.core.livedag import (
     CONNECTED_DEVICES_CMD,
     REGISTERED_IP_CMD,
+    ConnectedDevices,
     LiveDagMembership,
     ManagedDevice,
     RegisteredIps,
@@ -93,7 +94,7 @@ def test_a_success_answer_without_a_result_element_is_refused() -> None:
     for text in ('<response status="success"/>', "<response/>"):
         with pytest.raises(PscError) as exc:
             parse_registered_ip(text)
-        assert exc.value.error_type is ErrorType.INPUT
+        assert exc.value.error_type is ErrorType.TRANSPORT
         assert REGISTERED_IP_CMD in exc.value.message
 
 
@@ -105,7 +106,7 @@ def test_a_count_that_disagrees_with_the_rows_is_refused() -> None:
         parse_registered_ip(
             '<response status="success"><result><count>1200</count></result></response>'
         )
-    assert exc.value.error_type is ErrorType.INPUT
+    assert exc.value.error_type is ErrorType.TRANSPORT
     assert "1200" in exc.value.message
 
     with pytest.raises(PscError):
@@ -121,16 +122,71 @@ def test_a_count_that_agrees_with_the_rows_parses() -> None:
     assert len(reg.by_value) == 2
 
 
-def test_an_absent_or_unreadable_count_gives_no_check() -> None:
-    # psc has nothing to compare, so it reads the rows it can read.
+def test_an_absent_count_still_reads_the_rows() -> None:
+    # psc has nothing to compare, and it read a row, so the shape is known.
     assert parse_registered_ip(
         '<response status="success"><result><entry ip="10.1.1.5"/></result></response>'
     ).by_value == {"10.1.1.5": frozenset()}
-    assert parse_registered_ip(
-        '<response status="success"><result>'
-        '<entry ip="10.1.1.5"/><count>many</count>'
-        "</result></response>"
-    ).by_value == {"10.1.1.5": frozenset()}
+
+
+def test_a_count_that_is_not_a_number_is_refused() -> None:
+    # psc cannot check the rows against such a count, so the shape is unknown.
+    with pytest.raises(PscError) as exc:
+        parse_registered_ip(
+            '<response status="success"><result>'
+            '<entry ip="10.1.1.5"/><count>many</count>'
+            "</result></response>"
+        )
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert "not a number" in exc.value.message
+
+
+def test_an_empty_result_is_a_valid_empty_answer() -> None:
+    # A firewall that holds no registration is a normal answer.
+    assert parse_registered_ip('<response status="success"><result/></response>').by_value == {}
+    assert (
+        parse_registered_ip(
+            '<response status="success"><result><count>0</count></result></response>'
+        ).by_value
+        == {}
+    )
+
+
+def test_rows_at_an_unknown_depth_are_refused() -> None:
+    # CRITICAL (#183): the rows sit one level deeper than psc reads. The
+    # `<count>` guard shares the depth of the row xpath, so it misses too. psc
+    # must never read this answer as "the firewall holds no registration".
+    with pytest.raises(PscError) as exc:
+        parse_registered_ip(
+            '<response status="success"><result><registered-ip>'
+            "<count>2</count>"
+            '<entry ip="10.1.1.5"><tag><member>prod</member></tag></entry>'
+            '<entry ip="10.1.1.6"/>'
+            "</registered-ip></result></response>"
+        )
+    assert exc.value.error_type is ErrorType.TRANSPORT
+    assert "registered-ip" in exc.value.message
+
+
+def test_rows_at_an_unknown_depth_with_no_count_are_refused() -> None:
+    with pytest.raises(PscError) as exc:
+        parse_registered_ip(
+            '<response status="success"><result><entries>'
+            '<entry ip="10.1.1.5"/>'
+            "</entries></result></response>"
+        )
+    assert exc.value.error_type is ErrorType.TRANSPORT
+
+
+def test_rows_at_an_unknown_depth_with_a_bad_count_are_refused() -> None:
+    with pytest.raises(PscError) as exc:
+        parse_registered_ip(
+            '<response status="success"><result><registered-ip>'
+            "<count>many</count>"
+            '<entry ip="10.1.1.5"/>'
+            "</registered-ip></result></response>"
+        )
+    assert exc.value.error_type is ErrorType.TRANSPORT
 
 
 def test_a_row_with_no_ip_attribute_still_counts_as_a_row() -> None:
@@ -173,25 +229,42 @@ def test_a_bare_result_root_parses_too() -> None:
     assert reg.by_value == {"10.1.1.5": frozenset()}
 
 
-def test_malformed_xml_raises_a_typed_input_error() -> None:
+def test_malformed_xml_raises_a_typed_transport_error() -> None:
+    # An answer that psc cannot read is a failed query, so the exit code is 7.
     with pytest.raises(PscError) as exc:
         parse_registered_ip("<response")
-    assert exc.value.error_type is ErrorType.INPUT
+    assert exc.value.error_type is ErrorType.TRANSPORT
     assert REGISTERED_IP_CMD in exc.value.message
 
 
-def test_error_status_response_raises_a_typed_input_error() -> None:
+def test_error_status_response_raises_a_typed_transport_error() -> None:
     with pytest.raises(PscError) as exc:
         parse_registered_ip('<response status="error"><msg>Invalid command</msg></response>')
-    assert exc.value.error_type is ErrorType.INPUT
+    assert exc.value.error_type is ErrorType.TRANSPORT
 
 
 # --- device-list parsing --------------------------------------------------
 
 
-def test_parse_connected_devices_drops_a_disconnected_or_serial_less_row() -> None:
+def test_parse_connected_devices_keeps_a_row_that_psc_cannot_query() -> None:
+    # CRITICAL (#183): Panorama named firewall 002 and the row with no serial
+    # number. psc cannot read either one. That is a gap in the coverage, and a
+    # dropped row would read as an absence.
     devices = parse_connected_devices(_DEVICES)
-    assert devices == [ManagedDevice(serial="001", hostname="fw-a")]
+    assert devices.devices == [ManagedDevice(serial="001", hostname="fw-a")]
+    assert [d.label for d in devices.unreadable] == ["002", "fw-c"]
+    assert "002" in devices.unreadable[0].reason
+    assert "fw-c" in devices.unreadable[1].reason
+
+
+def test_a_serial_less_row_with_no_hostname_still_gets_a_label() -> None:
+    devices = parse_connected_devices(
+        '<response status="success"><result><devices>'
+        "<entry><connected>yes</connected></entry>"
+        "</devices></result></response>"
+    )
+    assert devices.devices == []
+    assert [d.label for d in devices.unreadable] == ["row 1"]
 
 
 def test_a_device_row_without_a_connected_child_counts_as_connected() -> None:
@@ -202,17 +275,19 @@ def test_a_device_row_without_a_connected_child_counts_as_connected() -> None:
         "<entry><serial>009</serial><hostname>fw-x</hostname></entry>"
         "</devices></result></response>"
     )
-    assert devices == [ManagedDevice(serial="009", hostname="fw-x")]
+    assert devices.devices == [ManagedDevice(serial="009", hostname="fw-x")]
+    assert devices.unreadable == []
 
 
 def test_absent_device_list_gives_an_empty_list() -> None:
-    assert parse_connected_devices('<response status="success"><result/></response>') == []
+    answer = parse_connected_devices('<response status="success"><result/></response>')
+    assert answer == ConnectedDevices()
 
 
 def test_a_device_answer_without_a_result_element_is_refused() -> None:
     with pytest.raises(PscError) as exc:
         parse_connected_devices('<response status="success"/>')
-    assert exc.value.error_type is ErrorType.INPUT
+    assert exc.value.error_type is ErrorType.TRANSPORT
 
 
 def test_device_parse_error_names_the_command() -> None:
@@ -321,3 +396,50 @@ def test_a_failed_device_gives_a_warning_as_well() -> None:
     # failed firewall reaches the operator on every run (#183).
     m = build_membership({"001": RegisteredIps()}, failed=["002"])
     assert any("002" in w for w in m.warnings)
+
+
+def test_an_unreadable_firewall_counts_as_a_failed_firewall() -> None:
+    # CRITICAL (#183): Panorama named the firewall, and psc could not query it.
+    # The membership must carry that fact, exactly like a firewall that raises.
+    unreadable = parse_connected_devices(_DEVICES).unreadable
+    m = build_membership({"001": RegisteredIps()}, unreadable=unreadable)
+    assert m.failed_devices == ["002", "fw-c"]
+    assert m.is_partial is True
+    assert any("002" in w for w in m.warnings)
+    assert any("fw-c" in w for w in m.warnings)
+    assert m.coverage_gap() == "002, fw-c did not answer"
+
+
+def test_an_unreadable_row_makes_the_coverage_partial() -> None:
+    # The subject of the row is unknown, so psc cannot rule out that the row
+    # holds the registration of the traced object (#183).
+    reg = parse_registered_ip(
+        '<response status="success"><result>'
+        '<entry ip="10.1.1.5"/><entry/><count>2</count>'
+        "</result></response>"
+    )
+    assert reg.unreadable_rows == 1
+    m = build_membership({"001": reg})
+    assert m.unreadable_rows == 1
+    assert m.is_partial is True
+    assert m.coverage_gap() == "psc could not read 1 registered row"
+
+
+def test_a_value_psc_cannot_normalize_keeps_the_coverage_complete() -> None:
+    # psc read the value, and it names the value on the warning channel. The
+    # operator can see that the value is not the value of the traced object.
+    m = _membership(**{"001": {"not-an-ip": {"prod"}}})
+    assert m.is_partial is False
+    assert m.coverage_gap() == ""
+
+
+def test_coverage_gap_names_both_kinds_of_gap() -> None:
+    reg = parse_registered_ip(
+        '<response status="success"><result><entry/><count>1</count></result></response>'
+    )
+    m = build_membership({"001": reg}, failed=["002"])
+    assert m.coverage_gap() == "002 did not answer; psc could not read 1 registered row"
+
+
+def test_a_complete_membership_has_no_coverage_gap() -> None:
+    assert build_membership({"001": RegisteredIps()}).coverage_gap() == ""
