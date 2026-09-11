@@ -7,6 +7,13 @@ the operator always sees a plan between the candidate list and the change.
 `space` sends the row under the cursor to the selection. `a` sends every listed
 row. The `tags` column carries the issue #180 signal: a tag-bearing candidate
 can join a dynamic address-group at runtime, so it is the row to check first.
+
+Boundary: the workbench always builds a **config-only** reference graph. It
+never reads the registered IPs of the firewalls, and it cannot, because the
+spoke works on the staged snapshot of the session. Only the CLI resolves that
+runtime state, with `psc refs unused --live-dag` (#183). An address that
+`--live-dag` keeps off the CLI list can therefore still appear here. Check such
+a candidate with the CLI before you send it to the delete spoke.
 """
 
 from __future__ import annotations
@@ -28,14 +35,17 @@ if TYPE_CHECKING:
 
 _KINDS = ("address", "address-group", "service", "service-group", "tag")
 
-# Mirrors the CLI `refs unused` stderr caveat: `unused` only scans device-group
-# objects + policy rulebases, so it has blind spots (templates, network/device
-# config, externally-registered DAG members). Shown as a Static so the operator
-# treats results as candidates, not a delete list.
+# Mirrors the config-only form of the CLI `refs unused` stderr caveat: `unused`
+# only scans device-group objects + policy rulebases, so it has blind spots
+# (templates, network/device config, externally-registered DAG members). The
+# workbench never reads live data, so this text stays the config-only one — see
+# the module docstring. Shown as a Static so the operator treats results as
+# candidates, not a delete list.
 _CAVEAT = (
     "candidates only — unreferenced by the scanned objects/policy rulebases. "
     "NOT scanned: templates & network/device config, and DAG membership from "
-    "externally registered IPs. Verify before deleting (esp. shared)."
+    "externally registered IPs (the CLI resolves those with `refs unused "
+    "--live-dag`). Verify before deleting (esp. shared)."
 )
 
 _HINT = "space — send row to selection   a — send all   X (hub) — plan the delete"

@@ -25,6 +25,13 @@ UI would import `psc.core` directly and never touch `psc.cli`.
   heart of `find` and `dedup`).
 - `psc/core/refs.py` — the reference graph: where-used, unused (recursive),
   dangling. Models PAN-OS name resolution (DG-local shadows shared).
+- `psc/core/livedag.py` — pure parser for the two op commands that expose
+  dynamic address-group membership from **registered IPs** (`show devices
+  connected`, `show object registered-ip all`). Device-free; `source.py` does
+  the I/O and `ReferenceGraph.build(..., live_dag=...)` consumes the result.
+  The enrichment only *adds* members: a DAG filter can negate a tag, so the
+  graph evaluates the filter against the config tags and against the joined
+  tags, and keeps the address when either matches.
 - `psc/core/resolve.py` — `find` engine (IP/value/name → objects).
 - `psc/core/dedup.py` — duplicate detection + safe merge planning (objects and
   address-groups, the latter bucketed by effective leaf-address set).

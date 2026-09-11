@@ -130,8 +130,8 @@ See
 ### refs
 
 ```
-psc refs used <name> [--kind KIND] [--location LOC]
-psc refs unused [--kind KIND] [--ignore-disabled] [--caveat/--no-caveat]
+psc refs used <name> [--kind KIND] [--location LOC] [--live-dag] [--live-dag-partial]
+psc refs unused [--kind KIND] [--ignore-disabled] [--caveat/--no-caveat] [--live-dag] [--live-dag-partial]
 psc refs dangling
 ```
 
@@ -142,7 +142,17 @@ referrer. Table and CSV output show the field as a `tags` column and join the
 tags. JSON, JSONL and YAML output carry a list. The column is empty when the
 referrer carries no tags. `refs dangling` rows carry the same field.
 `refs unused` prints a scan-scope blind-spot caveat on stderr by
-default; `--no-caveat` suppresses it (stdout is unaffected either way). See
+default; `--no-caveat` suppresses it (stdout is unaffected either way).
+
+`--live-dag` reads the registered IPs of every connected firewall. psc adds
+their tags to dynamic address-group membership, so an address that a live DAG
+holds stays off the `unused` list. The option needs a live source, so pass
+`--profile <name>`. It exits `9` on an offline source, and `7` when no firewall
+is connected or a firewall query fails. Add `--live-dag-partial` to continue
+after a failed firewall. When `--live-dag` runs, the stderr caveat drops the
+registered-IP clause and names the number of firewalls that psc read. A
+`refs used` row that comes from a registered IP carries the field
+`dynamic-registered`, because a rename cannot repoint that edge. See
 [References and audit](../guides/references-and-audit.md).
 
 ### name

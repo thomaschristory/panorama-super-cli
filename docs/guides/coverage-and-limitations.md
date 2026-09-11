@@ -37,7 +37,7 @@ Within those rulebases it models exactly this **reference surface**:
 | NAT `source-translation` / `destination-translation` | address | ✅ where-used; **review-gated** for repoint |
 | PBF forwarding `nexthop` (`fqdn` variant) | address | ✅ where-used; **review-gated** for repoint |
 | static address-group / service-group members | address / service | ✅ |
-| dynamic address-group (DAG) membership | address | ✅ from **config tags**; registered IPs not covered (see below) |
+| dynamic address-group (DAG) membership | address | ✅ from **config tags**; registered IPs with `--live-dag` on a live source (see below) |
 
 "Review-gated" means psc *sees* the reference and will **block** a
 merge/rename/delete that would strand it (it cannot rewrite a nested,
@@ -74,12 +74,36 @@ into a rule-referenced DAG is treated as reachable — it is no longer reported
 `unused`, and `refs used <addr>` shows the DAG (as a `dynamic` referrer) on the
 path to the rule. DAG filters are also still parsed for the unused-**tag** check.
 
-The residual gap is **runtime, not config**: an address pulled into a DAG by an
+The other half is **runtime, not config**: an address pulled into a DAG by an
 **externally registered IP** (XML-API / User-ID / VM-info / cloud plugin) carries
-no config tag, so the export psc reads cannot show that membership. Such an
-address can still be reported `unused`. Only a **live** membership query
-(`show object dynamic-address-group all`) sees registered IPs; resolving them is
-tracked as a follow-up enhancement on the live path.
+no config tag, so the export psc reads cannot show that membership.
+
+On a **live source**, `psc refs unused --live-dag` closes this gap. psc reads the
+connected firewalls from Panorama (`show devices connected`). psc then reads the
+registered IPs of each firewall (`show object registered-ip all`). psc adds the
+registered tags to the tag set that it matches against the DAG filter. An address
+that a live DAG holds is then reachable, and it leaves the `unused` list.
+`refs used` shows the DAG on the path of that address, with the field
+`dynamic-registered`. The field name is a warning: a registered IP is registered
+against an IP, not against an address object, so a rename cannot repoint that
+edge.
+
+The match is deliberately narrow. psc joins a registered value to an address
+object only when the two values are identical. A registered host therefore never
+marks a larger network object as used. psc does no DNS, so an FQDN object never
+matches a registered IP. A registered host does not match an `ip-range` object of
+one address either. The registered map is estate-wide, but a DAG still matches
+only the addresses that its own device-group chain can see. A firewall with more
+than one vsys reports every vsys, so a tag of one vsys can join the tag set of an
+address that another vsys uses. That direction adds members, which is the safe
+direction for `unused`.
+
+`--live-dag` fails closed. psc refuses an offline source (exit `9`). psc refuses
+a Panorama that manages no connected firewall (exit `7`). psc stops when a
+firewall query fails (exit `7`). Add `--live-dag-partial` to continue after a
+failed firewall: psc then reads the firewalls that answer, and the stderr caveat
+names the firewalls that did not answer. Without a live source, psc keeps the
+config-only behaviour below.
 
 Because runtime DAG membership cannot be computed from the config, `refs unused`
 **shows each candidate's tags** (a `tags` column in table/csv, a real list in
@@ -144,7 +168,9 @@ config.
 2. `refs unused` is a **candidate list, not a kill list**, especially for
    `shared` objects. Before deleting, ask: could this live in a template, in
    network/VPN/management config, in a DAG via an externally registered IP, or
-   on a firewall's local config? If plausibly yes, confirm in Panorama first.
+   on a firewall's local config? If plausibly yes, confirm in Panorama first. On
+   a live source, `--live-dag` answers the registered-IP part of that question
+   for you.
 3. The safe operations are the ones psc can fully model and *block* when it
    can't — `merge`, `rename`, `decommission` and
    [`delete`](../reference/cli.md#delete). Use `delete` to remove a verified
@@ -157,8 +183,11 @@ config.
 ## Tracking
 
 `refs unused` prints a one-line caveat to **stderr** restating these blind spots
-at the point of use (stdout stays pure machine output). The remaining gaps —
-DAG membership from externally registered IPs (the live-path enhancement),
-parsing template/network references, modelling more object kinds — are tracked in
-the issue tracker. See
+at the point of use (stdout stays pure machine output). The caveat text changes
+when `--live-dag` resolved the registered-IP part, and it names the number of
+firewalls that psc read. psc resolves registered-IP DAG membership on the live
+path only. The offline path keeps the config-tag rule and the `tags` column. The
+workbench (`psc work`) always builds a config-only graph, so its unused spoke
+never reads live data. The remaining gaps — parsing template/network references,
+modelling more object kinds — are tracked in the issue tracker. See
 [github.com/thomaschristory/panorama-super-cli/issues](https://github.com/thomaschristory/panorama-super-cli/issues).

@@ -56,6 +56,24 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 - `psc refs dangling` rows carry the same referrer `tags` field. The two
   commands render the same `Reference` model, so all six output formats agree.
   The workbench dangling spoke (`g`) shows the same column.
+- `psc refs unused --live-dag` and `psc refs used --live-dag` resolve dynamic
+  address-group membership from **registered IPs** on a live source
+  ([#183](https://github.com/thomaschristory/panorama-super-cli/issues/183)).
+  psc reads the connected firewalls from Panorama. psc then reads
+  `show object registered-ip all` from each firewall. psc adds the registered
+  tags to the tag set that it matches against each dynamic address-group filter.
+  An address that a live dynamic address group holds no longer reads as unused.
+  `refs used` shows that edge with the field `dynamic-registered`, because a
+  rename cannot repoint it. psc joins a registered value to an address object
+  only when the two values are identical. A registered host therefore never
+  marks a larger network object as used. The live data only adds members: psc
+  evaluates the filter twice, so a filter that negates a tag cannot lose a
+  member. The option fails closed. It exits `9` on an offline source. It exits
+  `7` when no firewall is connected, and when a firewall query fails. Add
+  `--live-dag-partial` to continue with the firewalls that answer; the stderr
+  caveat then names the firewalls that did not answer. The caveat text also
+  names the number of firewalls that psc read. Offline output is unchanged.
+  A new pure module, `psc/core/livedag.py`, holds the op-command parser.
 
 ## v1.12.1 — 2026-07-15
 

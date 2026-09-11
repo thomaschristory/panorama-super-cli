@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from psc.core.livedag import LiveDagMembership, RegisteredIps, build_membership
 from psc.core.models import (
     SHARED,
     Address,
@@ -17,7 +18,7 @@ from psc.core.models import (
     Tag,
 )
 from psc.core.parse import parse_config
-from psc.core.refs import ReferenceGraph, fall_through_note, reference_breaks
+from psc.core.refs import ReferenceGraph, Target, fall_through_note, reference_breaks
 
 # --- tags_for: the tag column behind the unused/where-used listings (#180) ---
 
@@ -442,10 +443,10 @@ def test_predefined_any_not_dangling() -> None:
 # --- dynamic address-group (DAG) membership (#60) ---------------------------
 
 
-def _addr(name: str, tags: list[str], loc: Location = SHARED) -> Address:
-    return Address(
-        name=name, location=loc, type=AddressType.IP_NETMASK, value="10.0.0.1/32", tags=tags
-    )
+def _addr(
+    name: str, tags: list[str], loc: Location = SHARED, *, value: str = "10.0.0.1/32"
+) -> Address:
+    return Address(name=name, location=loc, type=AddressType.IP_NETMASK, value=value, tags=tags)
 
 
 def test_address_matched_only_via_rule_referenced_dag_is_not_unused() -> None:
@@ -522,6 +523,141 @@ def test_unparseable_dag_filter_warns_and_matches_nothing() -> None:
     )
     g = ReferenceGraph.build(snap)
     assert "h-prod" in {t.name for t in g.unused("address")}
+    assert any("dag-bad" in w for w in g.warnings)
+
+
+# --- live DAG membership from registered IPs (#183) --------------------------
+
+
+def _live(values: dict[str, set[str]]) -> LiveDagMembership:
+    return build_membership(
+        {"001": RegisteredIps(by_value={v: frozenset(t) for v, t in values.items()})}
+    )
+
+
+def test_live_registered_tag_keeps_a_dag_matched_address_off_unused() -> None:
+    # SAFETY: the first acceptance criterion of #183. The address carries no
+    # config tag, so only the live registration puts it in the DAG.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+    )
+    assert "h-vm" in {t.name for t in ReferenceGraph.build(snap).unused("address")}
+    live = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    assert "h-vm" not in {t.name for t in live.unused("address")}
+
+
+def test_live_enrichment_never_removes_a_config_matched_member() -> None:
+    # CRITICAL: a DAG filter can negate a tag. A live tag must never take an
+    # address out of a DAG, because that would make a new delete candidate.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", ["prod"], value="10.1.1.5")],
+        address_groups=[
+            AddressGroup(name="dag-prod", dynamic_filter="'prod' and not 'quarantine'")
+        ],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+    )
+    for graph in (
+        ReferenceGraph.build(snap),
+        ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"quarantine"}})),
+    ):
+        assert "h-vm" not in {t.name for t in graph.unused("address")}
+
+
+def test_live_enrichment_never_removes_a_member_of_a_bare_negation_filter() -> None:
+    # The same rule for `not 'x'` alone: the address matches the filter with its
+    # config tags, and the live tag must not cancel the match.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-clean", dynamic_filter="not 'quarantine'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-clean"])],
+    )
+    live = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"quarantine"}}))
+    assert "h-vm" not in {t.name for t in live.unused("address")}
+
+
+def test_a_live_derived_edge_carries_its_own_field_name() -> None:
+    # A registered IP is registered against an IP, not against an address
+    # object. A rename cannot repoint such an edge, so the row must say so.
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5"), _addr("h-cfg", ["prod"])],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+        security_rules=[SecurityRule(name="r", destination=["dag-prod"])],
+    )
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    (live_ref,) = g.where_used("address", "h-vm", SHARED)
+    assert live_ref.referrer_kind == "address-group"
+    assert live_ref.referrer_name == "dag-prod"
+    assert live_ref.field == "dynamic-registered"
+    # A config-tag match keeps the historical `dynamic` field.
+    (cfg_ref,) = g.where_used("address", "h-cfg", SHARED)
+    assert cfg_ref.field == "dynamic"
+
+
+def test_a_live_matched_address_is_a_dag_member() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-prod", dynamic_filter="'prod'")],
+    )
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    members = g.dag_members(Target("address-group", "dag-prod", SHARED))
+    assert [m.name for m in members] == ["h-vm"]
+
+
+def test_live_tags_do_not_widen_the_config_scope_chain() -> None:
+    # SAFETY: the registered map is estate-wide, but the DAG still matches only
+    # the addresses its own device-group chain can see.
+    snap = Snapshot(
+        addresses=[
+            _addr("a-vm", [], Location.dg("DG-A"), value="10.1.1.5"),
+            _addr("b-vm", [], Location.dg("DG-B"), value="10.1.1.6"),
+        ],
+        address_groups=[
+            AddressGroup(name="dag", location=Location.dg("DG-A"), dynamic_filter="'prod'")
+        ],
+        security_rules=[SecurityRule(name="r", location=Location.dg("DG-A"), destination=["dag"])],
+        device_groups=["DG-A", "DG-B"],
+    )
+    live = _live({"10.1.1.5": {"prod"}, "10.1.1.6": {"prod"}})
+    g = ReferenceGraph.build(snap, live_dag=live)
+    unused = {(t.location.name, t.name) for t in g.unused("address")}
+    assert ("DG-A", "a-vm") not in unused
+    assert ("DG-B", "b-vm") in unused  # a sibling device group stays out of scope
+
+
+def test_live_tags_do_not_change_the_tags_column() -> None:
+    # The output contract stays additive: `tags` reports config tags only.
+    snap = Snapshot(addresses=[_addr("h-vm", [], value="10.1.1.5")])
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    assert g.tags_for(Target("address", "h-vm", SHARED)) == []
+
+
+def test_live_enrichment_adds_no_graph_warning() -> None:
+    # Coverage counts belong to the CLI. `warnings` stays the channel for a
+    # coverage gap that the operator must act on.
+    snap = Snapshot(addresses=[_addr("h-vm", [], value="10.1.1.5")])
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.9.9.9": {"prod"}}))
+    assert g.warnings == []
+
+
+def test_a_graph_without_live_data_is_unchanged(snapshot: Snapshot) -> None:
+    # Regression guard for the offline contract.
+    plain = ReferenceGraph.build(snapshot)
+    explicit = ReferenceGraph.build(snapshot, live_dag=None)
+    assert plain.unused("address") == explicit.unused("address")
+    assert plain.references == explicit.references
+    assert plain.warnings == explicit.warnings
+
+
+def test_an_unparseable_dag_filter_stays_a_match_nothing_under_live_data() -> None:
+    snap = Snapshot(
+        addresses=[_addr("h-vm", [], value="10.1.1.5")],
+        address_groups=[AddressGroup(name="dag-bad", dynamic_filter="'prod' and")],
+        security_rules=[SecurityRule(name="r", destination=["dag-bad"])],
+    )
+    g = ReferenceGraph.build(snap, live_dag=_live({"10.1.1.5": {"prod"}}))
+    assert "h-vm" in {t.name for t in g.unused("address")}
     assert any("dag-bad" in w for w in g.warnings)
 
 

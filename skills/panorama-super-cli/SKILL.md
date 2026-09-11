@@ -193,6 +193,7 @@ psc -c cfg.xml -o json refs used h-web1            # delete/rename pre-flight
 psc -c cfg.xml -o json refs unused --kind address # recursive: nothing a rule reaches
 psc -c cfg.xml -o json refs unused --kind address --ignore-disabled  # only-disabled-rule users
 psc -c cfg.xml -o json refs unused --kind address --no-caveat        # suppress the stderr caveat
+psc -p prod  -o json refs unused --kind address --live-dag           # + registered-IP DAG membership (live only)
 psc -c cfg.xml -o json refs dangling              # references to missing objects
 ```
 
@@ -203,6 +204,16 @@ carries a `tags` field (a joined list in table/csv, a real list in
 json/jsonl/yaml): a tag-bearing candidate may be reached at runtime by a DAG that
 matches on that tag, so verify its tags before deleting. Send the verified rows
 to `delete` — it is the reference-safe sink for an `unused` list.
+
+`--live-dag` (live source only) reads the registered IPs of every connected
+firewall. psc adds their tags to dynamic address-group membership, so an address
+that a live DAG holds stays off the list. It exits `9` on an offline source, and
+`7` when no firewall is connected or a firewall query fails. Add
+`--live-dag-partial` to continue after a failed firewall. psc joins a registered
+value to an address object only when the two values are identical, so a
+registered host never marks a larger network object as used. A `refs used` row
+that comes from a registered IP carries the field `dynamic-registered`: a rename
+cannot repoint that edge, because the IP is registered against an IP.
 
 `refs used` may need `--kind` and `--location` if a name is ambiguous. Coverage
 spans groups and **every** object-referencing rulebase — security, NAT, PBF,
@@ -221,7 +232,8 @@ same field.
 > device-group objects + policy rulebases. It does **not** see: templates &
 > network/device config (IKE/IPSec, GlobalProtect, service routes, log servers,
 > static routes), dynamic-address-group membership from **externally registered
-> IPs** (config-tag DAG membership *is* resolved), or
+> IPs** (config-tag DAG membership *is* resolved; add `--live-dag` on a live
+> source to resolve registered IPs too), or
 > profiles/schedules/EDLs/regions/applications. Any object referenced only
 > there is falsely reported `unused`. **`unused` gives you candidates, not a
 > kill-list.** A human must verify each candidate in Panorama, especially a
@@ -347,6 +359,10 @@ psc -c cfg.xml -o json delete service:tcp-old@DG-EDGE tag:t-retired
 psc -c cfg.xml -o jsonl refs unused --kind address --no-caveat | psc -c cfg.xml delete -f -
 psc -c cfg.xml delete -f dead-objects.txt --apply --out cleaned.xml
 ```
+
+`delete` builds its own reference graph, and that graph never reads live data.
+An address that `--live-dag` keeps off the `unused` list is still deletable here,
+so check a candidate before you send it to `delete`.
 
 This is the sink for a verified `refs unused` list. A target is written
 `[kind:]name[@location]`. The kind defaults to `--kind` (`address`). psc looks

@@ -27,6 +27,15 @@ from pydantic import BaseModel, Field
 
 from psc.core.apply_xml import apply_changeset
 from psc.core.changeset import ChangeSet
+from psc.core.livedag import (
+    CONNECTED_DEVICES_CMD,
+    REGISTERED_IP_CMD,
+    LiveDagMembership,
+    RegisteredIps,
+    build_membership,
+    parse_connected_devices,
+    parse_registered_ip,
+)
 from psc.core.models import Snapshot
 from psc.core.parse import parse_config
 from psc.core.setcmd import render_changeset
@@ -294,6 +303,70 @@ class LiveSource:
             model=str(info.platform),
             serial=str(info.serial),
         )
+
+    def op(self, cmd: str, *, target: str | None = None) -> str:
+        """Run one operational command and return the answer as XML text.
+
+        `target` sends the command to a managed firewall through Panorama. Every
+        failure becomes a transport error, because `pan.xapi.PanXapiError` (a
+        bad command, an HTTP error) is not a `panos.errors.PanDeviceError`. A
+        typed catch would let a traceback escape and corrupt machine output.
+        """
+        from panos.errors import PanConnectionTimeout, PanURLError  # noqa: PLC0415
+
+        where = f" on {target}" if target else ""
+        pano = self._device()
+        try:
+            answer = pano.op(  # type: ignore[attr-defined]
+                cmd, xml=True, extra_qs={"target": target} if target else None
+            )
+        except (PanConnectionTimeout, PanURLError) as exc:
+            raise PscError(
+                f"cannot reach {self.hostname}{where}: {exc}", ErrorType.TRANSPORT
+            ) from exc
+        except Exception as exc:
+            raise PscError(
+                f"`{cmd}` failed on {self.hostname}{where}: {exc}", ErrorType.TRANSPORT
+            ) from exc
+        return answer.decode("utf-8") if isinstance(answer, bytes) else str(answer)
+
+    def live_dag_membership(self, *, partial: bool = False) -> LiveDagMembership:
+        """Read the registered IPs of every connected firewall (#183).
+
+        Panorama holds no registration table of its own, so psc asks Panorama
+        for the connected firewalls and reads each firewall in turn. psc refuses
+        when no firewall answers. An empty map would otherwise read as "nothing
+        is registered", and the command would report absent data as full
+        coverage.
+
+        By default one failed firewall stops the command. With `partial` the
+        read continues, and the result names the firewalls that did not answer,
+        so the caller can show a partial-coverage caveat.
+        """
+        devices = parse_connected_devices(self.op(CONNECTED_DEVICES_CMD))
+        if not devices:
+            raise PscError(
+                f"{self.hostname} manages no connected firewall, so psc read no "
+                "registered IPs; drop --live-dag or check the device connection",
+                ErrorType.TRANSPORT,
+            )
+        per_device: dict[str, RegisteredIps] = {}
+        failed: list[str] = []
+        for device in devices:
+            try:
+                per_device[device.serial] = parse_registered_ip(
+                    self.op(REGISTERED_IP_CMD, target=device.serial)
+                )
+            except PscError:
+                if not partial:
+                    raise
+                failed.append(device.serial)
+        if not per_device:
+            raise PscError(
+                f"no firewall of {self.hostname} answered `{REGISTERED_IP_CMD}`",
+                ErrorType.TRANSPORT,
+            )
+        return build_membership(per_device, failed=failed)
 
     def _device(self) -> object:
         from panos.panorama import Panorama  # noqa: PLC0415 — defer heavy SDK import to live use

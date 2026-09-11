@@ -32,8 +32,9 @@ from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 
-from psc.core.dagfilter import FilterParseError, filter_tags, parse_filter
-from psc.core.models import Location, Rulebase, Snapshot, _Named
+from psc.core.dagfilter import Filter, FilterParseError, filter_tags, parse_filter
+from psc.core.livedag import LiveDagMembership
+from psc.core.models import Address, Location, Rulebase, Snapshot, _Named
 from psc.core.rulebases import rule_container
 
 # Built-in names that are not user objects; references to them never dangle.
@@ -156,9 +157,22 @@ class ReferenceGraph:
     the `unused` listing surfaces (#180). Tags (the kind) carry no tags of their
     own, so they never appear here — `tags_for` returns [] for them."""
 
+    _live_dag: LiveDagMembership | None = None
+    """Registered-IP tags read from the live firewalls (#183), or None for a
+    config-only build. The field only adds dynamic address-group members; it
+    never removes one. See `_resolve_dags`."""
+
     @classmethod
-    def build(cls, snapshot: Snapshot) -> ReferenceGraph:
-        g = cls(snapshot=snapshot)
+    def build(
+        cls, snapshot: Snapshot, *, live_dag: LiveDagMembership | None = None
+    ) -> ReferenceGraph:
+        """Build the graph of `snapshot`.
+
+        `live_dag` is optional. Pass it to add the dynamic address-group
+        membership that externally registered IPs create. Leave it out for the
+        config-only graph, which is what every offline command builds.
+        """
+        g = cls(snapshot=snapshot, _live_dag=live_dag)
         g._index()
         g._walk()
         g._resolve_dags()
@@ -443,10 +457,17 @@ class ReferenceGraph:
         and contributes no members (match-nothing): psc never guesses membership,
         but the operator is told that DAG's coverage is unverified (#60 Q2).
 
-        Caveat: this resolves only *config-tagged* membership. Addresses brought
-        into a DAG by externally registered IPs (XML-API / User-ID / VM-info) are
-        runtime state absent from the config and are still not covered — that is
-        the residual gap a live membership query would close.
+        Live data: when the caller passes `live_dag`, psc also matches each
+        address against its *config* tags plus the tags of its registered IP
+        (#183). An address that a live DAG holds is then reachable, and its edge
+        carries the field `dynamic-registered`. Without `live_dag` the method
+        keeps the config-only behaviour, so every offline result is unchanged.
+
+        The live match is monotonic: psc evaluates the filter twice and keeps an
+        address when *either* evaluation is true. A DAG filter can negate a tag,
+        so a single evaluation over the joined tag set could *remove* a member
+        and make a new delete candidate — the opposite of what the live data is
+        for.
         """
         addrs_by_loc = self.snapshot.addresses_by_location()
         for ag in self.snapshot.address_groups:
@@ -465,7 +486,8 @@ class ReferenceGraph:
             scope = {loc.name for loc in self.snapshot.ancestors(ag.location)}
             for loc_name in scope:
                 for a in addrs_by_loc.get(loc_name, []):
-                    if not flt.matches(set(a.tags)):
+                    by_config = flt.matches(set(a.tags))
+                    if not (by_config or self._matches_live(flt, a)):
                         continue
                     member = Target("address", a.name, a.location)
                     self._dag_members[dag].append(member)
@@ -478,12 +500,29 @@ class ReferenceGraph:
                         referrer_kind="address-group",
                         referrer_name=ag.name,
                         referrer_location=ag.location,
-                        field="dynamic",
+                        # A registered IP is registered against an IP, not
+                        # against an address object. A rename cannot repoint
+                        # such an edge, so the row must be distinguishable.
+                        field="dynamic" if by_config else "dynamic-registered",
                         resolved=member,
                         tags=tuple(ag.tags),
                     )
                     self.references.append(ref)
                     self._by_target[member].append(ref)
+
+    def _matches_live(self, flt: Filter, addr: Address) -> bool:
+        """True when the registered tags of `addr` satisfy `flt` (#183).
+
+        psc adds the registered tags to the config tags and evaluates the filter
+        once more. The caller keeps the address when this OR the config-only
+        evaluation is true, which makes the live data add members only.
+        """
+        if self._live_dag is None:
+            return False
+        live = self._live_dag.tags_for(addr)
+        if not live:
+            return False
+        return flt.matches(set(addr.tags) | set(live))
 
     # -- queries ---------------------------------------------------------
 
