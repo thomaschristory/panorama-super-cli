@@ -225,7 +225,7 @@ at the point of use (stdout stays pure machine output). The caveat text changes
 when `--live-dag` resolved the registered-IP part, and it names the number of
 firewalls that psc read. psc resolves registered-IP DAG membership on the live
 path only. The offline path keeps the config-tag rule and the `tags` column. The
-workbench (`psc work`) always builds a config-only graph, so its unused spoke
+workbench (`psc workbench`) always builds a config-only graph, so its unused spoke
 never reads live data. The remaining gaps — parsing template/network references,
 modelling more object kinds — are tracked in the issue tracker. See
 [github.com/thomaschristory/panorama-super-cli/issues](https://github.com/thomaschristory/panorama-super-cli/issues).

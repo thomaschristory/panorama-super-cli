@@ -206,8 +206,10 @@ matches on that tag, so verify its tags before deleting. Send the verified rows
 to `delete` — it is the reference-safe sink for an `unused` list.
 
 `--live-dag` (live source only) reads the registered IPs of every connected
-firewall. psc adds their tags to dynamic address-group membership. An address
-that a **rule-referenced** live DAG holds then stays off the list. It exits `9`
+firewall. psc sends the query without a vsys, so on a multi-vsys firewall it
+reads only the vsys of the API key. psc adds their tags to dynamic
+address-group membership. An address that a **rule-referenced** live DAG holds
+then stays off the list. It exits `9`
 on an offline source, and `7` when no firewall is connected or a firewall query
 fails. An answer that psc cannot read counts as a failed query, and it exits `7`
 too. A firewall that Panorama names and that psc cannot query counts as one too.

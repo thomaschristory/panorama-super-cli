@@ -99,7 +99,7 @@ when no firewall is connected, and when a firewall query fails. Add
 `--live-dag-partial` to continue with the firewalls that answer. psc then names
 each firewall that did not answer on the warning channel, which `--no-caveat`
 does not silence. `refs used --strict` refuses to call an object unused while
-the coverage is partial. The workbench (`psc work`) never reads live data, so
+the coverage is partial. The workbench (`psc workbench`) never reads live data, so
 its unused spoke keeps the config-only list.
 
 !!! danger "`unused` means *unused by policy* — not *safe to delete*"
