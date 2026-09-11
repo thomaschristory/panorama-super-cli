@@ -5,7 +5,7 @@ based on [Keep a Changelog](https://keepachangelog.com/), and from v1.0.0 the
 project will follow [Semantic Versioning](https://semver.org/). While on
 `0.x`, minor versions may include breaking changes.
 
-## Unreleased
+## v1.13.0 — 2026-09-11
 
 ### Fixed
 
@@ -29,6 +29,15 @@ project will follow [Semantic Versioning](https://semver.org/). While on
   `decommission --keep-groups` and `delete --keep-groups` therefore always scrub
   the group and rule member fields. They give no fall-through warning.
 
+- `dedup promote --all --cascade` no longer keeps a redundant copy of an
+  object in a device group
+  ([#157](https://github.com/thomaschristory/panorama-super-cli/issues/157)).
+  Two buckets can share a device-group leaf. The retain decision of each bucket
+  looked only at its own teardown, so it could keep a copy whose last referrer
+  another bucket deleted. The plan now checks the retained copies against the
+  combined teardown of all buckets, to a fixpoint. A copy that a surviving
+  object still references stays, so repoint-before-delete still holds.
+
 ### Changed
 
 - `decommission` and `delete` no longer block on a NAT-translation or a
@@ -39,6 +48,25 @@ project will follow [Semantic Versioning](https://semver.org/). While on
 
 ### Added
 
+- `psc delete` removes objects by name, reference-safe, and the workbench
+  unused spoke can select candidates and delete them
+  ([#181](https://github.com/thomaschristory/panorama-super-cli/issues/181)).
+  `delete` takes `(kind, name, location)` targets of all five `refs unused`
+  kinds: address, address-group, service, service-group and tag. It reads the
+  targets from arguments or from `refs unused -o jsonl` on stdin. It keeps the
+  safety model of `decommission`. It scrubs groups and rules, deletes a rule
+  that the scrub empties, deletes a group that the scrub empties, and deletes
+  the object last. `--keep-groups` and `--keep-rules` limit the cascade. The
+  command is a dry run by default and writes only with `--apply`.
+- `psc refs unused` rows carry a `tags` field
+  ([#180](https://github.com/thomaschristory/panorama-super-cli/issues/180)).
+  A dynamic address group can reach an unused candidate at runtime through a
+  tag. The column lets the operator check the tags before a delete. Table and
+  CSV output join the tags. JSON, JSONL and YAML output carry a real list.
+- The workbench move spoke has a `cascade` checkbox
+  ([#158](https://github.com/thomaschristory/panorama-super-cli/issues/158)).
+  It brings the dependencies of an object to the destination, as
+  `psc move --cascade` does. The spoke also shows a live review of the plan.
 - `decommission` and `delete` warn about every reference that keeps a name that
   falls through to another object after the plan applies. The warning names the
   referrer, the name, and the surviving object with its value. The referrer
